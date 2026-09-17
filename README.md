@@ -1,139 +1,108 @@
-<img src="./.github/screenshots/header.png#gh-light-mode-only" width="100%" alt="Header light mode"/>
-<img src="./.github/screenshots/header-dark.png#gh-dark-mode-only" width="100%" alt="Header dark mode"/>
+# ScanSolo AI Agent System
 
-___
+Custom ScanSolo conversational sales platform based on **Chatwoot Community Edition**.
 
-# Chatwoot
+## Product goal
 
-The modern customer support platform, an open-source alternative to Intercom, Zendesk, Salesforce Service Cloud etc.
+Provide one operational system for ScanSolo at a future production domain under `scansolo.com.br`, with:
 
-<p>
-  <img src="https://img.shields.io/circleci/build/github/chatwoot/chatwoot" alt="CircleCI Badge">
-    <a href="https://hub.docker.com/r/chatwoot/chatwoot/"><img src="https://img.shields.io/docker/pulls/chatwoot/chatwoot" alt="Docker Pull Badge"></a>
-  <a href="https://hub.docker.com/r/chatwoot/chatwoot/"><img src="https://img.shields.io/docker/cloud/build/chatwoot/chatwoot" alt="Docker Build Badge"></a>
-  <img src="https://img.shields.io/github/commit-activity/m/chatwoot/chatwoot" alt="Commits-per-month">
-  <a title="Crowdin" target="_self" href="https://chatwoot.crowdin.com/chatwoot"><img src="https://badges.crowdin.net/e/37ced7eba411064bd792feb3b7a28b16/localized.svg"></a>
-  <a href="https://discord.gg/cJXdrwS"><img src="https://img.shields.io/discord/647412545203994635" alt="Discord"></a>
-  <a href="https://status.chatwoot.com"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchatwoot%2Fstatus%2Fmaster%2Fapi%2Fchatwoot%2Fuptime.json" alt="uptime"></a>
-  <a href="https://status.chatwoot.com"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchatwoot%2Fstatus%2Fmaster%2Fapi%2Fchatwoot%2Fresponse-time.json" alt="response time"></a>
-  <a href="https://artifacthub.io/packages/helm/chatwoot/chatwoot"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/artifact-hub" alt="Artifact HUB"></a>
-</p>
+- official Meta WhatsApp inbox;
+- AI sales/service agent;
+- human handoff;
+- contact context;
+- commercial pipeline / Kanban;
+- knowledge base and RAG;
+- deterministic follow-up cadences using approved Meta templates;
+- proposal generation through registered Make integrations;
+- execution/audit visibility;
+- self-hosted deployment on Linux VPS + Docker Compose.
 
+## Architecture principle
 
-<p>
-  <a href="https://heroku.com/deploy?template=https://github.com/chatwoot/chatwoot/tree/master" alt="Deploy to Heroku">
-     <img width="150" alt="Deploy" src="https://www.herokucdn.com/deploy/button.svg"/>
-  </a>
-  <a href="https://marketplace.digitalocean.com/apps/chatwoot?refcode=f2238426a2a8" alt="Deploy to DigitalOcean">
-     <img width="200" alt="Deploy to DO" src="https://www.deploytodo.com/do-btn-blue.svg"/>
-  </a>
-</p>
+Chatwoot Community is the product foundation and conversational center. ScanSolo-specific capabilities are implemented as isolated, maintainable extensions of the Community codebase. The previous Lexus CRM implementation is a **reference source for proven behavior and contracts**, not a runtime dependency after cutover.
 
-<img src="./.github/screenshots/dashboard.png#gh-light-mode-only" width="100%" alt="Chat dashboard dark mode"/>
-<img src="./.github/screenshots/dashboard-dark.png#gh-dark-mode-only" width="100%" alt="Chat dashboard"/>
+```text
+Website / WhatsApp
+        |
+        v
+Meta WhatsApp Cloud API
+        |
+        v
+ScanSolo Chatwoot
+  |-- Conversations / Contacts / Human Service
+  |-- Meta Templates
+  |-- Pipeline / Kanban              [custom]
+  |-- AI Agent Center                [custom]
+  |-- Knowledge / RAG                [custom]
+  |-- Follow-up Cadence Engine       [custom]
+  |-- Proposal Status / Actions      [custom]
+  |-- Audit / Execution Visibility   [custom]
+        |
+        +--> Make --> proposal / tenant-specific integrations
+```
 
----
+## Start here
 
-Chatwoot is the modern, open-source, and self-hosted customer support platform designed to help businesses deliver exceptional customer support experience. Built for scale and flexibility, Chatwoot gives you full control over your customer data while providing powerful tools to manage conversations across channels.
+- Architecture decision: [`docs/architecture/ADR-001-chatwoot-scansolo-platform.md`](docs/architecture/ADR-001-chatwoot-scansolo-platform.md)
+- End-to-end flow: [`docs/architecture/END_TO_END_FLOW.md`](docs/architecture/END_TO_END_FLOW.md)
+- bc-harness input: [`.spec/inputs/scansolo-chatwoot-platform.md`](.spec/inputs/scansolo-chatwoot-platform.md)
+- Lexus behavior reference: [`docs/migration/LEXUS_REFERENCE_MAP.md`](docs/migration/LEXUS_REFERENCE_MAP.md)
+- Runtime data inventory: [`docs/migration/RUNTIME_DATA_INVENTORY.md`](docs/migration/RUNTIME_DATA_INVENTORY.md)
+- Chatwoot upstream findings: [`docs/upstream/CHATWOOT_CAPABILITY_NOTES.md`](docs/upstream/CHATWOOT_CAPABILITY_NOTES.md)
+- Pre-harness runbook: [`docs/runbooks/PRE_HARNESS.md`](docs/runbooks/PRE_HARNESS.md)
+- Final production cutover: [`docs/runbooks/PRODUCTION_CUTOVER.md`](docs/runbooks/PRODUCTION_CUTOVER.md)
+- Upstream bootstrap script: [`scripts/bootstrap-chatwoot-upstream.sh`](scripts/bootstrap-chatwoot-upstream.sh)
 
-### ✨ Captain – AI Agent for Support
+## Licensing boundary
 
-Supercharge your support with Captain, Chatwoot’s AI agent. Captain helps automate responses, handle common queries, and reduce agent workload—ensuring customers get instant, accurate answers. With Captain, your team can focus on complex conversations while routine questions are resolved automatically. Read more about Captain [here](https://chwt.app/captain-docs).
+The upstream root license states that Chatwoot code outside restricted areas such as `enterprise/` is available under MIT Expat, while `enterprise/` has a separate proprietary license.
 
-### 💬 Omnichannel Support Desk
+Custom ScanSolo implementation must be based on Community/MIT behavior or independently implemented requirements. Do not copy proprietary implementation from upstream `enterprise/` unless a valid Enterprise license is intentionally adopted later.
 
-Chatwoot centralizes all customer conversations into one powerful inbox, no matter where your customers reach out from. It supports live chat on your website, email, Facebook, Instagram, Twitter, WhatsApp, Telegram, Line, SMS etc.
+## Production activation is intentionally deferred
 
-### 📚 Help center portal
+Do not connect the following until the complete system has passed isolated tests and a human cutover gate:
 
-Publish help articles, FAQs, and guides through the built-in Help Center Portal. Enable customers to find answers on their own, reduce repetitive queries, and keep your support team focused on more complex issues.
+- real ScanSolo WhatsApp number;
+- Meta production webhook and production access token;
+- production OpenAI key;
+- production Make webhooks/callbacks;
+- real proposal credentials/API;
+- final DNS and TLS cutover;
+- real customer messaging;
+- production migration/cutover from Lexus.
 
-### 🗂️ Other features
+## Prepare the Chatwoot base
 
-#### Collaboration & Productivity
+Clone this repository locally and run the safe bootstrap script:
 
-- Private Notes and @mentions for internal team discussions.
-- Labels to organize and categorize conversations.
-- Keyboard Shortcuts and a Command Bar for quick navigation.
-- Canned Responses to reply faster to frequently asked questions.
-- Auto-Assignment to route conversations based on agent availability.
-- Multi-lingual Support to serve customers in multiple languages.
-- Custom Views and Filters for better inbox organization.
-- Business Hours and Auto-Responders to manage response expectations.
-- Teams and Automation tools for scaling support workflows.
-- Agent Capacity Management to balance workload across the team.
+```bash
+cd /home/leonardool/projetos
+git clone https://github.com/lobernardo/ss-aiagentsystem.git
+cd ss-aiagentsystem
+bash scripts/bootstrap-chatwoot-upstream.sh
+```
 
-#### Customer Data & Segmentation
-- Contact Management with profiles and interaction history.
-- Contact Segments and Notes for targeted communication.
-- Campaigns to proactively engage customers.
-- Custom Attributes for storing additional customer data.
-- Pre-Chat Forms to collect user information before starting conversations.
+After inspection, push the generated bootstrap branch:
 
-#### Integrations
-- Slack Integration to manage conversations directly from Slack.
-- Dialogflow Integration for chatbot automation.
-- Dashboard Apps to embed internal tools within Chatwoot.
-- Shopify Integration to view and manage customer orders right within Chatwoot.
-- Use Google Translate to translate messages from your customers in realtime.
-- Create and manage Linear tickets within Chatwoot.
+```bash
+git push -u origin bootstrap/chatwoot-base
+```
 
-#### Reports & Insights
-- Live View of ongoing conversations for real-time monitoring.
-- Conversation, Agent, Inbox, Label, and Team Reports for operational visibility.
-- CSAT Reports to measure customer satisfaction.
-- Downloadable Reports for offline analysis and reporting.
+The script does not replace `main` and does not connect any production provider.
 
+## Planning flow
 
-## Documentation
+From the imported Chatwoot branch:
 
-Detailed documentation is available at [chatwoot.com/help-center](https://www.chatwoot.com/help-center).
+```text
+/bc-harness:ai-context
+```
 
-## Translation process
+Then:
 
-The translation process for Chatwoot web and mobile app is managed at [https://translate.chatwoot.com](https://translate.chatwoot.com) using Crowdin. Please read the [translation guide](https://www.chatwoot.com/docs/contributing/translating-chatwoot-to-your-language) for contributing to Chatwoot.
+```text
+/bc-harness:plan ".spec/inputs/scansolo-chatwoot-platform.md"
+```
 
-## Branching model
-
-We use the [git-flow](https://nvie.com/posts/a-successful-git-branching-model/) branching model. The base branch is `develop`.
-If you are looking for a stable version, please use the `master` or tags labelled as `v1.x.x`.
-
-## Deployment
-
-### Heroku one-click deploy
-
-Deploying Chatwoot to Heroku is a breeze. It's as simple as clicking this button:
-
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/chatwoot/chatwoot/tree/master)
-
-Follow this [link](https://www.chatwoot.com/docs/environment-variables) to understand setting the correct environment variables for the app to work with all the features. There might be breakages if you do not set the relevant environment variables.
-
-
-### DigitalOcean 1-Click Kubernetes deployment
-
-Chatwoot now supports 1-Click deployment to DigitalOcean as a kubernetes app.
-
-<a href="https://marketplace.digitalocean.com/apps/chatwoot?refcode=f2238426a2a8" alt="Deploy to DigitalOcean">
-  <img width="200" alt="Deploy to DO" src="https://www.deploytodo.com/do-btn-blue.svg"/>
-</a>
-
-### Other deployment options
-
-For other supported options, checkout our [deployment page](https://chatwoot.com/deploy).
-
-## Security
-
-Looking to report a vulnerability? Please refer our [SECURITY.md](./SECURITY.md) file.
-
-## Community
-
-If you need help or just want to hang out, come, say hi on our [Discord](https://discord.gg/cJXdrwS) server.
-
-## Contributors
-
-Thanks goes to all these [wonderful people](https://www.chatwoot.com/docs/contributors):
-
-<a href="https://github.com/chatwoot/chatwoot/graphs/contributors"><img src="https://opencollective.com/chatwoot/contributors.svg?width=890&button=false" /></a>
-
-
-*Chatwoot* &copy; 2017-2026, Chatwoot Inc - Released under the MIT License.
+Review `SPEC.md`, `PLAN.md` and `PHASES.md` before any implementation executor is allowed to run.

@@ -1,0 +1,253 @@
+asyncapi: 3.0.0
+info:
+  title: ScanSolo Make Integration Platform
+  version: "1.1.0"
+  description: >
+    Async contract for the Make integration layer (CT-08 outbound request,
+    CT-09 inbound callback). Modeled as AsyncAPI because the two directions
+    are correlated but temporally decoupled: an outbound request (T67) is
+    sent now, and its result arrives independently, out-of-band, at an
+    unpredictable later time via the inbound callback (T68), correlated only
+    by `correlation_id`. No arbitrary caller-supplied URL/command is ever
+    accepted (RF-87) — every message below is a fixed, schema-validated
+    contract for a specific registered action.
+servers:
+  make:
+    host: "{makeScenarioHost}"
+    protocol: https
+    description: >
+      Account-configured Make scenario webhook endpoint (RF-84, secret
+      server-side only; never a client-suppliable URL). Variable resolved
+      per-account at request time by `ScanSolo::Make::OutboundRequestService` (T67).
+    variables:
+      makeScenarioHost:
+        description: Per-account Make scenario webhook host, stored encrypted (RF-84).
+        default: hook.make.example
+    security:
+      - $ref: '#/components/securitySchemes/makeOutboundAuth'
+  scanSoloWebhooks:
+    host: "{scanSoloHost}"
+    protocol: https
+    description: ScanSolo's own inbound callback receiver (T68), account-scoped by correlation id.
+    variables:
+      scanSoloHost:
+        default: app.scansolo.local
+    security:
+      - $ref: '#/components/securitySchemes/makeInboundSignature'
+
+channels:
+  makeIntegrationRequest:
+    address: /scenario-webhook
+    servers:
+      - $ref: '#/servers/make'
+    description: >
+      Outbound channel to the account's registered Make scenario (CT-08).
+      Never called from the default AI-turn message-response path unless a
+      registered action explicitly requires it (RF-84).
+    messages:
+      makeIntegrationRequest:
+        $ref: '#/components/messages/MakeIntegrationRequest'
+
+  makeIntegrationCallback:
+    address: /webhooks/scan_solo/make/callbacks
+    servers:
+      - $ref: '#/servers/scanSoloWebhooks'
+    description: >
+      Inbound callback channel (CT-09). Signature/authenticity verified,
+      replay-protected via a permanent DB-level uniqueness constraint on
+      `correlation_id` (RNF-06, no TTL/expiry), and schema-validated before
+      any state mutation (RF-86).
+    messages:
+      makeIntegrationCallback:
+        $ref: '#/components/messages/MakeIntegrationCallback'
+
+operations:
+  sendMakeIntegrationRequest:
+    action: send
+    channel:
+      $ref: '#/channels/makeIntegrationRequest'
+    summary: >
+      ScanSolo sends a registered `proposal.generate`/`proposal.send`
+      request to Make (T59, T61), each attached with a correlation ID and
+      idempotency key (RF-85 outbound half).
+    messages:
+      - $ref: '#/channels/makeIntegrationRequest/messages/makeIntegrationRequest'
+
+  receiveMakeIntegrationCallback:
+    action: receive
+    channel:
+      $ref: '#/channels/makeIntegrationCallback'
+    summary: >
+      ScanSolo receives Make's asynchronous result for a previously issued
+      request (T68). Duplicate/replayed callbacks for the same correlation
+      id never reapply their side effect (RF-80, RNF-06).
+    messages:
+      - $ref: '#/channels/makeIntegrationCallback/messages/makeIntegrationCallback'
+
+components:
+  securitySchemes:
+    makeOutboundAuth:
+      type: apiKey
+      in: http
+      description: >
+        Server-side-only Make scenario secret (RF-84), sent as a header on
+        the outbound request; never exposed in a client-facing payload.
+    makeInboundSignature:
+      type: apiKey
+      in: http
+      description: >
+        HMAC signature over the raw callback body, verified by
+        `ScanSolo::Make::CallbackVerifier` (T68) before any parsing (RF-85 inbound half).
+
+  messages:
+    MakeIntegrationRequest:
+      name: MakeIntegrationRequest
+      title: Outbound Make integration request
+      contentType: application/json
+      headers:
+        type: object
+        required: [X-Idempotency-Key]
+        properties:
+          X-Idempotency-Key:
+            type: string
+            format: uuid
+      payload:
+        $ref: '#/components/schemas/MakeIntegrationRequestPayload'
+
+    MakeIntegrationCallback:
+      name: MakeIntegrationCallback
+      title: Inbound Make integration callback
+      contentType: application/json
+      headers:
+        type: object
+        required: [X-Make-Signature, X-Idempotency-Key]
+        properties:
+          X-Make-Signature:
+            type: string
+            description: HMAC-SHA256 signature over the raw request body.
+          X-Idempotency-Key:
+            type: string
+            format: uuid
+      payload:
+        $ref: '#/components/schemas/MakeIntegrationCallbackPayload'
+
+  schemas:
+    MakeIntegrationRequestPayload:
+      type: object
+      required: [correlation_id, idempotency_key, action, account_id, opportunity_id, proposal_version_id, requested_by_user_id, requested_at]
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [proposal.generate, proposal.send]
+        account_id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        proposal_version_id:
+          type: integer
+          format: int64
+        requested_by_user_id:
+          type: integer
+          format: int64
+        requested_at:
+          type: string
+          format: date-time
+        line_items:
+          type: array
+          description: >
+            Deterministic, qualification-field-derived line items only
+            (product/quantity). Never a price/discount/total — those
+            originate only from Make's callback result (RF-76).
+          items:
+            $ref: '#/components/schemas/MakeLineItem'
+        notes:
+          type: string
+
+    MakeLineItem:
+      type: object
+      required: [product_name, quantity]
+      properties:
+        product_name:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+
+    MakeIntegrationCallbackPayload:
+      type: object
+      required: [correlation_id, idempotency_key, action, status]
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [proposal.generate, proposal.send]
+        status:
+          type: string
+          enum: [success, failure]
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalGeneratedResult'
+            - $ref: '#/components/schemas/ProposalSendConfirmedResult'
+            - $ref: '#/components/schemas/ProposalFailureResult'
+
+    ProposalGeneratedResult:
+      type: object
+      required: [proposal_version_id, artifact_url, total_value, currency, valid_until]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        artifact_url:
+          type: string
+          format: uri
+        total_value:
+          type: number
+          format: float
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        valid_until:
+          type: string
+          format: date-time
+
+    ProposalSendConfirmedResult:
+      type: object
+      required: [proposal_version_id, sent_at, transport_message_id]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        sent_at:
+          type: string
+          format: date-time
+        transport_message_id:
+          type: string
+
+    ProposalFailureResult:
+      type: object
+      required: [proposal_version_id, error_code, error_message, retryable]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        error_code:
+          type: string
+        error_message:
+          type: string
+        retryable:
+          type: boolean
+          description: Consumed by `ScanSolo::Proposal::RetryPolicy` (T62, RF-81).

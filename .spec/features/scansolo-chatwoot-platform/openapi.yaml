@@ -1,0 +1,830 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Chatwoot Platform — REST contracts
+  version: "1.1.0"
+  description: >
+    Formal REST contracts for the ScanSolo extension layer's account-scoped
+    endpoints (CT-01, CT-02, CT-03, CT-05, CT-06, CT-07). Additive to the
+    existing `api/v1/accounts/:account_id/*` route family documented in
+    `swagger/swagger.json`; introduces zero modification to pre-existing
+    swagger paths. CT-04 (registered agent-action execution) is intentionally
+    not represented here — it is an internal, non-client-callable contract
+    invoked in-process by `ScanSolo::AiTurnJob`. CT-08/CT-09 (Make outbound
+    request / inbound callback) are documented separately in `asyncapi.yaml`.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: app.scansolo.local
+
+security:
+  - userApiKey: []
+
+paths:
+  /accounts/{account_id}/scan_solo/pipeline_opportunities:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listPipelineOpportunities
+      summary: List pipeline opportunities with Kanban/list filters (RF-13, CT-01)
+      parameters:
+        - name: stage
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PipelineStage'
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: stale
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Filtered opportunity list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payload]
+                properties:
+                  payload:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PipelineOpportunity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: showPipelineOpportunity
+      summary: Opportunity detail (UI-02)
+      responses:
+        '200':
+          description: Opportunity detail including stage history reference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updatePipelineOpportunity
+      summary: Reassign opportunity owner (RF-10)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner_id]
+              properties:
+                owner_id:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Owner reassigned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunity'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}/stage_transitions:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: createPipelineStageTransition
+      summary: >
+        Request a pipeline stage transition (CT-01). Idempotent per
+        (opportunity_id, target_stage, actor) within a short window
+        (RF-08, RF-09, RF-18).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_stage]
+              properties:
+                target_stage:
+                  $ref: '#/components/schemas/PipelineStage'
+      responses:
+        '200':
+          description: Transition applied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunity'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Invalid/unauthorized transition — stage left unchanged (RF-09, RF-18, RF-19).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: showAiAgentConfig
+      summary: Read draft and published AI Agent Center configuration (CT-02, UI-03)
+      responses:
+        '200':
+          description: Draft/published pair.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [draft, published]
+                properties:
+                  draft:
+                    $ref: '#/components/schemas/AiAgentConfig'
+                  published:
+                    oneOf:
+                      - $ref: '#/components/schemas/AiAgentConfig'
+                      - type: "null"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/draft:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    put:
+      operationId: updateAiAgentConfigDraft
+      summary: Update the draft configuration without affecting the live conversation (RF-22)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiAgentConfigInput'
+      responses:
+        '200':
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfig'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/publish:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: publishAiAgentConfig
+      summary: Atomically swap the active published version (RF-22, CT-02)
+      responses:
+        '200':
+          description: Published version swapped atomically.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfig'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /accounts/{account_id}/scan_solo/knowledge/retrieval_tests:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: createKnowledgeRetrievalTest
+      summary: Operator-submitted retrieval simulator query (CT-03, RF-29, RF-32)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                top_k:
+                  type: integer
+                  minimum: 1
+                  maximum: 50
+                  default: 5
+      responses:
+        '200':
+          description: Ranked chunks with source/evidence ids.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KnowledgeRetrievalResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /accounts/{account_id}/scan_solo/knowledge/sources/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      operationId: deleteKnowledgeSource
+      summary: Revoke a knowledge source, removing its content from future retrieval (RF-33)
+      responses:
+        '204':
+          description: Source and its chunks deleted/revoked.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/conversations/{conversation_id}/control_state:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: showConversationControlState
+      summary: Current AI-control state (RF-50, UI-06)
+      responses:
+        '200':
+          description: Resolvable control state for the conversation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationControlState'
+
+  /accounts/{account_id}/scan_solo/conversations/{conversation_id}/handoff:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: createConversationHandoff
+      summary: >
+        Request human handoff (CT-05). Creates the RF-51 private-note
+        contract and suppresses further automatic AI replies (RF-52).
+        Idempotent per conversation (RF-53).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        '200':
+          description: Handoff applied (or already-applied state returned idempotently).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationControlState'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /accounts/{account_id}/scan_solo/conversations/{conversation_id}/return_to_ai:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: createConversationReturnToAi
+      summary: >
+        Return-to-AI (CT-05). Requires the same role/permission level
+        authorized to take over (assigned agent or account administrator),
+        symmetric with takeover authorization (RF-54). Idempotent (RF-53).
+      responses:
+        '200':
+          description: Control returned to AI (or already-applied state returned idempotently).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationControlState'
+        '403':
+          description: Requestor is neither the assigned agent nor an account administrator (RF-54).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/cadence_enrollments:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: createCadenceEnrollment
+      summary: >
+        Manual cadence enrollment (CT-06). Idempotency key =
+        (opportunity_id, cadence_definition_version) (RF-59). Authorization
+        required for manual enrollment (RF-68).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opportunity_id, cadence_definition_id]
+              properties:
+                opportunity_id:
+                  type: integer
+                  format: int64
+                cadence_definition_id:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Enrollment created or returned idempotently.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CadenceEnrollment'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /accounts/{account_id}/scan_solo/cadence_enrollments/{id}/pause:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: pauseCadenceEnrollment
+      summary: Pause an active enrollment, preventing the next attempt from firing (RF-64)
+      responses:
+        '200':
+          description: Enrollment paused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CadenceEnrollment'
+
+  /accounts/{account_id}/scan_solo/cadence_enrollments/{id}/resume:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: resumeCadenceEnrollment
+      summary: Resume a paused enrollment, re-arming at the correct offset (RF-64)
+      responses:
+        '200':
+          description: Enrollment resumed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CadenceEnrollment'
+
+  /accounts/{account_id}/scan_solo/cadence_enrollments/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: cancelCadenceEnrollment
+      summary: Cancel an enrollment, permanently stopping all remaining attempts (RF-64)
+      responses:
+        '200':
+          description: Enrollment cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CadenceEnrollment'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{opportunity_id}/proposals/generate:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: opportunity_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: generateProposal
+      summary: >
+        `proposal.generate` (CT-07). Independently invocable, never
+        collapsed with approve/send (RF-73). Rejected if required proposal
+        fields are incomplete (RF-74).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalGenerateRequest'
+      responses:
+        '202':
+          description: Generation requested; proposal fields persist only after a validated callback (RF-75).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '422':
+          description: Required proposal fields incomplete (RF-74).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: proposal_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: approveProposal
+      summary: "`proposal.approve` (CT-07, RF-78)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposal_version_id, correlation_id]
+              properties:
+                proposal_version_id:
+                  type: integer
+                  format: int64
+                correlation_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Approval recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '422':
+          description: Version is not current (RF-77).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: proposal_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: sendProposal
+      summary: >
+        `proposal.send` (CT-07). Requires a prior successful generate
+        result (and approval where required) for the same version
+        (RF-73, RF-78); rejected against a stale version (RF-77).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposal_version_id, correlation_id]
+              properties:
+                proposal_version_id:
+                  type: integer
+                  format: int64
+                correlation_id:
+                  type: string
+                  format: uuid
+      responses:
+        '202':
+          description: Send requested; status reported as sent only after a validated transport result (RF-79).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '422':
+          description: Stale version, missing approval, or missing prior generate result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+components:
+  securitySchemes:
+    userApiKey:
+      type: apiKey
+      in: header
+      name: api_access_token
+      description: >
+        Existing Chatwoot session/API-token auth (verified `swagger/index.yml`),
+        reused unmodified for every ScanSolo account-scoped endpoint.
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    Forbidden:
+      description: Authenticated but not authorized (fail-closed per RF-89).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    NotFound:
+      description: Resource not found or account not ScanSolo-enabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    UnprocessableEntity:
+      description: Validation error (RF-06, RF-09, RF-74, RF-77).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+
+  schemas:
+    ScanSoloError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    PipelineStage:
+      type: string
+      enum:
+        - novo_lead
+        - em_contato
+        - em_qualificacao
+        - qualificado
+        - proposta_enviada
+        - negociacao
+        - ganho
+        - perdido
+
+    PipelineOpportunity:
+      type: object
+      required: [id, account_id, contact_id, conversation_id, stage, owner_id, stale, last_customer_interaction_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        account_id:
+          type: integer
+          format: int64
+        contact_id:
+          type: integer
+          format: int64
+        conversation_id:
+          type: integer
+          format: int64
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        owner_id:
+          type: integer
+          format: int64
+        stale:
+          type: boolean
+        last_customer_interaction_at:
+          type: string
+          format: date-time
+        next_follow_up_at:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+
+    AiAgentConfigInput:
+      type: object
+      required: [name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions]
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        model_provider:
+          type: string
+        model_selection:
+          type: string
+        role:
+          type: string
+        objective:
+          type: string
+        persona:
+          type: string
+        tone:
+          type: string
+        instructions:
+          type: string
+        service_rules:
+          type: string
+        qualification_playbook:
+          type: array
+          items:
+            type: string
+        required_qualification_fields:
+          type: array
+          items:
+            type: string
+        restricted_information:
+          type: array
+          items:
+            type: string
+        forbidden_subjects:
+          type: array
+          items:
+            type: string
+        transfer_criteria:
+          type: string
+        response_limits:
+          type: string
+        service_hours:
+          type: string
+
+    AiAgentConfig:
+      allOf:
+        - $ref: '#/components/schemas/AiAgentConfigInput'
+        - type: object
+          required: [id, status, updated_at]
+          properties:
+            id:
+              type: integer
+              format: int64
+            status:
+              type: string
+              enum: [draft, published]
+            updated_at:
+              type: string
+              format: date-time
+
+    KnowledgeRetrievalResult:
+      type: object
+      required: [chunk_id, source_id, source_type, content_snippet, similarity_score]
+      properties:
+        chunk_id:
+          type: integer
+          format: int64
+        source_id:
+          type: integer
+          format: int64
+        source_type:
+          type: string
+          enum: [document, faq, company_info]
+        content_snippet:
+          type: string
+        similarity_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+
+    ConversationControlState:
+      type: object
+      required: [conversation_id, ai_control_state, updated_at]
+      properties:
+        conversation_id:
+          type: integer
+          format: int64
+        ai_control_state:
+          type: string
+          enum: [ai_active, handoff_requested, awaiting_human, human_active, paused, closed]
+        updated_at:
+          type: string
+          format: date-time
+
+    CadenceEnrollment:
+      type: object
+      required: [id, opportunity_id, cadence_definition_id, status, current_step, next_attempt_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        cadence_definition_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [active, paused, cancelled, completed]
+        current_step:
+          type: integer
+        next_attempt_at:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+
+    ProposalGenerateRequest:
+      type: object
+      required: [correlation_id]
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+        notes:
+          type: string
+
+    ProposalVersion:
+      type: object
+      required: [id, proposal_id, version_number, status, is_current]
+      properties:
+        id:
+          type: integer
+          format: int64
+        proposal_id:
+          type: integer
+          format: int64
+        version_number:
+          type: integer
+        status:
+          type: string
+          enum: [generating, generated, approved, sent, failed]
+        is_current:
+          type: boolean
+        value:
+          oneOf:
+            - type: number
+              format: float
+            - type: "null"
+        currency:
+          oneOf:
+            - type: string
+            - type: "null"
+        artifact_url:
+          oneOf:
+            - type: string
+              format: uri
+            - type: "null"

@@ -41,9 +41,23 @@ ScanSolo Chatwoot
         +--> Make --> proposal / tenant-specific integrations
 ```
 
+## Start here
+
+- Architecture decision: [`docs/architecture/ADR-001-chatwoot-scansolo-platform.md`](docs/architecture/ADR-001-chatwoot-scansolo-platform.md)
+- End-to-end flow: [`docs/architecture/END_TO_END_FLOW.md`](docs/architecture/END_TO_END_FLOW.md)
+- bc-harness input: [`.spec/inputs/scansolo-chatwoot-platform.md`](.spec/inputs/scansolo-chatwoot-platform.md)
+- Lexus behavior reference: [`docs/migration/LEXUS_REFERENCE_MAP.md`](docs/migration/LEXUS_REFERENCE_MAP.md)
+- Runtime data inventory: [`docs/migration/RUNTIME_DATA_INVENTORY.md`](docs/migration/RUNTIME_DATA_INVENTORY.md)
+- Chatwoot upstream findings: [`docs/upstream/CHATWOOT_CAPABILITY_NOTES.md`](docs/upstream/CHATWOOT_CAPABILITY_NOTES.md)
+- Pre-harness runbook: [`docs/runbooks/PRE_HARNESS.md`](docs/runbooks/PRE_HARNESS.md)
+- Final production cutover: [`docs/runbooks/PRODUCTION_CUTOVER.md`](docs/runbooks/PRODUCTION_CUTOVER.md)
+- Upstream bootstrap script: [`scripts/bootstrap-chatwoot-upstream.sh`](scripts/bootstrap-chatwoot-upstream.sh)
+
 ## Licensing boundary
 
-The base must use Chatwoot Community/MIT-licensed code. Do not copy proprietary implementation from the upstream `enterprise/` directory into this repository unless a valid Enterprise license is intentionally adopted later.
+The upstream root license states that Chatwoot code outside restricted areas such as `enterprise/` is available under MIT Expat, while `enterprise/` has a separate proprietary license.
+
+Custom ScanSolo implementation must be based on Community/MIT behavior or independently implemented requirements. Do not copy proprietary implementation from upstream `enterprise/` unless a valid Enterprise license is intentionally adopted later.
 
 ## Production activation is intentionally deferred
 
@@ -55,19 +69,40 @@ Do not connect the following until the complete system has passed isolated tests
 - production Make webhooks/callbacks;
 - real proposal credentials/API;
 - final DNS and TLS cutover;
-- real customer messaging.
+- real customer messaging;
+- production migration/cutover from Lexus.
+
+## Prepare the Chatwoot base
+
+Clone this repository locally and run the safe bootstrap script:
+
+```bash
+cd /home/leonardool/projetos
+git clone https://github.com/lobernardo/ss-aiagentsystem.git
+cd ss-aiagentsystem
+bash scripts/bootstrap-chatwoot-upstream.sh
+```
+
+After inspection, push the generated bootstrap branch:
+
+```bash
+git push -u origin bootstrap/chatwoot-base
+```
+
+The script does not replace `main` and does not connect any production provider.
 
 ## Planning flow
 
-This repository is prepared for the Beer and Code Harness workflow:
+From the imported Chatwoot branch:
 
 ```text
-Chatwoot upstream imported
-    -> /bc-harness:ai-context
-    -> .spec/inputs/scansolo-chatwoot-platform.md
-    -> /bc-harness:plan ".spec/inputs/scansolo-chatwoot-platform.md"
-    -> review SPEC.md / PLAN.md / PHASES.md
-    -> feature-branch execution only
+/bc-harness:ai-context
 ```
 
-See `docs/` and `.spec/inputs/` before implementation.
+Then:
+
+```text
+/bc-harness:plan ".spec/inputs/scansolo-chatwoot-platform.md"
+```
+
+Review `SPEC.md`, `PLAN.md` and `PHASES.md` before any implementation executor is allowed to run.

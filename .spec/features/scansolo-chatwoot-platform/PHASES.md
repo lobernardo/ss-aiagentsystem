@@ -42,7 +42,7 @@ Antes de implementar, leia:
       Cobre: RF-01
       Depende de: T02, T03
       Acceptance criteria: para conta `scansolo_enabled`, todas as 11 entradas renderizam e roteiam sem reload completo.
-      Testes: `tests/playwright/scansolo/navigation.spec.ts`
+      Testes: `app/javascript/dashboard/routes/dashboard/scansolo/specs/navigation.spec.js`
 
 ## Phase 2: Shared core models
 

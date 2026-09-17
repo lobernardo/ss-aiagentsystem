@@ -101,7 +101,7 @@ O novo `ScanSolo::AiTurnJob` (T29) e consumido a partir do `Dispatcher`/`AsyncDi
 - **Files**: `app/javascript/dashboard/routes/dashboard/scansolo/index.js` (route table), `app/javascript/dashboard/components/layout/sidebarComponents/PrimaryNavItems.js` (additive entries for Pipeline/Agente de IA/Conhecimento/Follow-ups/Propostas/Execucoes e auditoria)
 - **Change**: Register the 11 required modules as navigable entries (RF-01): 5 are net-new ScanSolo routes stubbed here (Pipeline, Agente de IA, Conhecimento, Follow-ups, Propostas, Execucoes e auditoria) with placeholder components that later phase tasks (T16, T22, T27, T56, T65, T75) fill in; Conversas/Contatos/Equipe/Templates/Automacao e integracoes reuse existing native nav entries unmodified.
 - **Covers**: RF-01
-- **Tests**: `tests/playwright/scansolo/navigation.spec.ts` — for a `scansolo_enabled` account, all 11 entries render and route without a full page reload.
+- **Tests**: `app/javascript/dashboard/routes/dashboard/scansolo/specs/navigation.spec.js` — for a `scansolo_enabled` account, all 11 entries render and route without a full page reload.
 - **Risk**: Low — additive Vue route table entries only.
 - **Dependencies**: T02, T03
 

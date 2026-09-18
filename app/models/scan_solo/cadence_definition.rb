@@ -4,6 +4,22 @@
 # (RF-69). The template reference for each step is derived rather than
 # stored, so fake/test references (RF-71) exist automatically without a
 # separate templates table.
+# == Schema Information
+#
+# Table name: scan_solo_cadence_definitions
+#
+#  id         :bigint           not null, primary key
+#  active     :boolean          default(TRUE), not null
+#  offsets    :jsonb            not null
+#  stage      :string           not null
+#  version    :integer          default(1), not null
+#  created_at :datetime         not null
+#  updated_at :datetime         not null
+#
+# Indexes
+#
+#  index_scan_solo_cadence_definitions_on_stage_and_version  (stage,version) UNIQUE
+#
 class ScanSolo::CadenceDefinition < ApplicationRecord
   self.table_name = 'scan_solo_cadence_definitions'
 

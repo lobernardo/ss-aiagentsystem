@@ -12,11 +12,19 @@ class Rack::Attack
 
   # https://github.com/rack/rack-attack/issues/102
   # Rails 7.1 automatically adds its own ConnectionPool around RedisCacheStore.
-  # Because `$velma` is *already* a ConnectionPool, double-wrapping causes
-  # Redis calls like `get` to hit the outer wrapper and explode.
-  # `pool: false` tells Rails to skip its internal pool and use ours directly.
+  # `$velma` is *already* a ConnectionPool, and (separately) wraps its Redis
+  # client in Redis::Namespace, which does not implement the raw `.call`
+  # rack-attack's RedisCacheStoreProxy needs for atomic increments -- using
+  # it here raises NoMethodError on every throttled increment. Give
+  # Rack::Attack its own unwrapped pool instead, with Rails' native
+  # `namespace:` cache-store option standing in for what Redis::Namespace
+  # provided. `pool: false` tells Rails to skip its internal pool and use
+  # ours directly (same double-wrapping concern as before).
   # TODO: We can use build in connection pool in future upgrade
-  Rack::Attack.cache.store = ActiveSupport::Cache::RedisCacheStore.new(redis: $velma, pool: false)
+  rack_attack_redis_pool = ConnectionPool.new(size: ENV.fetch('REDIS_VELMA_SIZE', 10).to_i, timeout: 1) do
+    Rails.env.test? ? MockRedis.new : Redis.new(Redis::Config.app)
+  end
+  Rack::Attack.cache.store = ActiveSupport::Cache::RedisCacheStore.new(redis: rack_attack_redis_pool, namespace: 'velma', pool: false)
 
   class Request < ::Rack::Request
     # You may need to specify a method to fetch the correct remote IP address
@@ -332,6 +340,16 @@ class Rack::Attack
     user_identifier = user_uid.presence || api_access_token.presence
 
     "#{user_identifier}:#{match_data[:account_id]}" if user_identifier.present?
+  end
+
+  ## Prevent abuse of the ScanSolo Make inbound-callback endpoint (RNF-05).
+  ## This is the sole unauthenticated-caller-reachable ScanSolo endpoint, so
+  ## it is the only one throttled here -- AI-turn invocation and manual
+  ## cadence-enrollment frequency are intentionally left unthrottled by this
+  ## SPEC.
+  throttle('webhooks/scan_solo/make',
+           limit: ENV.fetch('RATE_LIMIT_SCANSOLO_MAKE_CALLBACK', '60').to_i, period: 1.minute) do |req|
+    req.ip if req.path_without_extensions == '/webhooks/scan_solo/make' && req.post?
   end
 
   ## ----------------------------------------------- ##

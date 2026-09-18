@@ -3,6 +3,31 @@
 # DB index from the migration; this model-level validation gives a
 # friendlier ActiveRecord::RecordInvalid instead of a raw RecordNotUnique
 # for the common (non-racing) duplicate-enrollment path.
+# == Schema Information
+#
+# Table name: scan_solo_cadence_enrollments
+#
+#  id                    :bigint           not null, primary key
+#  current_step          :integer          default(0), not null
+#  next_attempt_at       :datetime
+#  paused_at             :datetime
+#  status                :integer          default("active"), not null
+#  created_at            :datetime         not null
+#  updated_at            :datetime         not null
+#  cadence_definition_id :bigint           not null
+#  opportunity_id        :bigint           not null
+#
+# Indexes
+#
+#  idx_scansolo_cadence_enrollments_on_opportunity_and_definition  (opportunity_id,cadence_definition_id) UNIQUE
+#  index_scan_solo_cadence_enrollments_on_cadence_definition_id    (cadence_definition_id)
+#  index_scan_solo_cadence_enrollments_on_opportunity_id           (opportunity_id)
+#
+# Foreign Keys
+#
+#  fk_rails_...  (cadence_definition_id => scan_solo_cadence_definitions.id)
+#  fk_rails_...  (opportunity_id => scan_solo_pipeline_opportunities.id)
+#
 class ScanSolo::CadenceEnrollment < ApplicationRecord
   self.table_name = 'scan_solo_cadence_enrollments'
 

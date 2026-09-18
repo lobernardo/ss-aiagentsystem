@@ -224,7 +224,7 @@ RSpec.describe 'ScanSolo migrations' do
     end
 
     opportunity_definition_index = connection.indexes(:scan_solo_cadence_enrollments)
-                                              .find { |index| index.columns.sort == %w[cadence_definition_id opportunity_id] }
+                                             .find { |index| index.columns.sort == %w[cadence_definition_id opportunity_id] }
     expect(opportunity_definition_index).to be_present
     expect(opportunity_definition_index.unique).to be true
   end
@@ -303,6 +303,44 @@ RSpec.describe 'ScanSolo migrations' do
     basenames = scansolo_migration_files.map { |path| File.basename(path) }
     expect(basenames).to include(a_string_matching(/add_require_proposal_approval_to_scan_solo_ai_agent_configs/))
     expect(connection.column_exists?(:scan_solo_ai_agent_configs, :require_proposal_approval)).to be true
+  end
+
+  it 'finds the make-request and make-callback migrations' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/create_scan_solo_make_requests/))
+    expect(basenames).to include(a_string_matching(/create_scan_solo_make_callbacks/))
+  end
+
+  it 'creates the scan_solo_make_requests table additively with a unique index on correlation_id' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_make_requests)).to be true
+    %i[account_id correlation_id idempotency_key action payload status retry_count].each do |column|
+      expect(connection.column_exists?(:scan_solo_make_requests, column)).to be true
+    end
+
+    correlation_index = connection.indexes(:scan_solo_make_requests).find { |index| index.columns == ['correlation_id'] }
+    expect(correlation_index).to be_present
+    expect(correlation_index.unique).to be true
+  end
+
+  it 'creates the scan_solo_make_callbacks table additively with a permanent unique index on correlation_id (RNF-06)' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_make_callbacks)).to be true
+    expect(connection.column_exists?(:scan_solo_make_callbacks, :updated_at)).to be false
+    %i[correlation_id action signature_valid applied rejection_reason payload created_at].each do |column|
+      expect(connection.column_exists?(:scan_solo_make_callbacks, column)).to be true
+    end
+
+    correlation_index = connection.indexes(:scan_solo_make_callbacks).find { |index| index.columns == ['correlation_id'] }
+    expect(correlation_index).to be_present
+    expect(correlation_index.unique).to be true
+    # RNF-06: the uniqueness constraint itself is the entire replay-protection mechanism --
+    # there is no `where`/partial clause and no companion expiry column, so it is permanent.
+    expect(correlation_index.where).to be_nil
+    expect(connection.column_exists?(:scan_solo_make_callbacks, :expires_at)).to be false
   end
 end
 # rubocop:enable RSpec/DescribeClass

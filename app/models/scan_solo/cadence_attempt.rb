@@ -2,6 +2,30 @@
 # created up front for every step at enrollment time (`scheduled`), and
 # ScanSolo::Cadence::AttemptEvidenceRecorder is the sole writer of a
 # terminal `result` -- never updated a second time once terminal.
+# == Schema Information
+#
+# Table name: scan_solo_cadence_attempts
+#
+#  id                 :bigint           not null, primary key
+#  cadence_version    :integer          not null
+#  result             :integer          default("scheduled"), not null
+#  scheduled_at       :datetime         not null
+#  sent_at            :datetime
+#  step               :integer          not null
+#  template_reference :string           not null
+#  created_at         :datetime         not null
+#  updated_at         :datetime         not null
+#  enrollment_id      :bigint           not null
+#
+# Indexes
+#
+#  index_scan_solo_cadence_attempts_on_enrollment_id           (enrollment_id)
+#  index_scan_solo_cadence_attempts_on_enrollment_id_and_step  (enrollment_id,step) UNIQUE
+#
+# Foreign Keys
+#
+#  fk_rails_...  (enrollment_id => scan_solo_cadence_enrollments.id)
+#
 class ScanSolo::CadenceAttempt < ApplicationRecord
   self.table_name = 'scan_solo_cadence_attempts'
 

@@ -70,6 +70,14 @@ module Chatwoot
     # Disable PDF/video preview generation as we don't use them
     config.active_storage.previewers = []
 
+    # config/initializers/rack_attack.rb configures every throttle rule, the
+    # cache store and the safelist, but a Rack::Attack `use` call inside
+    # config/initializers/*.rb runs after the middleware stack is already
+    # built and has no effect -- this is the one place it actually takes.
+    # `Rack::Attack.enabled` (set at the bottom of that initializer) still
+    # gates all of it to production by default.
+    config.middleware.use Rack::Attack
+
     # Active Record Encryption configuration
     # Required for MFA/2FA features - skip if not using encryption
     if ENV['ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY'].present?

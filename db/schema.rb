@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_070002) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_080001) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1595,6 +1595,31 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_070002) do
     t.index ["added_by_id"], name: "index_scan_solo_knowledge_sources_on_added_by_id"
   end
 
+  create_table "scan_solo_make_callbacks", force: :cascade do |t|
+    t.string "correlation_id"
+    t.string "action"
+    t.boolean "signature_valid", default: false, null: false
+    t.boolean "applied", default: false, null: false
+    t.string "rejection_reason"
+    t.jsonb "payload", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.index ["correlation_id"], name: "index_scan_solo_make_callbacks_on_correlation_id", unique: true
+  end
+
+  create_table "scan_solo_make_requests", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.string "correlation_id", null: false
+    t.string "idempotency_key", null: false
+    t.string "action", null: false
+    t.jsonb "payload", default: {}, null: false
+    t.integer "status", default: 0, null: false
+    t.integer "retry_count", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_scan_solo_make_requests_on_account_id"
+    t.index ["correlation_id"], name: "index_scan_solo_make_requests_on_correlation_id", unique: true
+  end
+
   create_table "scan_solo_pipeline_opportunities", force: :cascade do |t|
     t.bigint "account_id", null: false
     t.bigint "contact_id", null: false
@@ -1842,6 +1867,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_070002) do
   add_foreign_key "scan_solo_cadence_enrollments", "scan_solo_cadence_definitions", column: "cadence_definition_id"
   add_foreign_key "scan_solo_cadence_enrollments", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_knowledge_chunks", "scan_solo_knowledge_sources", column: "source_id"
+  add_foreign_key "scan_solo_make_requests", "accounts"
   add_foreign_key "scan_solo_proposal_versions", "scan_solo_proposals", column: "proposal_id"
   add_foreign_key "scan_solo_proposals", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "user_sessions", "users"

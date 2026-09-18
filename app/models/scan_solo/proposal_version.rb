@@ -9,6 +9,46 @@
 # validation or callback here -- the only writer of those fields is
 # ScanSolo::Proposal::CallbackHandler, reached exclusively from a validated
 # provider result (RF-76).
+# == Schema Information
+#
+# Table name: scan_solo_proposal_versions
+#
+#  id                           :bigint           not null, primary key
+#  approved_at                  :datetime
+#  approved_by_type             :string
+#  artifact_url                 :string
+#  currency                     :string
+#  failure_reason               :string
+#  generate_callback_applied_at :datetime
+#  generate_requested_at        :datetime
+#  is_current                   :boolean          default(TRUE), not null
+#  send_callback_applied_at     :datetime
+#  send_requested_at            :datetime
+#  status                       :integer          default("generating"), not null
+#  value                        :decimal(12, 2)
+#  version_number               :integer          not null
+#  created_at                   :datetime         not null
+#  updated_at                   :datetime         not null
+#  approved_by_id               :bigint
+#  generate_correlation_id      :string
+#  proposal_id                  :bigint           not null
+#  send_correlation_id          :string
+#  sent_message_id              :bigint
+#
+# Indexes
+#
+#  idx_on_approved_by_type_approved_by_id_0a2d8f1dd3             (approved_by_type,approved_by_id)
+#  index_scan_solo_proposal_versions_on_current                  (proposal_id) UNIQUE WHERE (is_current = true)
+#  index_scan_solo_proposal_versions_on_generate_correlation_id  (generate_correlation_id) UNIQUE
+#  index_scan_solo_proposal_versions_on_proposal_and_number      (proposal_id,version_number) UNIQUE
+#  index_scan_solo_proposal_versions_on_proposal_id              (proposal_id)
+#  index_scan_solo_proposal_versions_on_send_correlation_id      (send_correlation_id) UNIQUE
+#  index_scan_solo_proposal_versions_on_sent_message_id          (sent_message_id)
+#
+# Foreign Keys
+#
+#  fk_rails_...  (proposal_id => scan_solo_proposals.id)
+#
 class ScanSolo::ProposalVersion < ApplicationRecord
   self.table_name = 'scan_solo_proposal_versions'
 

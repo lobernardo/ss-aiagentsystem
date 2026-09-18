@@ -164,5 +164,38 @@ RSpec.describe 'ScanSolo migrations' do
     expect(response_migration).to be_present
     expect(File.read(response_migration)).to include('add_reference')
   end
+
+  it 'finds the agent-action and agent-action-execution migrations' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/create_scan_solo_agent_actions/))
+    expect(basenames).to include(a_string_matching(/create_scan_solo_agent_action_executions/))
+  end
+
+  it 'creates the scan_solo_agent_actions table additively with a unique index on action_id' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_agent_actions)).to be true
+    %i[action_id classification schema].each do |column|
+      expect(connection.column_exists?(:scan_solo_agent_actions, column)).to be true
+    end
+
+    action_id_index = connection.indexes(:scan_solo_agent_actions).find { |index| index.columns == ['action_id'] }
+    expect(action_id_index).to be_present
+    expect(action_id_index.unique).to be true
+  end
+
+  it 'creates the scan_solo_agent_action_executions table additively with a unique index on idempotency_key' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_agent_action_executions)).to be true
+    %i[action_id turn_id correlation_id idempotency_key params status confirmed_at audit_event_id].each do |column|
+      expect(connection.column_exists?(:scan_solo_agent_action_executions, column)).to be true
+    end
+
+    idempotency_index = connection.indexes(:scan_solo_agent_action_executions).find { |index| index.columns == ['idempotency_key'] }
+    expect(idempotency_index).to be_present
+    expect(idempotency_index.unique).to be true
+  end
 end
 # rubocop:enable RSpec/DescribeClass

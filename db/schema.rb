@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_040001) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_050001) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1429,6 +1429,33 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_040001) do
     t.index ["account_id", "metric", "date"], name: "index_rollup_timeseries"
   end
 
+  create_table "scan_solo_agent_action_executions", force: :cascade do |t|
+    t.string "action_id", null: false
+    t.bigint "turn_id"
+    t.string "correlation_id", null: false
+    t.string "idempotency_key", null: false
+    t.jsonb "params", default: {}, null: false
+    t.integer "status", default: 0, null: false
+    t.datetime "confirmed_at"
+    t.bigint "audit_event_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["action_id"], name: "index_scan_solo_agent_action_executions_on_action_id"
+    t.index ["audit_event_id"], name: "index_scan_solo_agent_action_executions_on_audit_event_id"
+    t.index ["correlation_id"], name: "index_scan_solo_agent_action_executions_on_correlation_id"
+    t.index ["idempotency_key"], name: "index_scan_solo_agent_action_executions_on_idempotency_key", unique: true
+    t.index ["turn_id"], name: "index_scan_solo_agent_action_executions_on_turn_id"
+  end
+
+  create_table "scan_solo_agent_actions", force: :cascade do |t|
+    t.string "action_id", null: false
+    t.integer "classification", null: false
+    t.jsonb "schema", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["action_id"], name: "index_scan_solo_agent_actions_on_action_id", unique: true
+  end
+
   create_table "scan_solo_ai_agent_configs", force: :cascade do |t|
     t.bigint "account_id", null: false
     t.integer "status", default: 0, null: false
@@ -1730,6 +1757,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_040001) do
   add_foreign_key "campaign_recipients", "contacts", on_delete: :cascade
   add_foreign_key "campaign_recipients", "inboxes", on_delete: :cascade
   add_foreign_key "inboxes", "portals"
+  add_foreign_key "scan_solo_agent_action_executions", "scan_solo_ai_turns", column: "turn_id"
+  add_foreign_key "scan_solo_agent_action_executions", "scan_solo_audit_events", column: "audit_event_id"
   add_foreign_key "scan_solo_ai_agent_configs", "scan_solo_ai_agent_configs", column: "published_version_id"
   add_foreign_key "scan_solo_knowledge_chunks", "scan_solo_knowledge_sources", column: "source_id"
   add_foreign_key "user_sessions", "users"

@@ -8,7 +8,7 @@ RSpec.describe 'ScanSolo migrations' do
   let(:destructive_pattern) { /\b(remove_column|change_column|rename_column|drop_table|remove_table|change_table)\b/ }
 
   let(:scansolo_migration_files) do
-    Dir.glob(Rails.root.join('db/migrate/*scan_solo*.rb'))
+    Dir.glob(Rails.root.join('db/migrate/*{scan_solo,scansolo}*.rb'))
   end
 
   it 'finds the conversation-extension and audit-event migrations' do
@@ -40,6 +40,30 @@ RSpec.describe 'ScanSolo migrations' do
       expect(source).to match(/create_table|add_column|add_index|add_reference/), "#{path} does not define an additive schema change"
       expect(source).not_to match(destructive_pattern), "#{path} contains a destructive schema change"
     end
+  end
+
+  it 'finds the scansolo_enabled account-flag migration (T01) alongside every scan_solo_* table migration' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/add_scansolo_enabled_flag_to_accounts/))
+    # T79: the consolidated additive-only check above (and the destructive-pattern
+    # check) must also cover this migration, since it is the one ScanSolo migration
+    # that touches a pre-existing Community table (accounts) rather than creating a
+    # new scan_solo_* table -- RF-95/RNF-04 apply to it exactly the same way.
+    expect(scansolo_migration_files.length).to eq(21)
+  end
+
+  it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do
+    connection = ActiveRecord::Base.connection
+
+    account_flag_migration = scansolo_migration_files.find { |path| path.include?('add_scansolo_enabled_flag_to_accounts') }
+    expect(account_flag_migration).to be_present
+
+    source = File.read(account_flag_migration)
+    expect(source).to match(/add_column\s+:accounts,\s*:scansolo_feature_flags/)
+    expect(source).not_to match(destructive_pattern)
+
+    expect(connection.column_exists?(:accounts, :scansolo_feature_flags)).to be true
   end
 
   it 'creates the scan_solo_conversation_extensions table additively' do

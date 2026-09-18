@@ -23,6 +23,8 @@ import EmojiIcon from 'next/emoji-icon-picker/EmojiIcon.vue';
 import SidebarAccountSwitcher from './SidebarAccountSwitcher.vue';
 import Logo from 'next/icon/Logo.vue';
 import ComposeConversation from 'dashboard/components-next/NewConversation/ComposeConversation.vue';
+import { SCANSOLO_MODULES } from 'dashboard/routes/dashboard/scansolo/scansoloModules';
+import { buildScanSoloSidebarItems } from 'dashboard/routes/dashboard/scansolo/scansoloSidebarItems';
 import {
   SIDEBAR_SORT_SECTIONS,
   getSidebarSortOptions,
@@ -44,7 +46,7 @@ const emit = defineEmits([
   'closeMobileSidebar',
 ]);
 
-const { accountScopedRoute, isOnChatwootCloud } = useAccount();
+const { accountScopedRoute, isOnChatwootCloud, currentAccount } = useAccount();
 const { isEnterprise } = useConfig();
 const store = useStore();
 
@@ -52,6 +54,9 @@ const store = useStore();
 // on community so it doesn't lead to a dashboard/CTA the backend can't serve.
 const isCallsAvailable = computed(
   () => isOnChatwootCloud.value || isEnterprise
+);
+const isScanSoloEnabled = computed(
+  () => !!currentAccount.value?.scansolo_enabled
 );
 const searchShortcut = useKbd([`$mod`, 'k']);
 const { t } = useI18n();
@@ -590,6 +595,19 @@ const menuItems = computed(() => {
             icon: 'i-lucide-phone',
             to: accountScopedRoute('calls_dashboard_index'),
             activeOn: ['calls_dashboard_index'],
+          },
+        ]
+      : []),
+    ...(isScanSoloEnabled.value
+      ? [
+          {
+            name: 'ScanSolo',
+            label: t('SCANSOLO.SIDEBAR.GROUP_LABEL'),
+            icon: 'i-lucide-rocket',
+            activeOn: SCANSOLO_MODULES.map(
+              scanSoloModule => scanSoloModule.name
+            ),
+            children: buildScanSoloSidebarItems({ t, accountScopedRoute }),
           },
         ]
       : []),

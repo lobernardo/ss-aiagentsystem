@@ -1,0 +1,39 @@
+{
+  "SCANSOLO": {
+    "SIDEBAR": {
+      "GROUP_LABEL": "ScanSolo",
+      "PIPELINE": "Pipeline",
+      "AGENT": "Agente de IA",
+      "KNOWLEDGE": "Conhecimento",
+      "FOLLOWUPS": "Follow-ups",
+      "PROPOSALS": "Propostas",
+      "EXECUTIONS": "Execuções e auditoria"
+    },
+    "MODULES": {
+      "PIPELINE": {
+        "TITLE": "Pipeline",
+        "DESCRIPTION": "O quadro Kanban de oportunidades comerciais estará disponível em breve."
+      },
+      "AGENT": {
+        "TITLE": "Agente de IA",
+        "DESCRIPTION": "O centro de configuração do agente de IA estará disponível em breve."
+      },
+      "KNOWLEDGE": {
+        "TITLE": "Conhecimento",
+        "DESCRIPTION": "A base de conhecimento e busca estará disponível em breve."
+      },
+      "FOLLOWUPS": {
+        "TITLE": "Follow-ups",
+        "DESCRIPTION": "O motor de cadências de follow-up estará disponível em breve."
+      },
+      "PROPOSALS": {
+        "TITLE": "Propostas",
+        "DESCRIPTION": "A automação de propostas estará disponível em breve."
+      },
+      "EXECUTIONS": {
+        "TITLE": "Execuções e auditoria",
+        "DESCRIPTION": "O histórico de execuções e auditoria estará disponível em breve."
+      }
+    }
+  }
+}

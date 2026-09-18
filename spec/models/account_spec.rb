@@ -180,6 +180,37 @@ RSpec.describe Account do
     end
   end
 
+  describe 'scansolo_enabled' do
+    let(:account) { create(:account) }
+
+    it 'defaults to false' do
+      expect(account.scansolo_enabled?).to be(false)
+    end
+
+    it 'lives on its own dedicated bitset column, isolated from the Featurable columns' do
+      expect(described_class.flag_columns).to include('scansolo_feature_flags')
+      expect(described_class.flag_mapping['scansolo_feature_flags']).to eq(scansolo_enabled: 1)
+    end
+
+    it 'toggles independently without touching pre-existing feature flags' do
+      account.selected_feature_flags = [:feature_ip_lookup, :feature_data_import]
+      account.save!
+
+      account.update!(scansolo_enabled: true)
+
+      expect(account.reload.scansolo_enabled?).to be(true)
+      expect(account).to be_feature_ip_lookup
+      expect(account).to be_feature_data_import
+    end
+
+    it 'does not flip any pre-existing feature flag when toggled' do
+      account.update!(scansolo_enabled: true)
+
+      expect(account.reload.feature_flags).to eq(0)
+      expect(account.feature_flags_ext_1).to eq(0)
+    end
+  end
+
   describe 'inbound_email_domain' do
     let(:account) { create(:account) }
 

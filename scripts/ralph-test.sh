@@ -53,8 +53,12 @@ mapfile -t frontend_specs < <(
 )
 
 if (( ${#frontend_specs[@]} > 0 )); then
-  "${COMPOSE[@]}" exec -T vite \
-    pnpm test -- "${frontend_specs[@]}"
+  # pnpm 10's `run <script> -- <args>` forwards the literal `--` token to the
+  # underlying command instead of consuming it, which makes vitest ignore the
+  # file filters and run the entire suite. Invoke vitest directly via
+  # `pnpm exec` so the file list reaches it unmodified.
+  "${COMPOSE[@]}" exec -T -e TZ=UTC vite \
+    pnpm exec vitest --no-watch --no-cache --no-coverage "${frontend_specs[@]}"
 else
   echo "No ScanSolo frontend specs exist yet; skipping frontend test runner."
 fi

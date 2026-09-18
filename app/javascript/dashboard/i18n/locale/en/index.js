@@ -30,6 +30,7 @@ import login from './login.json';
 import macros from './macros.json';
 import report from './report.json';
 import resetPassword from './resetPassword.json';
+import scansolo from './scansolo.json';
 import search from './search.json';
 import setNewPassword from './setNewPassword.json';
 import settings from './settings.json';
@@ -78,6 +79,7 @@ export default {
   ...macros,
   ...report,
   ...resetPassword,
+  ...scansolo,
   ...search,
   ...setNewPassword,
   ...settings,

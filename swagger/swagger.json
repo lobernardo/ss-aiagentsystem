@@ -11615,6 +11615,10 @@
             "type": "object",
             "description": "Enabled features for the account"
           },
+          "scansolo_enabled": {
+            "type": "boolean",
+            "description": "Whether the ScanSolo extension layer is enabled for this account"
+          },
           "settings": {
             "type": "object",
             "description": "Account settings",

@@ -458,6 +458,11 @@ Rails.application.routes.draw do
           end
 
           resources :upload, only: [:create]
+
+          namespace :scan_solo do
+            # Reserved for ScanSolo feature controllers; BaseController has no
+            # concrete action of its own until a later phase adds one here.
+          end
         end
       end
       # end of account scoped api routes

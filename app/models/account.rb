@@ -2,21 +2,22 @@
 #
 # Table name: accounts
 #
-#  id                    :integer          not null, primary key
-#  auto_resolve_duration :integer
-#  custom_attributes     :jsonb
-#  domain                :string(100)
-#  feature_flags         :bigint           default(0), not null
-#  feature_flags_ext_1   :bigint           default(0), not null
-#  internal_attributes   :jsonb            not null
-#  limits                :jsonb
-#  locale                :integer          default("en")
-#  name                  :string           not null
-#  settings              :jsonb
-#  status                :integer          default("active")
-#  support_email         :string(100)
-#  created_at            :datetime         not null
-#  updated_at            :datetime         not null
+#  id                     :integer          not null, primary key
+#  auto_resolve_duration  :integer
+#  custom_attributes      :jsonb
+#  domain                 :string(100)
+#  feature_flags          :bigint           default(0), not null
+#  feature_flags_ext_1    :bigint           default(0), not null
+#  internal_attributes    :jsonb            not null
+#  limits                 :jsonb
+#  locale                 :integer          default("en")
+#  name                   :string           not null
+#  scansolo_feature_flags :bigint           default(0), not null
+#  settings               :jsonb
+#  status                 :integer          default("active")
+#  support_email          :string(100)
+#  created_at             :datetime         not null
+#  updated_at             :datetime         not null
 #
 # Indexes
 #
@@ -38,6 +39,14 @@ class Account < ApplicationRecord
     check_for_column: false
   }.freeze
   SUSPENSION_CATEGORIES = %w[spam non_payment other].freeze
+
+  # Isolated bitset for the ScanSolo:: extension layer, kept separate from
+  # `feature_flags`/`feature_flags_ext_1` (owned by Featurable's config/features.yml
+  # self-hosted feature list) so upstream merges to those columns can never
+  # collide with or accidentally expose ScanSolo bits.
+  has_flags 1 => :scansolo_enabled,
+            :column => 'scansolo_feature_flags',
+            **DEFAULT_QUERY_SETTING
 
   attr_accessor :suspension_category, :suspension_reason
 

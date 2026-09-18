@@ -484,6 +484,14 @@ Rails.application.routes.draw do
 
             resources :ai_turns, only: [:index, :show]
 
+            resources :cadence_enrollments, only: [:index, :create] do
+              member do
+                post :pause
+                post :resume
+                post :cancel
+              end
+            end
+
             namespace :conversations do
               get ':conversation_id/control_state', to: 'handoff#show'
               post ':conversation_id/handoff', to: 'handoff#create'

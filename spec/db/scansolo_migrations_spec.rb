@@ -197,5 +197,49 @@ RSpec.describe 'ScanSolo migrations' do
     expect(idempotency_index).to be_present
     expect(idempotency_index.unique).to be true
   end
+
+  it 'finds the cadence-definition, cadence-enrollment and cadence-attempt migrations' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/create_scan_solo_cadence_definitions/))
+    expect(basenames).to include(a_string_matching(/create_scan_solo_cadence_enrollments/))
+    expect(basenames).to include(a_string_matching(/create_scan_solo_cadence_attempts/))
+  end
+
+  it 'creates the scan_solo_cadence_definitions table additively' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_cadence_definitions)).to be true
+    %i[stage version offsets active].each do |column|
+      expect(connection.column_exists?(:scan_solo_cadence_definitions, column)).to be true
+    end
+  end
+
+  it 'creates the scan_solo_cadence_enrollments table additively with a unique index on (opportunity_id, cadence_definition_id)' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_cadence_enrollments)).to be true
+    %i[opportunity_id cadence_definition_id status current_step next_attempt_at paused_at].each do |column|
+      expect(connection.column_exists?(:scan_solo_cadence_enrollments, column)).to be true
+    end
+
+    opportunity_definition_index = connection.indexes(:scan_solo_cadence_enrollments)
+                                              .find { |index| index.columns.sort == %w[cadence_definition_id opportunity_id] }
+    expect(opportunity_definition_index).to be_present
+    expect(opportunity_definition_index.unique).to be true
+  end
+
+  it 'creates the scan_solo_cadence_attempts table additively with a unique index on (enrollment_id, step)' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_cadence_attempts)).to be true
+    %i[enrollment_id step cadence_version template_reference scheduled_at sent_at result].each do |column|
+      expect(connection.column_exists?(:scan_solo_cadence_attempts, column)).to be true
+    end
+
+    step_index = connection.indexes(:scan_solo_cadence_attempts).find { |index| index.columns.sort == %w[enrollment_id step] }
+    expect(step_index).to be_present
+    expect(step_index.unique).to be true
+  end
 end
 # rubocop:enable RSpec/DescribeClass

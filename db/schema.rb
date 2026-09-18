@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_050001) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_060002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1524,6 +1524,44 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_050001) do
     t.index ["subject_type", "subject_id"], name: "index_scan_solo_audit_events_on_subject_type_and_subject_id"
   end
 
+  create_table "scan_solo_cadence_attempts", force: :cascade do |t|
+    t.bigint "enrollment_id", null: false
+    t.integer "step", null: false
+    t.integer "cadence_version", null: false
+    t.string "template_reference", null: false
+    t.datetime "scheduled_at", null: false
+    t.datetime "sent_at"
+    t.integer "result", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["enrollment_id", "step"], name: "index_scan_solo_cadence_attempts_on_enrollment_id_and_step", unique: true
+    t.index ["enrollment_id"], name: "index_scan_solo_cadence_attempts_on_enrollment_id"
+  end
+
+  create_table "scan_solo_cadence_definitions", force: :cascade do |t|
+    t.string "stage", null: false
+    t.integer "version", default: 1, null: false
+    t.jsonb "offsets", default: [], null: false
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["stage", "version"], name: "index_scan_solo_cadence_definitions_on_stage_and_version", unique: true
+  end
+
+  create_table "scan_solo_cadence_enrollments", force: :cascade do |t|
+    t.bigint "opportunity_id", null: false
+    t.bigint "cadence_definition_id", null: false
+    t.integer "status", default: 0, null: false
+    t.integer "current_step", default: 0, null: false
+    t.datetime "next_attempt_at"
+    t.datetime "paused_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["cadence_definition_id"], name: "index_scan_solo_cadence_enrollments_on_cadence_definition_id"
+    t.index ["opportunity_id", "cadence_definition_id"], name: "idx_scansolo_cadence_enrollments_on_opportunity_and_definition", unique: true
+    t.index ["opportunity_id"], name: "index_scan_solo_cadence_enrollments_on_opportunity_id"
+  end
+
   create_table "scan_solo_conversation_extensions", force: :cascade do |t|
     t.bigint "conversation_id", null: false
     t.integer "ai_control_state", default: 0, null: false
@@ -1760,6 +1798,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_050001) do
   add_foreign_key "scan_solo_agent_action_executions", "scan_solo_ai_turns", column: "turn_id"
   add_foreign_key "scan_solo_agent_action_executions", "scan_solo_audit_events", column: "audit_event_id"
   add_foreign_key "scan_solo_ai_agent_configs", "scan_solo_ai_agent_configs", column: "published_version_id"
+  add_foreign_key "scan_solo_cadence_attempts", "scan_solo_cadence_enrollments", column: "enrollment_id"
+  add_foreign_key "scan_solo_cadence_enrollments", "scan_solo_cadence_definitions", column: "cadence_definition_id"
+  add_foreign_key "scan_solo_cadence_enrollments", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_knowledge_chunks", "scan_solo_knowledge_sources", column: "source_id"
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).

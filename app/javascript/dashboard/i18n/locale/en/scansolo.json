@@ -132,6 +132,22 @@
       "REASON_PLACEHOLDER": "Descreva o motivo da transferência",
       "CANCEL": "Cancelar"
     },
+    "FOLLOW_UPS": {
+      "TITLE": "Follow-ups",
+      "EMPTY_STATE": "Nenhuma cadência de follow-up ativa no momento.",
+      "CURRENT_STEP_LABEL": "Etapa atual",
+      "NEXT_ATTEMPT_LABEL": "Próxima tentativa",
+      "NOT_SCHEDULED": "Não agendado",
+      "STATUSES": {
+        "ACTIVE": "Ativa",
+        "PAUSED": "Pausada",
+        "CANCELLED": "Cancelada",
+        "COMPLETED": "Concluída"
+      },
+      "PAUSE": "Pausar",
+      "RESUME": "Retomar",
+      "CANCEL": "Cancelar"
+    },
     "TURN_EVIDENCE_VIEWER": {
       "TITLE": "Telemetria e evidências por turno",
       "CORRELATION_ID_PLACEHOLDER": "Buscar por correlation id",

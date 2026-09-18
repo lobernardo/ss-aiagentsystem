@@ -6,8 +6,9 @@ json.conversation_id resource.conversation_id
 json.owner_id resource.owner_id
 json.stage resource.stage
 json.last_customer_interaction_at resource.last_customer_interaction_at
-# Wired to the cadence engine's enrollment record in a later phase (T50).
-json.next_follow_up_at nil
+# RF-11/RF-63: next scheduled follow-up across this opportunity's active
+# cadence enrollments (earliest wins if more than one is active).
+json.next_follow_up_at resource.cadence_enrollments.active.minimum(:next_attempt_at)
 json.created_at resource.created_at
 json.updated_at resource.updated_at
 # UI-02: chronological stage history (RF-07 records).

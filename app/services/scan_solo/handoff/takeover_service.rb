@@ -7,6 +7,11 @@
 # note) -- then promotes control to `human_active`. Idempotent: a repeat
 # call while already `human_active` is a no-op, producing no duplicate
 # audit entry.
+#
+# RF-56: also pauses/cancels any scheduled-but-unsent cadence step for this
+# conversation's opportunity in the same processing window, through
+# ScanSolo::Cadence::StopRecalculatePolicy.handle_takeover (T53) -- an
+# already-sent step is never retroactively altered.
 class ScanSolo::Handoff::TakeoverService
   def self.call(conversation:, reason:, actor:)
     new(conversation: conversation, reason: reason, actor: actor).call
@@ -33,10 +38,16 @@ class ScanSolo::Handoff::TakeoverService
       payload: { conversation_id: conversation.id, reason: reason }
     )
 
+    ScanSolo::Cadence::StopRecalculatePolicy.handle_takeover(opportunity: opportunity)
+
     extension
   end
 
   private
 
   attr_reader :conversation, :reason, :actor
+
+  def opportunity
+    ScanSolo::PipelineOpportunity.find_by(conversation_id: conversation.id)
+  end
 end

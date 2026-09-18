@@ -74,3 +74,11 @@ remove_orphan_conversations_job:
   cron: '0 */12 * * *'
   class: 'Internal::RemoveOrphanConversationsJob'
   queue: housekeeping
+
+# executed every 5 minutes
+# RF-60: processes due ScanSolo follow-up cadence attempts through the
+# native background-job architecture, not an external scheduling process
+scan_solo_cadence_due_attempt_job:
+  cron: '*/5 * * * *'
+  class: 'ScanSolo::CadenceDueAttemptJob'
+  queue: scheduled_jobs

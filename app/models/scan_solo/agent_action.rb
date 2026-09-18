@@ -3,6 +3,21 @@
 # below (RF-45), mirroring AutomationRule's closed-vocabulary validation
 # style (verified app/models/automation_rule.rb) without touching
 # AutomationRule itself.
+# == Schema Information
+#
+# Table name: scan_solo_agent_actions
+#
+#  id             :bigint           not null, primary key
+#  classification :integer          not null
+#  schema         :jsonb            not null
+#  created_at     :datetime         not null
+#  updated_at     :datetime         not null
+#  action_id      :string           not null
+#
+# Indexes
+#
+#  index_scan_solo_agent_actions_on_action_id  (action_id) UNIQUE
+#
 class ScanSolo::AgentAction < ApplicationRecord
   self.table_name = 'scan_solo_agent_actions'
 

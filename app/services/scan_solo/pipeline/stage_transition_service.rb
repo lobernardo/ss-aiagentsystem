@@ -1,9 +1,15 @@
 # Sole call path for changing ScanSolo::PipelineOpportunity#stage (RF-19): a
 # rejected transition raises ActiveRecord::RecordInvalid so it maps to the
 # existing global 422 handler without any bespoke controller-side rescue.
+#
+# RF-66: every successful transition stops/recalculates pending cadence
+# work through ScanSolo::Cadence::StopRecalculatePolicy (T53) -- ganho/
+# perdido map to their own dedicated triggers, any other stage change maps
+# to the generic `stage_changed` trigger.
 class ScanSolo::Pipeline::StageTransitionService
   TERMINAL_STAGES = %w[ganho perdido].freeze
   GUARDED_STAGES = %w[negociacao].freeze
+  CADENCE_TRIGGERS = { 'ganho' => 'won', 'perdido' => 'lost' }.freeze
 
   def initialize(opportunity:, target_stage:, actor: nil, authorized: false)
     @opportunity = opportunity
@@ -29,12 +35,18 @@ class ScanSolo::Pipeline::StageTransitionService
       )
     end
 
+    ScanSolo::Cadence::StopRecalculatePolicy.call(opportunity: opportunity, trigger: cadence_trigger)
+
     opportunity
   end
 
   private
 
   attr_reader :opportunity, :target_stage, :actor, :authorized
+
+  def cadence_trigger
+    CADENCE_TRIGGERS.fetch(target_stage, 'stage_changed')
+  end
 
   def validate_target_stage!
     return if ScanSolo::PipelineOpportunity.stages.key?(target_stage)

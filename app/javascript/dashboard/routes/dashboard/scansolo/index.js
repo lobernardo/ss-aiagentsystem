@@ -6,6 +6,7 @@ import OpportunityDetail from './pipeline/OpportunityDetail.vue';
 import AgentCenter from './agent/AgentCenter.vue';
 import TurnEvidenceViewer from './agent/TurnEvidenceViewer.vue';
 import KnowledgeCenter from './knowledge/KnowledgeCenter.vue';
+import FollowUps from './followups/FollowUps.vue';
 
 const meta = {
   permissions: ['administrator', 'agent', 'custom_role'],
@@ -17,6 +18,7 @@ const MODULE_COMPONENTS = {
   pipeline: KanbanBoard,
   agent: AgentCenter,
   knowledge: KnowledgeCenter,
+  followups: FollowUps,
 };
 
 export default {

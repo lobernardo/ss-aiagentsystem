@@ -1,0 +1,136 @@
+version: '3'
+
+# ScanSolo additive Docker Compose overlay.
+#
+# This file never replaces docker-compose.yaml (dev) or
+# docker-compose.production.yaml; it only layers ScanSolo-specific health
+# checks, restart policies, log rotation, and the additional infrastructure
+# services (reverse proxy/TLS, S3-compatible object storage, backup job)
+# described in docs/architecture/SCANSOLO_DEPLOYMENT.md.
+#
+# Staging usage (on top of the production compose file):
+#   docker compose -f docker-compose.yaml -f docker-compose.production.yaml \
+#     -f docker-compose.scansolo.yaml up -d
+#
+# Config lint only (no `up`, no real deploy — see RF-94):
+#   docker compose -f docker-compose.yaml -f docker-compose.scansolo.yaml config
+
+x-scansolo-logging: &scansolo_logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+services:
+  rails:
+    restart: always
+    logging: *scansolo_logging
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:3000']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  sidekiq:
+    restart: always
+    logging: *scansolo_logging
+    healthcheck:
+      test: ['CMD-SHELL', 'bundle exec sidekiqmon processes 2>/dev/null | grep -q .']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  postgres:
+    restart: always
+    logging: *scansolo_logging
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    restart: always
+    logging: *scansolo_logging
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$REDIS_PASSWORD" ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Self-hosted S3-compatible object storage (only needed when not pointing
+  # ACTIVE_STORAGE_SERVICE=s3_compatible at a managed provider such as
+  # DigitalOcean Spaces or AWS S3 directly; see config/storage.yml).
+  minio:
+    image: minio/minio:latest
+    restart: always
+    logging: *scansolo_logging
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${STORAGE_ACCESS_KEY_ID}
+      - MINIO_ROOT_PASSWORD=${STORAGE_SECRET_ACCESS_KEY}
+    volumes:
+      - scansolo_storage:/data
+    ports:
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    profiles:
+      - self-hosted-storage
+
+  # Reverse proxy + TLS termination in front of the `rails` service.
+  # SCANSOLO_DOMAIN drives automatic Let's Encrypt certificate issuance.
+  reverse-proxy:
+    image: caddy:2-alpine
+    restart: always
+    logging: *scansolo_logging
+    depends_on:
+      - rails
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      - SCANSOLO_DOMAIN=${SCANSOLO_DOMAIN:-localhost}
+    command: >
+      sh -c "printf '%s {\n  reverse_proxy rails:3000\n}\n' \"$$SCANSOLO_DOMAIN\" > /etc/caddy/Caddyfile &&
+      caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"
+    volumes:
+      - scansolo_caddy_data:/data
+      - scansolo_caddy_config:/config
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:80']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    profiles:
+      - reverse-proxy
+
+  # One-off backup job — never started by `up`; run explicitly per
+  # docs/architecture/SCANSOLO_DEPLOYMENT.md#backup-restore, e.g.:
+  #   docker compose --profile backup run --rm backup
+  backup:
+    image: postgres:16-alpine
+    restart: 'no'
+    depends_on:
+      - postgres
+    environment:
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+    command: >
+      sh -c "pg_dump -h postgres -U postgres -d chatwoot |
+      gzip > /backups/chatwoot-$(date +%Y%m%d%H%M%S).sql.gz"
+    volumes:
+      - scansolo_backups:/backups
+    profiles:
+      - backup
+
+volumes:
+  scansolo_storage:
+  scansolo_caddy_data:
+  scansolo_caddy_config:
+  scansolo_backups:

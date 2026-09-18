@@ -147,8 +147,12 @@ class ScanSolo::AiTurn::TurnOrchestrator
     }
   end
 
+  # RF-88: the assembled prompt is redacted before it ever reaches
+  # ScanSolo::AiTurn::ModelInvoker, so a secret-shaped value accidentally
+  # present in stored context (e.g. copy-pasted into config instructions)
+  # never leaves the server boundary as part of a model prompt payload.
   def build_prompt(context)
     history = context[:conversation_history].map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n")
-    "Historico da conversa:\n#{history}"
+    ScanSolo::AiTurn::PromptRedactor.call("Historico da conversa:\n#{history}")
   end
 end

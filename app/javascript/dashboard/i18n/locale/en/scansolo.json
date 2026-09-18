@@ -117,6 +117,21 @@
       "SOURCE_ID_LABEL": "Fonte",
       "SIMILARITY_LABEL": "Similaridade"
     },
+    "HANDOFF_BANNER": {
+      "STATES": {
+        "AI_ACTIVE": "IA respondendo automaticamente",
+        "HANDOFF_REQUESTED": "Transferência solicitada",
+        "AWAITING_HUMAN": "Aguardando atendimento humano",
+        "HUMAN_ACTIVE": "Atendimento humano em andamento",
+        "PAUSED": "IA pausada",
+        "CLOSED": "Conversa encerrada"
+      },
+      "TAKEOVER_BUTTON": "Assumir conversa",
+      "RETURN_TO_AI_BUTTON": "Retornar para IA",
+      "REASON_LABEL": "Motivo da transferência",
+      "REASON_PLACEHOLDER": "Descreva o motivo da transferência",
+      "CANCEL": "Cancelar"
+    },
     "TURN_EVIDENCE_VIEWER": {
       "TITLE": "Telemetria e evidências por turno",
       "CORRELATION_ID_PLACEHOLDER": "Buscar por correlation id",

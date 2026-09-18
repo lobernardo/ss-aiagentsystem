@@ -483,6 +483,12 @@ Rails.application.routes.draw do
             end
 
             resources :ai_turns, only: [:index, :show]
+
+            namespace :conversations do
+              get ':conversation_id/control_state', to: 'handoff#show'
+              post ':conversation_id/handoff', to: 'handoff#create'
+              post ':conversation_id/return_to_ai', to: 'handoff#return_to_ai'
+            end
           end
         end
       end

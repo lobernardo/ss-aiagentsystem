@@ -68,4 +68,32 @@ RSpec.describe ScanSolo::ConversationExtension do
     expect(duplicate).not_to be_valid
     expect(duplicate.errors[:conversation_id]).to be_present
   end
+
+  # RF-55: a human reply during a human-active conversation stays in the
+  # same native Message timeline as every other conversation event -- no
+  # ScanSolo-owned parallel human-message store exists anywhere in the
+  # schema to accidentally write to.
+  describe 'RF-55: native-history verification for human replies' do
+    let(:agent) { create(:user, account: account) }
+
+    it 'keeps a human outbound reply during a human-active conversation in conversation.messages' do
+      described_class.resolve_for(conversation).update!(ai_control_state: :human_active)
+
+      reply = Messages::MessageBuilder.new(agent, conversation, { content: 'Já estou olhando seu caso.' }).perform
+
+      expect(conversation.messages.reload).to include(reply)
+      expect(reply.sender).to eq(agent)
+    end
+
+    it 'has no ScanSolo-owned table storing conversation message content in parallel to the native Message model' do
+      scansolo_tables = ActiveRecord::Base.connection.tables.select { |t| t.start_with?('scan_solo_') }
+
+      scansolo_tables.each do |table|
+        columns = ActiveRecord::Base.connection.columns(table).map(&:name)
+        next unless columns.include?('conversation_id')
+
+        expect(columns).not_to include('content'), "expected #{table} to have no parallel message-content column"
+      end
+    end
+  end
 end

@@ -47,7 +47,7 @@ echo "==> Running ScanSolo frontend specs"
 mapfile -t frontend_specs < <(
   find app/javascript/dashboard \
     -type f \
-    -path '*scansolo*' \
+    \( -path '*scansolo*' -o -path '*components-next/conversation/specs*' \) \
     \( -name '*.spec.js' -o -name '*.spec.ts' \) \
     | sort
 )

@@ -10,7 +10,7 @@
 # real application bug.
 class ScanSolo::Knowledge::RetrievalService
   DEFAULT_TOP_K = 5
-  OUTAGE_ERRORS = [ActiveRecord::StatementInvalid, PG::Error, RubyLLM::Error].freeze
+  OUTAGE_ERRORS = [ActiveRecord::StatementInvalid, PG::Error, RubyLLM::Error, RubyLLM::ConfigurationError].freeze
 
   Result = Struct.new(:chunk_id, :source_id, :source_type, :content_snippet, :similarity_score, keyword_init: true)
 

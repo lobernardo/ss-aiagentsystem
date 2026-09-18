@@ -116,6 +116,22 @@
       "RUN_RETRIEVAL_TEST": "Testar busca",
       "SOURCE_ID_LABEL": "Fonte",
       "SIMILARITY_LABEL": "Similaridade"
+    },
+    "TURN_EVIDENCE_VIEWER": {
+      "TITLE": "Telemetria e evidências por turno",
+      "CORRELATION_ID_PLACEHOLDER": "Buscar por correlation id",
+      "SEARCH": "Buscar",
+      "RECENT_TURNS_TITLE": "Turnos recentes",
+      "DETAIL_TITLE": "Detalhes do turno",
+      "GUARDRAIL_OUTCOME_TITLE": "Resultado do guardrail",
+      "KNOWLEDGE_EVIDENCE_TITLE": "Evidência de conhecimento",
+      "ACTION_EVIDENCE_TITLE": "Evidência de ação",
+      "FIELDS": {
+        "INVOCATION_STATUS": "Status da execução",
+        "MODEL": "Modelo",
+        "TOKENS": "Tokens (entrada / saída)",
+        "FAILURE_REASON": "Motivo de falha"
+      }
     }
   }
 }

@@ -481,6 +481,8 @@ Rails.application.routes.draw do
               end
               resources :retrieval_tests, only: [:create]
             end
+
+            resources :ai_turns, only: [:index, :show]
           end
         end
       end

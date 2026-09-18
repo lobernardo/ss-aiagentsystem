@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_030002) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_040001) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1455,6 +1455,31 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_030002) do
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_draft", unique: true, where: "(status = 0)"
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_id"
     t.index ["published_version_id"], name: "index_scan_solo_ai_agent_configs_on_published_version_id"
+  end
+
+  create_table "scan_solo_ai_turns", force: :cascade do |t|
+    t.bigint "message_id", null: false
+    t.bigint "conversation_id", null: false
+    t.string "correlation_id", null: false
+    t.integer "invocation_status", default: 0, null: false
+    t.string "model_provider"
+    t.string "model_reference"
+    t.integer "input_tokens"
+    t.integer "output_tokens"
+    t.decimal "cost_estimate", precision: 10, scale: 6
+    t.integer "latency_ms"
+    t.text "failure_reason"
+    t.jsonb "context_snapshot", default: {}, null: false
+    t.jsonb "guardrail_outcome", default: {}, null: false
+    t.jsonb "knowledge_evidence", default: [], null: false
+    t.jsonb "action_evidence", default: [], null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.bigint "response_message_id"
+    t.index ["conversation_id"], name: "index_scan_solo_ai_turns_on_conversation_id"
+    t.index ["correlation_id"], name: "index_scan_solo_ai_turns_on_correlation_id", unique: true
+    t.index ["message_id"], name: "index_scan_solo_ai_turns_on_message_id", unique: true
+    t.index ["response_message_id"], name: "index_scan_solo_ai_turns_on_response_message_id"
   end
 
   create_table "scan_solo_audit_events", force: :cascade do |t|

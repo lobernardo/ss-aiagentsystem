@@ -37,7 +37,7 @@ RSpec.describe 'ScanSolo migrations' do
     scansolo_migration_files.each do |path|
       source = File.read(path)
 
-      expect(source).to match(/create_table|add_column|add_index/), "#{path} does not define an additive schema change"
+      expect(source).to match(/create_table|add_column|add_index|add_reference/), "#{path} does not define an additive schema change"
       expect(source).not_to match(destructive_pattern), "#{path} contains a destructive schema change"
     end
   end
@@ -125,6 +125,44 @@ RSpec.describe 'ScanSolo migrations' do
 
     expect(embedding_migration).to be_present
     expect(File.read(embedding_migration)).to include('add_column')
+  end
+
+  it 'finds the ai-turns telemetry migration' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/create_scan_solo_ai_turns/))
+  end
+
+  it 'creates the scan_solo_ai_turns table additively with a unique index on message_id and correlation_id' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_ai_turns)).to be true
+    %i[
+      message_id conversation_id correlation_id invocation_status model_provider model_reference input_tokens
+      output_tokens cost_estimate latency_ms failure_reason context_snapshot guardrail_outcome
+      knowledge_evidence action_evidence
+    ].each do |column|
+      expect(connection.column_exists?(:scan_solo_ai_turns, column)).to be true
+    end
+
+    indexes = connection.indexes(:scan_solo_ai_turns)
+    message_id_index = indexes.find { |index| index.columns == ['message_id'] }
+    correlation_id_index = indexes.find { |index| index.columns == ['correlation_id'] }
+
+    expect(message_id_index).to be_present
+    expect(message_id_index.unique).to be true
+    expect(correlation_id_index).to be_present
+    expect(correlation_id_index.unique).to be true
+  end
+
+  it 'adds the response_message reference via its own additive migration' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.column_exists?(:scan_solo_ai_turns, :response_message_id)).to be true
+
+    response_migration = scansolo_migration_files.find { |path| path.include?('add_response_message_reference_to_scan_solo_ai_turns') }
+    expect(response_migration).to be_present
+    expect(File.read(response_migration)).to include('add_reference')
   end
 end
 # rubocop:enable RSpec/DescribeClass

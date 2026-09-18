@@ -1,0 +1,12 @@
+json.id resource.id
+json.proposal_id resource.proposal_id
+json.version_number resource.version_number
+json.status resource.status
+json.is_current resource.is_current
+json.value resource.value
+json.currency resource.currency
+json.artifact_url resource.artifact_url
+json.failure_reason resource.failure_reason
+json.approved_at resource.approved_at
+json.approval_required resource.approval_required?
+json.sent_at resource.send_callback_applied_at

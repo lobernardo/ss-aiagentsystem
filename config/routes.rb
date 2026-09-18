@@ -464,6 +464,19 @@ Rails.application.routes.draw do
               member do
                 post :stage_transitions
               end
+
+              resources :proposals, only: [], controller: 'proposals' do
+                collection do
+                  post :generate
+                end
+              end
+            end
+
+            resources :proposals, only: [:index, :show], controller: 'proposals' do
+              member do
+                post :approve
+                post 'send', to: 'proposals#send_proposal'
+              end
             end
 
             resource :ai_agent_config, only: [:show] do

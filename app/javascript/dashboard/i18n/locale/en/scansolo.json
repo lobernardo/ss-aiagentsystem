@@ -148,6 +148,24 @@
       "RESUME": "Retomar",
       "CANCEL": "Cancelar"
     },
+    "PROPOSALS": {
+      "TITLE": "Propostas",
+      "EMPTY_STATE": "Nenhuma proposta gerada no momento.",
+      "GENERATE": "Gerar proposta",
+      "VERSION_LABEL": "Versão",
+      "CURRENT": "Atual",
+      "NON_CURRENT": "Anterior",
+      "APPROVED": "Aprovada",
+      "APPROVE": "Aprovar",
+      "SEND": "Enviar",
+      "STATUSES": {
+        "GENERATING": "Gerando",
+        "GENERATED": "Gerada",
+        "APPROVED": "Aprovada",
+        "SENT": "Enviada",
+        "FAILED": "Falhou"
+      }
+    },
     "TURN_EVIDENCE_VIEWER": {
       "TITLE": "Telemetria e evidências por turno",
       "CORRELATION_ID_PLACEHOLDER": "Buscar por correlation id",

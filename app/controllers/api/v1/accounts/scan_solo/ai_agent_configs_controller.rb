@@ -29,6 +29,7 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
     params.permit(
       :name, :enabled, :model_provider, :model_selection, :role, :objective, :persona, :tone,
       :instructions, :service_rules, :transfer_criteria, :response_limits, :service_hours,
+      :require_proposal_approval,
       qualification_playbook: [],
       required_qualification_fields: [],
       restricted_information: [],

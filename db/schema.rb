@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_060002) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_070002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1479,6 +1479,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_060002) do
     t.string "service_hours"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "require_proposal_approval", default: true, null: false
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_draft", unique: true, where: "(status = 0)"
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_id"
     t.index ["published_version_id"], name: "index_scan_solo_ai_agent_configs_on_published_version_id"
@@ -1618,6 +1619,45 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_060002) do
     t.datetime "created_at", null: false
     t.index ["actor_type", "actor_id"], name: "idx_on_actor_type_actor_id_2f58bcdc3c"
     t.index ["opportunity_id"], name: "index_scan_solo_pipeline_stage_events_on_opportunity_id"
+  end
+
+  create_table "scan_solo_proposal_versions", force: :cascade do |t|
+    t.bigint "proposal_id", null: false
+    t.integer "version_number", null: false
+    t.integer "status", default: 0, null: false
+    t.boolean "is_current", default: true, null: false
+    t.decimal "value", precision: 12, scale: 2
+    t.string "currency"
+    t.string "artifact_url"
+    t.string "failure_reason"
+    t.string "generate_correlation_id"
+    t.datetime "generate_requested_at"
+    t.datetime "generate_callback_applied_at"
+    t.datetime "approved_at"
+    t.string "approved_by_type"
+    t.bigint "approved_by_id"
+    t.string "send_correlation_id"
+    t.datetime "send_requested_at"
+    t.datetime "send_callback_applied_at"
+    t.bigint "sent_message_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["approved_by_type", "approved_by_id"], name: "idx_on_approved_by_type_approved_by_id_0a2d8f1dd3"
+    t.index ["generate_correlation_id"], name: "index_scan_solo_proposal_versions_on_generate_correlation_id", unique: true
+    t.index ["proposal_id", "version_number"], name: "index_scan_solo_proposal_versions_on_proposal_and_number", unique: true
+    t.index ["proposal_id"], name: "index_scan_solo_proposal_versions_on_current", unique: true, where: "(is_current = true)"
+    t.index ["proposal_id"], name: "index_scan_solo_proposal_versions_on_proposal_id"
+    t.index ["send_correlation_id"], name: "index_scan_solo_proposal_versions_on_send_correlation_id", unique: true
+    t.index ["sent_message_id"], name: "index_scan_solo_proposal_versions_on_sent_message_id"
+  end
+
+  create_table "scan_solo_proposals", force: :cascade do |t|
+    t.bigint "opportunity_id", null: false
+    t.bigint "current_version_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["current_version_id"], name: "index_scan_solo_proposals_on_current_version_id"
+    t.index ["opportunity_id"], name: "index_scan_solo_proposals_on_opportunity_id", unique: true
   end
 
   create_table "sla_events", force: :cascade do |t|
@@ -1802,6 +1842,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_060002) do
   add_foreign_key "scan_solo_cadence_enrollments", "scan_solo_cadence_definitions", column: "cadence_definition_id"
   add_foreign_key "scan_solo_cadence_enrollments", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_knowledge_chunks", "scan_solo_knowledge_sources", column: "source_id"
+  add_foreign_key "scan_solo_proposal_versions", "scan_solo_proposals", column: "proposal_id"
+  add_foreign_key "scan_solo_proposals", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).
       on("accounts").

@@ -17,4 +17,5 @@ json.forbidden_subjects resource.forbidden_subjects
 json.transfer_criteria resource.transfer_criteria
 json.response_limits resource.response_limits
 json.service_hours resource.service_hours
+json.require_proposal_approval resource.require_proposal_approval
 json.updated_at resource.updated_at

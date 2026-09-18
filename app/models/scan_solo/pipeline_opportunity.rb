@@ -39,6 +39,12 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
            inverse_of: :opportunity,
            dependent: :destroy
 
+  has_one :proposal,
+          class_name: 'ScanSolo::Proposal',
+          foreign_key: :opportunity_id,
+          inverse_of: :opportunity,
+          dependent: :destroy
+
   enum stage: {
     novo_lead: 0,
     em_contato: 1,

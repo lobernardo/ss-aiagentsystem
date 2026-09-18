@@ -241,5 +241,68 @@ RSpec.describe 'ScanSolo migrations' do
     expect(step_index).to be_present
     expect(step_index.unique).to be true
   end
+
+  it 'finds the proposal and proposal-version migrations' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/create_scan_solo_proposals/))
+    expect(basenames).to include(a_string_matching(/create_scan_solo_proposal_versions/))
+  end
+
+  it 'creates the scan_solo_proposals table additively with a unique index on opportunity_id' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_proposals)).to be true
+    %i[opportunity_id current_version_id].each do |column|
+      expect(connection.column_exists?(:scan_solo_proposals, column)).to be true
+    end
+
+    opportunity_index = connection.indexes(:scan_solo_proposals).find { |index| index.columns == ['opportunity_id'] }
+    expect(opportunity_index).to be_present
+    expect(opportunity_index.unique).to be true
+  end
+
+  it 'creates the scan_solo_proposal_versions table additively with every expected column' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_proposal_versions)).to be true
+    %i[
+      proposal_id version_number status is_current value currency artifact_url failure_reason
+      generate_correlation_id generate_requested_at generate_callback_applied_at
+      approved_at approved_by_type approved_by_id
+      send_correlation_id send_requested_at send_callback_applied_at sent_message_id
+    ].each do |column|
+      expect(connection.column_exists?(:scan_solo_proposal_versions, column)).to be true
+    end
+  end
+
+  it 'enforces a single current version per proposal via a partial unique index' do
+    connection = ActiveRecord::Base.connection
+
+    current_index = connection.indexes(:scan_solo_proposal_versions).find { |index| index.name == 'index_scan_solo_proposal_versions_on_current' }
+    expect(current_index).to be_present
+    expect(current_index.unique).to be true
+    expect(current_index.where).to eq('(is_current = true)')
+  end
+
+  it 'enforces unique generate/send correlation ids on scan_solo_proposal_versions' do
+    connection = ActiveRecord::Base.connection
+
+    generate_correlation_index = connection.indexes(:scan_solo_proposal_versions).find { |index| index.columns == ['generate_correlation_id'] }
+    expect(generate_correlation_index).to be_present
+    expect(generate_correlation_index.unique).to be true
+
+    send_correlation_index = connection.indexes(:scan_solo_proposal_versions).find { |index| index.columns == ['send_correlation_id'] }
+    expect(send_correlation_index).to be_present
+    expect(send_correlation_index.unique).to be true
+  end
+
+  it 'finds the require_proposal_approval addition to scan_solo_ai_agent_configs' do
+    connection = ActiveRecord::Base.connection
+
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+    expect(basenames).to include(a_string_matching(/add_require_proposal_approval_to_scan_solo_ai_agent_configs/))
+    expect(connection.column_exists?(:scan_solo_ai_agent_configs, :require_proposal_approval)).to be true
+  end
 end
 # rubocop:enable RSpec/DescribeClass

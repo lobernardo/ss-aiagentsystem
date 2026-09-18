@@ -7,6 +7,7 @@ import AgentCenter from './agent/AgentCenter.vue';
 import TurnEvidenceViewer from './agent/TurnEvidenceViewer.vue';
 import KnowledgeCenter from './knowledge/KnowledgeCenter.vue';
 import FollowUps from './followups/FollowUps.vue';
+import Proposals from './proposals/Proposals.vue';
 
 const meta = {
   permissions: ['administrator', 'agent', 'custom_role'],
@@ -19,6 +20,7 @@ const MODULE_COMPONENTS = {
   agent: AgentCenter,
   knowledge: KnowledgeCenter,
   followups: FollowUps,
+  proposals: Proposals,
 };
 
 export default {

@@ -460,8 +460,11 @@ Rails.application.routes.draw do
           resources :upload, only: [:create]
 
           namespace :scan_solo do
-            # Reserved for ScanSolo feature controllers; BaseController has no
-            # concrete action of its own until a later phase adds one here.
+            resources :pipeline_opportunities, only: [:index, :show, :update] do
+              member do
+                post :stage_transitions
+              end
+            end
           end
         end
       end

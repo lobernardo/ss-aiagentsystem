@@ -34,6 +34,31 @@
         "TITLE": "Execuções e auditoria",
         "DESCRIPTION": "O histórico de execuções e auditoria estará disponível em breve."
       }
+    },
+    "PIPELINE_BOARD": {
+      "STAGES": {
+        "NOVO_LEAD": "Novo Lead",
+        "EM_CONTATO": "Em Contato",
+        "EM_QUALIFICACAO": "Em Qualificação",
+        "QUALIFICADO": "Qualificado",
+        "PROPOSTA_ENVIADA": "Proposta Enviada",
+        "NEGOCIACAO": "Negociação",
+        "GANHO": "Ganho",
+        "PERDIDO": "Perdido"
+      },
+      "STALE_INDICATOR": "Inativo",
+      "OWNER_LABEL": "Responsável",
+      "UNASSIGNED_OWNER": "Sem responsável",
+      "LAST_INTERACTION_LABEL": "Última interação",
+      "NEXT_FOLLOW_UP_LABEL": "Próximo follow-up",
+      "NOT_SCHEDULED": "Não agendado",
+      "DETAIL": {
+        "TITLE": "Detalhes da oportunidade",
+        "CONTACT_LABEL": "Contato",
+        "CONVERSATION_LINK": "Ver conversa",
+        "HISTORY_TITLE": "Histórico de estágios",
+        "HISTORY_EMPTY": "Nenhum histórico de estágio registrado ainda."
+      }
     }
   }
 }

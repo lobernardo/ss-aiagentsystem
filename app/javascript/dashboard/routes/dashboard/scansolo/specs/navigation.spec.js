@@ -4,7 +4,11 @@ import { buildScanSoloSidebarItems } from '../scansoloSidebarItems';
 
 describe('ScanSolo dashboard navigation', () => {
   it('registers one SPA route per new ScanSolo module', () => {
-    expect(scansoloRoutes.routes).toHaveLength(SCANSOLO_MODULES.length);
+    // >= rather than exact: individual modules (e.g. pipeline's opportunity
+    // detail view) may register their own additional nested routes here.
+    expect(scansoloRoutes.routes.length).toBeGreaterThanOrEqual(
+      SCANSOLO_MODULES.length
+    );
 
     SCANSOLO_MODULES.forEach(scanSoloModule => {
       const route = scansoloRoutes.routes.find(

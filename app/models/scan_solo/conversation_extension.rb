@@ -1,3 +1,17 @@
+# == Schema Information
+#
+# Table name: scan_solo_conversation_extensions
+#
+#  id               :bigint           not null, primary key
+#  ai_control_state :integer          default("ai_active"), not null
+#  created_at       :datetime         not null
+#  updated_at       :datetime         not null
+#  conversation_id  :bigint           not null
+#
+# Indexes
+#
+#  index_scan_solo_conversation_extensions_on_conversation_id  (conversation_id) UNIQUE
+#
 class ScanSolo::ConversationExtension < ApplicationRecord
   self.table_name = 'scan_solo_conversation_extensions'
 

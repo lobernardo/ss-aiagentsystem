@@ -18,6 +18,13 @@ RSpec.describe 'ScanSolo migrations' do
     expect(basenames).to include(a_string_matching(/create_scan_solo_audit_events/))
   end
 
+  it 'finds the pipeline-opportunity and stage-event migrations' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/create_scan_solo_pipeline_opportunities/))
+    expect(basenames).to include(a_string_matching(/create_scan_solo_pipeline_stage_events/))
+  end
+
   it 'contains only create_table statements, never a destructive change to a pre-existing table' do
     expect(scansolo_migration_files).not_to be_empty
 
@@ -44,6 +51,25 @@ RSpec.describe 'ScanSolo migrations' do
     expect(connection.column_exists?(:scan_solo_audit_events, :updated_at)).to be false
     %i[subject_type subject_id event_type correlation_id payload created_at].each do |column|
       expect(connection.column_exists?(:scan_solo_audit_events, column)).to be true
+    end
+  end
+
+  it 'creates the scan_solo_pipeline_opportunities table additively' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_pipeline_opportunities)).to be true
+    %i[account_id contact_id conversation_id owner_id stage last_customer_interaction_at].each do |column|
+      expect(connection.column_exists?(:scan_solo_pipeline_opportunities, column)).to be true
+    end
+  end
+
+  it 'creates the scan_solo_pipeline_stage_events table additively with no update path' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_pipeline_stage_events)).to be true
+    expect(connection.column_exists?(:scan_solo_pipeline_stage_events, :updated_at)).to be false
+    %i[opportunity_id from_stage to_stage actor_type actor_id created_at].each do |column|
+      expect(connection.column_exists?(:scan_solo_pipeline_stage_events, column)).to be true
     end
   end
 end

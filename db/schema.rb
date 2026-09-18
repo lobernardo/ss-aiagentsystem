@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_005013) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_010001) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1450,6 +1450,32 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_005013) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["conversation_id"], name: "index_scan_solo_conversation_extensions_on_conversation_id", unique: true
+  end
+
+  create_table "scan_solo_pipeline_opportunities", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "contact_id", null: false
+    t.bigint "conversation_id", null: false
+    t.bigint "owner_id"
+    t.integer "stage", default: 0, null: false
+    t.datetime "last_customer_interaction_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_scan_solo_pipeline_opportunities_on_account_id"
+    t.index ["contact_id"], name: "index_scan_solo_pipeline_opportunities_on_contact_id"
+    t.index ["conversation_id"], name: "index_scan_solo_pipeline_opportunities_on_conversation_id", unique: true
+    t.index ["owner_id"], name: "index_scan_solo_pipeline_opportunities_on_owner_id"
+  end
+
+  create_table "scan_solo_pipeline_stage_events", force: :cascade do |t|
+    t.bigint "opportunity_id", null: false
+    t.string "from_stage", null: false
+    t.string "to_stage", null: false
+    t.string "actor_type"
+    t.bigint "actor_id"
+    t.datetime "created_at", null: false
+    t.index ["actor_type", "actor_id"], name: "idx_on_actor_type_actor_id_2f58bcdc3c"
+    t.index ["opportunity_id"], name: "index_scan_solo_pipeline_stage_events_on_opportunity_id"
   end
 
   create_table "sla_events", force: :cascade do |t|

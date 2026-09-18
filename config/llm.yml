@@ -198,3 +198,17 @@ features:
   help_center_search:
     models: [text-embedding-3-small]
     default: text-embedding-3-small
+  # ScanSolo AI Agent Center (RF-21): resolved exclusively through
+  # Llm::FeatureRouter, never a second hand-rolled provider client. Marked
+  # internal so it stays out of the native Captain preferences screen, which
+  # only lists Llm::Models.feature_keys (non-internal features).
+  scansolo_agent_response:
+    models:
+      [
+        gpt-4.1-mini,
+        gpt-4.1,
+        gpt-5.1,
+        gpt-5.2,
+      ]
+    default: gpt-4.1-mini
+    internal: true

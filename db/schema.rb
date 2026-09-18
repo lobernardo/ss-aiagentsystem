@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_010001) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_020000) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1429,6 +1429,34 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_010001) do
     t.index ["account_id", "metric", "date"], name: "index_rollup_timeseries"
   end
 
+  create_table "scan_solo_ai_agent_configs", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.integer "status", default: 0, null: false
+    t.bigint "published_version_id"
+    t.string "name"
+    t.boolean "enabled", default: false, null: false
+    t.string "model_provider"
+    t.string "model_selection"
+    t.string "role"
+    t.string "objective"
+    t.string "persona"
+    t.string "tone"
+    t.text "instructions"
+    t.text "service_rules"
+    t.jsonb "qualification_playbook", default: [], null: false
+    t.jsonb "required_qualification_fields", default: [], null: false
+    t.jsonb "restricted_information", default: [], null: false
+    t.jsonb "forbidden_subjects", default: [], null: false
+    t.text "transfer_criteria"
+    t.text "response_limits"
+    t.string "service_hours"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_draft", unique: true, where: "(status = 0)"
+    t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_id"
+    t.index ["published_version_id"], name: "index_scan_solo_ai_agent_configs_on_published_version_id"
+  end
+
   create_table "scan_solo_audit_events", force: :cascade do |t|
     t.string "subject_type", null: false
     t.bigint "subject_id", null: false
@@ -1653,6 +1681,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_010001) do
   add_foreign_key "campaign_recipients", "contacts", on_delete: :cascade
   add_foreign_key "campaign_recipients", "inboxes", on_delete: :cascade
   add_foreign_key "inboxes", "portals"
+  add_foreign_key "scan_solo_ai_agent_configs", "scan_solo_ai_agent_configs", column: "published_version_id"
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).
       on("accounts").

@@ -465,6 +465,13 @@ Rails.application.routes.draw do
                 post :stage_transitions
               end
             end
+
+            resource :ai_agent_config, only: [:show] do
+              member do
+                put :draft
+                post :publish
+              end
+            end
           end
         end
       end

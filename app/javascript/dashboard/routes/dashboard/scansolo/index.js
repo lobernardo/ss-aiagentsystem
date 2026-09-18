@@ -3,6 +3,7 @@ import { SCANSOLO_MODULES } from './scansoloModules';
 import ScanSoloComingSoonPage from './pages/ScanSoloComingSoonPage.vue';
 import KanbanBoard from './pipeline/KanbanBoard.vue';
 import OpportunityDetail from './pipeline/OpportunityDetail.vue';
+import AgentCenter from './agent/AgentCenter.vue';
 
 const meta = {
   permissions: ['administrator', 'agent', 'custom_role'],
@@ -12,6 +13,7 @@ const meta = {
 // placeholder here; the rest fall back to it until their own phase lands.
 const MODULE_COMPONENTS = {
   pipeline: KanbanBoard,
+  agent: AgentCenter,
 };
 
 export default {

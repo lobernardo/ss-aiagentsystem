@@ -25,6 +25,12 @@ RSpec.describe 'ScanSolo migrations' do
     expect(basenames).to include(a_string_matching(/create_scan_solo_pipeline_stage_events/))
   end
 
+  it 'finds the ai-agent-config migration' do
+    basenames = scansolo_migration_files.map { |path| File.basename(path) }
+
+    expect(basenames).to include(a_string_matching(/create_scan_solo_ai_agent_configs/))
+  end
+
   it 'contains only create_table statements, never a destructive change to a pre-existing table' do
     expect(scansolo_migration_files).not_to be_empty
 
@@ -70,6 +76,19 @@ RSpec.describe 'ScanSolo migrations' do
     expect(connection.column_exists?(:scan_solo_pipeline_stage_events, :updated_at)).to be false
     %i[opportunity_id from_stage to_stage actor_type actor_id created_at].each do |column|
       expect(connection.column_exists?(:scan_solo_pipeline_stage_events, column)).to be true
+    end
+  end
+
+  it 'creates the scan_solo_ai_agent_configs table additively with a draft/published status and a self-reference' do
+    connection = ActiveRecord::Base.connection
+
+    expect(connection.table_exists?(:scan_solo_ai_agent_configs)).to be true
+    %i[
+      account_id status published_version_id name enabled model_provider model_selection role objective
+      persona tone instructions service_rules qualification_playbook required_qualification_fields
+      restricted_information forbidden_subjects transfer_criteria response_limits service_hours
+    ].each do |column|
+      expect(connection.column_exists?(:scan_solo_ai_agent_configs, column)).to be true
     end
   end
 end

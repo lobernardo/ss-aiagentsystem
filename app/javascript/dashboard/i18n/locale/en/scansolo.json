@@ -59,6 +59,36 @@
         "HISTORY_TITLE": "Histórico de estágios",
         "HISTORY_EMPTY": "Nenhum histórico de estágio registrado ainda."
       }
+    },
+    "AGENT_CENTER": {
+      "TITLE": "Agente de IA",
+      "STATUS_PUBLISHED": "Publicado",
+      "STATUS_NOT_PUBLISHED": "Ainda não publicado",
+      "DRAFT_UNPUBLISHED_NOTICE": "Você está editando o rascunho. As conversas em andamento continuam usando a última versão publicada até que você publique.",
+      "SAVE_DRAFT": "Salvar rascunho",
+      "PUBLISH": "Publicar",
+      "PUBLISH_CONFIRM_MESSAGE": "Publicar substitui a configuração ativa do agente de IA para todas as novas conversas. Deseja confirmar?",
+      "PUBLISH_CONFIRM": "Confirmar publicação",
+      "PUBLISH_CANCEL": "Cancelar",
+      "FIELDS": {
+        "NAME": "Nome do agente",
+        "ENABLED": "Agente ativo",
+        "MODEL_PROVIDER": "Provedor do modelo",
+        "MODEL_SELECTION": "Modelo",
+        "ROLE": "Papel",
+        "OBJECTIVE": "Objetivo",
+        "PERSONA": "Persona",
+        "TONE": "Tom de voz",
+        "INSTRUCTIONS": "Instruções gerais",
+        "SERVICE_RULES": "Regras de atendimento",
+        "QUALIFICATION_PLAYBOOK": "Roteiro de qualificação",
+        "REQUIRED_QUALIFICATION_FIELDS": "Campos obrigatórios de qualificação",
+        "RESTRICTED_INFORMATION": "Informações restritas",
+        "FORBIDDEN_SUBJECTS": "Assuntos proibidos",
+        "TRANSFER_CRITERIA": "Critérios de transferência",
+        "RESPONSE_LIMITS": "Limites de resposta",
+        "SERVICE_HOURS": "Horário de atendimento"
+      }
     }
   }
 }

@@ -4,6 +4,7 @@ import ScanSoloComingSoonPage from './pages/ScanSoloComingSoonPage.vue';
 import KanbanBoard from './pipeline/KanbanBoard.vue';
 import OpportunityDetail from './pipeline/OpportunityDetail.vue';
 import AgentCenter from './agent/AgentCenter.vue';
+import KnowledgeCenter from './knowledge/KnowledgeCenter.vue';
 
 const meta = {
   permissions: ['administrator', 'agent', 'custom_role'],
@@ -14,6 +15,7 @@ const meta = {
 const MODULE_COMPONENTS = {
   pipeline: KanbanBoard,
   agent: AgentCenter,
+  knowledge: KnowledgeCenter,
 };
 
 export default {

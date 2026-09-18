@@ -1,0 +1,11 @@
+json.id resource.id
+json.source_type resource.source_type
+json.title resource.title
+json.content resource.content
+json.origin resource.origin
+json.enabled resource.enabled
+json.added_by_id resource.added_by_id
+json.chunks_count resource.knowledge_chunks.size
+json.file_attached resource.file.attached?
+json.created_at resource.created_at
+json.updated_at resource.updated_at

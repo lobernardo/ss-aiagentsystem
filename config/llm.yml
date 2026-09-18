@@ -212,3 +212,11 @@ features:
       ]
     default: gpt-4.1-mini
     internal: true
+  # ScanSolo Knowledge/RAG (RF-28): chunk embeddings resolved exclusively
+  # through Llm::FeatureRouter, matching the dimension of the
+  # scan_solo_knowledge_chunks.embedding vector(1536) column. Marked
+  # internal for the same reason as scansolo_agent_response above.
+  scansolo_knowledge_embedding:
+    models: [text-embedding-3-small]
+    default: text-embedding-3-small
+    internal: true

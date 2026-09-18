@@ -89,6 +89,33 @@
         "RESPONSE_LIMITS": "Limites de resposta",
         "SERVICE_HOURS": "Horário de atendimento"
       }
+    },
+    "KNOWLEDGE_CENTER": {
+      "TITLE": "Conhecimento",
+      "ADD_SOURCE_TITLE": "Adicionar fonte de conhecimento",
+      "ADD_SOURCE": "Adicionar",
+      "SOURCES_TITLE": "Fontes cadastradas",
+      "SOURCE_TYPES": {
+        "DOCUMENT": "Documento",
+        "FAQ": "Pergunta frequente",
+        "COMPANY_INFO": "Informação da empresa"
+      },
+      "FIELDS": {
+        "TITLE": "Título",
+        "CONTENT": "Conteúdo",
+        "ORIGIN": "Origem",
+        "QUERY": "Pergunta de teste"
+      },
+      "ENABLED": "Ativa",
+      "DISABLED": "Desativada",
+      "ENABLE": "Ativar",
+      "DISABLE": "Desativar",
+      "REINDEX": "Reindexar",
+      "DELETE": "Excluir",
+      "RETRIEVAL_SIMULATOR_TITLE": "Simulador de busca",
+      "RUN_RETRIEVAL_TEST": "Testar busca",
+      "SOURCE_ID_LABEL": "Fonte",
+      "SIMILARITY_LABEL": "Similaridade"
     }
   }
 }

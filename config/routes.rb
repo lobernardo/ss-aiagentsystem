@@ -472,6 +472,15 @@ Rails.application.routes.draw do
                 post :publish
               end
             end
+
+            namespace :knowledge do
+              resources :sources, only: [:index, :create, :update, :destroy] do
+                member do
+                  post :reindex
+                end
+              end
+              resources :retrieval_tests, only: [:create]
+            end
           end
         end
       end

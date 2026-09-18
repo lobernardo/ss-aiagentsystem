@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_18_020000) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_18_030002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1480,6 +1480,30 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_020000) do
     t.index ["conversation_id"], name: "index_scan_solo_conversation_extensions_on_conversation_id", unique: true
   end
 
+  create_table "scan_solo_knowledge_chunks", force: :cascade do |t|
+    t.bigint "source_id", null: false
+    t.text "content", null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.vector "embedding", limit: 1536
+    t.index ["source_id"], name: "index_scan_solo_knowledge_chunks_on_source_id"
+  end
+
+  create_table "scan_solo_knowledge_sources", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "added_by_id"
+    t.integer "source_type", default: 0, null: false
+    t.string "title"
+    t.text "content"
+    t.string "origin"
+    t.boolean "enabled", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_scan_solo_knowledge_sources_on_account_id"
+    t.index ["added_by_id"], name: "index_scan_solo_knowledge_sources_on_added_by_id"
+  end
+
   create_table "scan_solo_pipeline_opportunities", force: :cascade do |t|
     t.bigint "account_id", null: false
     t.bigint "contact_id", null: false
@@ -1682,6 +1706,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_18_020000) do
   add_foreign_key "campaign_recipients", "inboxes", on_delete: :cascade
   add_foreign_key "inboxes", "portals"
   add_foreign_key "scan_solo_ai_agent_configs", "scan_solo_ai_agent_configs", column: "published_version_id"
+  add_foreign_key "scan_solo_knowledge_chunks", "scan_solo_knowledge_sources", column: "source_id"
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).
       on("accounts").

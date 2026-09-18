@@ -510,6 +510,8 @@ Rails.application.routes.draw do
               post ':conversation_id/handoff', to: 'handoff#create'
               post ':conversation_id/return_to_ai', to: 'handoff#return_to_ai'
             end
+
+            resources :executions, only: [:index]
           end
         end
       end

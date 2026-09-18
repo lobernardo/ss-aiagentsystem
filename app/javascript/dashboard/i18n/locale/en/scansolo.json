@@ -166,6 +166,31 @@
         "FAILED": "Falhou"
       }
     },
+    "EXECUTIONS": {
+      "TITLE": "Execuções e auditoria",
+      "CADENCE_EVIDENCE_TITLE": "Evidência de cadência",
+      "CADENCE_EVIDENCE_EMPTY_STATE": "Nenhuma cadência registrada ainda.",
+      "STEP_LABEL": "Etapa",
+      "TEMPLATE_LABEL": "Modelo",
+      "SCHEDULED_AT_LABEL": "Agendado para",
+      "SENT_AT_LABEL": "Enviado em",
+      "RESULT_LABEL": "Resultado",
+      "MAKE_ERRORS_TITLE": "Erros e dead-letter do Make",
+      "MAKE_ERRORS_EMPTY_STATE": "Nenhum erro de integração com o Make no momento.",
+      "DEAD_LETTERS_TITLE": "Requisições em dead-letter",
+      "CALLBACK_ERRORS_TITLE": "Callbacks rejeitados",
+      "ACTION_LABEL": "Ação",
+      "CORRELATION_ID_LABEL": "Correlation id",
+      "RETRY_COUNT_LABEL": "Tentativas",
+      "STATUS_LABEL": "Status",
+      "REJECTION_REASON_LABEL": "Motivo da rejeição",
+      "AUDIT_EVENTS_TITLE": "Registros de auditoria",
+      "AUDIT_EVENTS_EMPTY_STATE": "Nenhum registro de auditoria ainda.",
+      "EVENT_TYPE_LABEL": "Tipo de evento",
+      "SUBJECT_LABEL": "Registro relacionado",
+      "ACTOR_LABEL": "Ator",
+      "CREATED_AT_LABEL": "Registrado em"
+    },
     "TURN_EVIDENCE_VIEWER": {
       "TITLE": "Telemetria e evidências por turno",
       "CORRELATION_ID_PLACEHOLDER": "Buscar por correlation id",

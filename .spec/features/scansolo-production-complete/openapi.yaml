@@ -1,0 +1,1464 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Production Complete — REST contract delta
+  version: "1.2.0"
+  description: >
+    Delta over `.spec/features/scansolo-chatwoot-platform/openapi.yaml` (v1.1.0).
+    Only paths NEW or CHANGED by SPEC `scansolo-production-complete` v1.2 are
+    listed (CT-01, CT-02, CT-03, CT-04, CT-07, CT-08, CT-10, CT-11). Every path
+    of the prior contract not repeated here remains valid and unchanged
+    (pipeline opportunities, stage transitions, control_state / handoff /
+    return_to_ai, cadence enrollments). Base path verified at
+    `config/routes.rb:462` (`namespace :scan_solo`). Every endpoint keeps the
+    existing `BaseController` 404 gate when `Account#scansolo_enabled?` is false.
+    Intentional incompatibilities vs v1.1.0 are called out in each operation's
+    description under "COMPAT".
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: app.scansolo.local
+
+security:
+  - userApiKey: []
+
+paths:
+  /accounts/{account_id}/scan_solo/ai_agent_config:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: showAiAgentConfig
+      summary: Read draft/published config plus selectable models (CT-01; RF-03, RF-16, UI-04, UI-08, UI-14)
+      description: >
+        CHANGED. Adds `allowed_inbox_ids`, `opt_out_keywords` and
+        `require_proposal_approval` to both representations and the read-only
+        `available_models` list (models of the `scansolo_agent_response` feature in
+        `config/llm.yml`). Readable by every account user (RF-48).
+        COMPAT: additive.
+      responses:
+        '200':
+          description: Draft/published pair and model list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [draft, published, available_models]
+                properties:
+                  draft:
+                    $ref: '#/components/schemas/AiAgentConfig'
+                  published:
+                    oneOf:
+                      - $ref: '#/components/schemas/AiAgentConfig'
+                      - type: "null"
+                  available_models:
+                    type: array
+                    items:
+                      type: string
+                    examples:
+                      - [gpt-4.1-mini, gpt-4.1, gpt-5.1, gpt-5.2]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/draft:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    put:
+      operationId: updateAiAgentConfigDraft
+      summary: Update the draft (administrator only) (CT-01; RF-03, RF-16, RF-48, RF-50, UI-07, UI-08, UI-14)
+      description: >
+        CHANGED. Accepts `allowed_inbox_ids` (inboxes of the same account only),
+        `opt_out_keywords` and `require_proposal_approval`. Unknown
+        `model_selection` (not in `available_models`) → 422 instead of the
+        previous silent fallback. Non-administrator → 403.
+        COMPAT: the 403 for agents and the 422 for unknown models are intentional
+        tightenings mandated by RF-48 / UI-08.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiAgentConfigInput'
+      responses:
+        '200':
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfig'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Inbox of another account, unknown model, or invalid field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/publish:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: publishAiAgentConfig
+      summary: Publish the draft (administrator only, throttled) (CT-01; RF-03, RF-48, RF-49, RF-50)
+      description: >
+        CHANGED. The snapshot now also copies `allowed_inbox_ids` and
+        `opt_out_keywords`. Non-administrator → 403; over the per-account publish
+        threshold (RNF-06 default 10/min, ENV `RATE_LIMIT_SCANSOLO_PUBLISH`) → 429.
+      responses:
+        '200':
+          description: Published version swapped atomically.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfig'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /accounts/{account_id}/scan_solo/knowledge/sources:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listKnowledgeSources
+      summary: List knowledge sources with indexing state (CT-02; RF-44, RF-45, UI-11)
+      description: CHANGED (not in v1.1.0). Readable by every account user.
+      responses:
+        '200':
+          description: Sources of the account, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KnowledgeSource'
+    post:
+      operationId: createKnowledgeSource
+      summary: Create a source; ingestion runs asynchronously (administrator only) (CT-02; RF-44, RF-45, RF-48, RF-49, RF-50)
+      description: >
+        Returns the source with `index_status: pending`; indexing happens in
+        `ScanSolo::KnowledgeIngestionJob`. Non-administrator → 403; over the
+        knowledge-writes threshold (RNF-06 default 20/min, ENV
+        `RATE_LIMIT_SCANSOLO_KNOWLEDGE_WRITES`) → 429.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeSourceInput'
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/KnowledgeSourceInput'
+                - type: object
+                  properties:
+                    file:
+                      type: string
+                      format: binary
+      responses:
+        '200':
+          description: Source created, indexing pending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeSource'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /accounts/{account_id}/scan_solo/knowledge/sources/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    patch:
+      operationId: updateKnowledgeSource
+      summary: Update a source; a `content` change re-indexes (administrator only) (CT-02; RF-43, RF-48, RF-49, RF-50)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                title:
+                  type: string
+                content:
+                  type: string
+                origin:
+                  type: string
+      responses:
+        '200':
+          description: >
+            Source updated. When `content` changed, `index_status` is `pending`
+            and chunks are rebuilt asynchronously; otherwise chunks are untouched.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeSource'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      operationId: deleteKnowledgeSource
+      summary: Delete a source (administrator only) (CT-02; RF-48, RF-50)
+      description: CHANGED — adds 403 for non-administrators. COMPAT tightening per RF-48.
+      responses:
+        '204':
+          description: Source and its chunks deleted.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/knowledge/sources/{id}/reindex:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    post:
+      operationId: reindexKnowledgeSource
+      summary: Re-index a source (administrator only, throttled) (CT-02; RF-44, RF-48, RF-49, RF-50)
+      responses:
+        '200':
+          description: Re-index enqueued; `index_status` is `pending`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeSource'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /accounts/{account_id}/scan_solo/knowledge/retrieval_tests:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: createKnowledgeRetrievalTest
+      summary: Retrieval simulator (administrator only, throttled, top_k ≤ 20) (CT-02; RF-48, RF-49)
+      description: >
+        CHANGED. `top_k` maximum lowered from 50 to 20 (values 21..50 now → 422);
+        non-administrator → 403; over the retrieval-tests threshold (RNF-06 default
+        30/min, ENV `RATE_LIMIT_SCANSOLO_RETRIEVAL_TESTS`) → 429.
+        COMPAT: intentional breaking tightening mandated by RF-49 (v1.1.0 allowed
+        `top_k` up to 50).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                top_k:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                  default: 5
+      responses:
+        '200':
+          description: Ranked chunks.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KnowledgeRetrievalResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /accounts/{account_id}/scan_solo/cadence_templates:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listCadenceTemplates
+      summary: Template mapping and availability per stage/step and proposal send (CT-03; RF-32, RF-33, UI-12)
+      description: >
+        NEW. One row per (stage, step) of every active cadence definition plus one
+        row with `step: null` for the proposal send. Rows without a stored mapping
+        show the convention `scansolo_cadence_<stage>_v<version>_step<n>` with
+        language `pt_BR` and no params. Availability is evaluated against the
+        synced `message_templates` of the account's allowlisted WhatsApp inbox(es).
+      responses:
+        '200':
+          description: Template rows.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CadenceTemplateRow'
+    put:
+      operationId: upsertCadenceTemplate
+      summary: Create or replace a template mapping (administrator only) (CT-03; RF-32, RF-48, RF-50)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CadenceTemplateInput'
+      responses:
+        '200':
+          description: The updated row, availability re-evaluated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CadenceTemplateRow'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Non-allowlisted param source, unknown stage/step, or missing static value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/proposals:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listProposals
+      summary: List proposals with versions (CT-04; RF-42, UI-13)
+      description: CHANGED (not in v1.1.0). Adds `integration_state` and per-version `failure_reason`/`correlation_id`.
+      responses:
+        '200':
+          description: Proposals of the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Proposal'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      operationId: showProposal
+      summary: Show a proposal with versions (CT-04; RF-42)
+      responses:
+        '200':
+          description: Proposal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{opportunity_id}/proposals/generate:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: opportunity_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: generateProposal
+      summary: proposal.generate — any account user; blocked without Make integration (CT-04; RF-35, RF-36, RF-37, RF-48)
+      description: >
+        CHANGED. In production, without all three Rails credentials
+        `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` → 422
+        `proposal_integration_not_configured`, 0 ProposalVersion and 0 MakeRequest
+        rows. `MockProvider` is never selected in production.
+        COMPAT: v1.1.0 documented `202`; the implementation renders `200`
+        (`proposals_controller.rb` default render, asserted `:success` in
+        `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb`). This delta
+        documents the real `200`; no behavior change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalCorrelationRequest'
+      responses:
+        '200':
+          description: Generation requested; version is `generating`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '422':
+          description: Integration not configured, or required qualification fields incomplete.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: approveProposal
+      summary: proposal.approve — administrator only (CT-04; RF-48)
+      description: CHANGED — adds 403 for every non-administrator, including the opportunity owner. COMPAT tightening per RF-48/Q-03.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalVersionActionRequest'
+      responses:
+        '200':
+          description: Approval recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: sendProposal
+      summary: proposal.send — administrator or opportunity owner; blocked without integration (CT-04; RF-33, RF-36, RF-41, RF-48)
+      description: >
+        CHANGED. Non-administrator who is not the opportunity owner → 403. Blocked
+        integration → 422 `proposal_integration_not_configured`. The version becomes
+        `sent` (and the opportunity `proposta_enviada`) only after the native
+        template message is accepted by the provider (RF-41); an unavailable
+        template records the RF-33 reason and sends nothing.
+        COMPAT: v1.1.0 documented `202`; implementation renders `200` (same note as generate).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalVersionActionRequest'
+      responses:
+        '200':
+          description: Send requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Integration not configured, stale version, missing approval or missing generate result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/retry:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: retryProposal
+      summary: Retry/reprocess a failed proposal operation — administrator only (CT-04; RF-40, RF-48, RF-50)
+      description: >
+        NEW. Retries the current version's failed operation through
+        `ScanSolo::Proposal::RetryPolicy` with a new correlation id. Only reasons
+        `timeout`, `network_error`, `provider_unavailable` are retryable (else 422
+        `UnsafeRetryError`). When the operation's MakeRequest `retry_count` ≥ 3
+        (dead letter) the request must carry `confirm_reprocess: true`, else 422.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposal_version_id, confirm_reprocess]
+              properties:
+                proposal_version_id:
+                  type: integer
+                  format: int64
+                confirm_reprocess:
+                  type: boolean
+      responses:
+        '200':
+          description: Retry requested; version back to `generating` (generate) or pending send with the new correlation id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Non-retryable reason, dead letter without confirmation, or integration not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/status:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: showScanSoloStatus
+      summary: Operational status — administrator only, no secret values (CT-07; RF-58, RF-60, RNF-04)
+      description: NEW. Same checks as `bundle exec rails scansolo:smoke` (shared `ScanSolo::StatusReport`).
+      responses:
+        '200':
+          description: Status summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloStatus'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /accounts/{account_id}/scan_solo/ai_turns:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listAiTurns
+      summary: Latest 50 AI turns (CT-08; RF-46, RF-59)
+      description: CHANGED (not in v1.1.0). Adds `knowledge_evidence` (column), `response_delivery_status`; `latency_ms` now populated.
+      responses:
+        '200':
+          description: Turns, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 50
+                items:
+                  $ref: '#/components/schemas/AiTurn'
+
+  /accounts/{account_id}/scan_solo/ai_turns/{correlation_id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: correlation_id
+        in: path
+        required: true
+        description: Turn correlation id (routed as `:id`, looked up by `correlation_id` in `AiTurnsController#set_turn`).
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: showAiTurn
+      summary: One AI turn with evidence and delivery status (CT-08; RF-46, RF-59)
+      responses:
+        '200':
+          description: Turn.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiTurn'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/executions:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listExecutions
+      summary: Executions module feed (CT-10; RF-61)
+      description: >
+        CHANGED (not in v1.1.0). Adds attempt delivery evidence, template
+        availability rows, handoff events (explicit/implicit), rejected callbacks
+        with reason and `recent_errors` (max 100).
+      responses:
+        '200':
+          description: Executions feed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionsFeed'
+
+  /accounts/{account_id}/scan_solo/contacts/{contact_id}/opt_out:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: contact_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: showContactOptOut
+      summary: Read a contact's opt-out marker (derived from UI-15 display need; see PLAN Open Questions)
+      description: >
+        NEW (derived). UI-15 requires showing the opt-out state to every account
+        user; CT-11 defines only the DELETE. This read uses the same resource and
+        the same response shape. Contact of another account → 404.
+      responses:
+        '200':
+          description: Marker state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactOptOut'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: clearContactOptOut
+      summary: Clear a contact's opt-out marker — administrator only (CT-11; RF-50, RF-63, UI-15)
+      description: >
+        NEW. Sets the marker to false and records `AuditEvent contact.opt_out_cleared`
+        (actor = administrator, subject = contact). Only reset path of the marker.
+      responses:
+        '200':
+          description: Marker cleared.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ContactOptOut'
+                  - type: object
+                    properties:
+                      opted_out:
+                        const: false
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    userApiKey:
+      type: apiKey
+      in: header
+      name: api_access_token
+      description: Existing Chatwoot session/API-token auth, unchanged.
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ResourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    Forbidden:
+      description: Authenticated but not authorized by the ScanSolo Pundit policy (RF-48).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    NotFound:
+      description: Resource not found in the account, or account not ScanSolo-enabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    UnprocessableEntity:
+      description: Request-boundary validation error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    TooManyRequests:
+      description: Per-account Rack::Attack throttle exceeded (RF-49, RNF-06).
+      content:
+        text/plain:
+          schema:
+            type: string
+
+  schemas:
+    ScanSoloError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human message or machine code (e.g. `proposal_integration_not_configured`).
+        details:
+          type: array
+          items:
+            type: string
+
+    PipelineStage:
+      type: string
+      enum: [novo_lead, em_contato, em_qualificacao, qualificado, proposta_enviada, negociacao, ganho, perdido]
+
+    CadenceStage:
+      type: string
+      enum: [novo_lead, em_contato, em_qualificacao, proposta_enviada]
+
+    AiAgentConfigInput:
+      type: object
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        model_provider:
+          type: string
+        model_selection:
+          type: string
+          description: Must be one of `available_models`, else 422 (UI-08).
+        role:
+          type: string
+        objective:
+          type: string
+        persona:
+          type: string
+        tone:
+          type: string
+        instructions:
+          type: string
+        service_rules:
+          type: string
+        qualification_playbook:
+          type: array
+          items:
+            type: string
+        required_qualification_fields:
+          type: array
+          items:
+            type: string
+        restricted_information:
+          type: array
+          items:
+            type: string
+        forbidden_subjects:
+          type: array
+          items:
+            type: string
+        transfer_criteria:
+          type: string
+        response_limits:
+          type: string
+        service_hours:
+          type: string
+        require_proposal_approval:
+          type: boolean
+        allowed_inbox_ids:
+          type: array
+          description: Inbox ids of the same account (else 422). Empty = AI answers in no inbox (RF-03, fail closed).
+          items:
+            type: integer
+            format: int64
+          uniqueItems: true
+        opt_out_keywords:
+          type: array
+          description: >
+            Whole-message opt-out keywords (RF-16 (b)); matched after normalization
+            (trim, case-insensitive, accent-stripped, punctuation-stripped).
+          items:
+            type: string
+            minLength: 1
+          default: [PARAR, SAIR, STOP]
+
+    AiAgentConfig:
+      allOf:
+        - $ref: '#/components/schemas/AiAgentConfigInput'
+        - type: object
+          required: [id, status, allowed_inbox_ids, opt_out_keywords, require_proposal_approval, updated_at]
+          properties:
+            id:
+              type: integer
+              format: int64
+            status:
+              type: string
+              enum: [draft, published]
+            updated_at:
+              type: string
+              format: date-time
+
+    KnowledgeSourceInput:
+      type: object
+      required: [source_type, title]
+      properties:
+        source_type:
+          type: string
+          enum: [document, faq, company_info]
+        title:
+          type: string
+        content:
+          type: string
+        origin:
+          type: string
+
+    KnowledgeSource:
+      type: object
+      required: [id, source_type, title, enabled, chunk_count, file_attached, index_status, index_error, indexed_at, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        source_type:
+          type: string
+          enum: [document, faq, company_info]
+        title:
+          type:
+            - string
+            - "null"
+        content:
+          type:
+            - string
+            - "null"
+        origin:
+          type:
+            - string
+            - "null"
+        enabled:
+          type: boolean
+        added_by_id:
+          type:
+            - integer
+            - "null"
+          format: int64
+        chunk_count:
+          type: integer
+          minimum: 0
+          description: Replaces the previous undocumented `chunks_count` key (see PLAN Assumptions).
+        file_attached:
+          type: boolean
+        index_status:
+          type: string
+          enum: [pending, indexing, indexed, failed]
+          description: Never `indexed` with `chunk_count` 0 (RF-45).
+        index_error:
+          type:
+            - string
+            - "null"
+          description: pt-BR reason when `failed`.
+        indexed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    KnowledgeRetrievalResult:
+      type: object
+      required: [chunk_id, source_id, source_type, content_snippet, similarity_score]
+      properties:
+        chunk_id:
+          type: integer
+          format: int64
+        source_id:
+          type: integer
+          format: int64
+        source_type:
+          type: string
+          enum: [document, faq, company_info]
+        content_snippet:
+          type: string
+        similarity_score:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    TemplateParamSource:
+      type: string
+      enum: [contact_name, contact_first_name, agent_name, stage_label, static]
+
+    TemplateParam:
+      type: object
+      required: [source]
+      properties:
+        source:
+          $ref: '#/components/schemas/TemplateParamSource'
+        value:
+          type: string
+          description: Required when `source` is `static`; ignored otherwise.
+
+    CadenceTemplateInput:
+      type: object
+      required: [stage, step, template_name, language, params]
+      properties:
+        stage:
+          $ref: '#/components/schemas/CadenceStage'
+        step:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          description: Null = proposal send row (stage must be `proposta_enviada`).
+        template_name:
+          type: string
+          minLength: 1
+        language:
+          type: string
+          minLength: 2
+          examples: [pt_BR]
+        params:
+          type: array
+          description: Ordered; count must equal the template BODY `{{n}}` placeholder count to be available.
+          items:
+            $ref: '#/components/schemas/TemplateParam'
+
+    TemplateBlockReason:
+      type: string
+      enum: [template_missing, template_rejected, template_paused, template_pending, template_disabled, language_unavailable, params_mismatch]
+
+    CadenceTemplateRow:
+      type: object
+      required: [stage, step, template_name, language, params, mapped, availability, block_reason, meta_status, last_synced_at]
+      properties:
+        stage:
+          $ref: '#/components/schemas/CadenceStage'
+        step:
+          type:
+            - integer
+            - "null"
+        template_name:
+          type: string
+        language:
+          type: string
+        params:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateParam'
+        mapped:
+          type: boolean
+          description: False when the row shows the naming convention fallback.
+        availability:
+          type: string
+          enum: [available, blocked]
+        block_reason:
+          oneOf:
+            - $ref: '#/components/schemas/TemplateBlockReason'
+            - type: "null"
+        meta_status:
+          type:
+            - string
+            - "null"
+          enum: [APPROVED, REJECTED, PAUSED, PENDING, DISABLED, null]
+        last_synced_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: Channel `message_templates_last_updated`.
+
+    ProposalCorrelationRequest:
+      type: object
+      required: [correlation_id]
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+
+    ProposalVersionActionRequest:
+      type: object
+      required: [proposal_version_id, correlation_id]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          format: uuid
+
+    ProposalVersion:
+      type: object
+      required: [id, proposal_id, version_number, status, is_current, failure_reason, correlation_id, approval_required]
+      properties:
+        id:
+          type: integer
+          format: int64
+        proposal_id:
+          type: integer
+          format: int64
+        version_number:
+          type: integer
+        status:
+          type: string
+          enum: [generating, generated, approved, sent, failed]
+        is_current:
+          type: boolean
+        value:
+          type:
+            - number
+            - "null"
+        currency:
+          type:
+            - string
+            - "null"
+        artifact_url:
+          type:
+            - string
+            - "null"
+          format: uri
+        failure_reason:
+          type:
+            - string
+            - "null"
+          description: e.g. `timeout`, `network_error`, `provider_unavailable`, native external error, RF-33 reason.
+        correlation_id:
+          type: string
+          description: Send correlation id when a send was requested, else the generate correlation id.
+        approval_required:
+          type: boolean
+        approved_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        sent_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        retry_count:
+          type: integer
+          minimum: 0
+        dead_letter:
+          type: boolean
+          description: True when the current operation's MakeRequest is failed with retry_count ≥ 3 (RF-40).
+
+    Proposal:
+      type: object
+      required: [id, opportunity_id, integration_state, versions]
+      properties:
+        id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        owner_id:
+          type:
+            - integer
+            - "null"
+          format: int64
+          description: Opportunity owner (used by UI-13 to render the send button).
+        integration_state:
+          type: string
+          enum: [configured, blocked]
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalVersion'
+
+    ScanSoloStatus:
+      type: object
+      required: [git_sha, pending_migrations, cadence_definitions, llm_key_configured, agent, inbox_conflicts, cadence_cron_registered, proposal_integration, templates_last_synced_at]
+      properties:
+        git_sha:
+          type: string
+        pending_migrations:
+          type: boolean
+        cadence_definitions:
+          type: object
+          required: [novo_lead, em_contato, em_qualificacao, proposta_enviada]
+          properties:
+            novo_lead:
+              type: [integer, "null"]
+            em_contato:
+              type: [integer, "null"]
+            em_qualificacao:
+              type: [integer, "null"]
+            proposta_enviada:
+              type: [integer, "null"]
+          additionalProperties: false
+        llm_key_configured:
+          type: boolean
+        agent:
+          type: object
+          required: [published, enabled, model, allowed_inbox_ids]
+          properties:
+            published:
+              type: boolean
+            enabled:
+              type: boolean
+            model:
+              type: [string, "null"]
+            allowed_inbox_ids:
+              type: array
+              items:
+                type: integer
+                format: int64
+          additionalProperties: false
+        inbox_conflicts:
+          type: array
+          description: Allowlisted inbox ids whose bot-status check reports an active bot.
+          items:
+            type: integer
+            format: int64
+        cadence_cron_registered:
+          type: boolean
+        proposal_integration:
+          type: string
+          enum: [configured, blocked]
+        templates_last_synced_at:
+          type: object
+          description: Keyed by allowlisted WhatsApp inbox id (string form).
+          propertyNames:
+            pattern: '^[0-9]+$'
+          additionalProperties:
+            type: [string, "null"]
+            format: date-time
+      additionalProperties: false
+
+    KnowledgeEvidence:
+      type: object
+      required: [source_id, source_title, chunk_id, similarity_score]
+      properties:
+        source_id:
+          type: integer
+          format: int64
+        source_title:
+          type: [string, "null"]
+        chunk_id:
+          type: integer
+          format: int64
+        similarity_score:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    ActionEvidence:
+      type: object
+      required: [action_id, status, idempotency_key, correlation_id]
+      properties:
+        action_id:
+          type: string
+          enum: [qualification_field, stage_transition, private_note, cadence_signal, human_handoff, proposal_generate]
+        status:
+          type: string
+          enum: [succeeded, rejected, failed]
+        idempotency_key:
+          type: string
+        correlation_id:
+          type: string
+          format: uuid
+        reason:
+          type: [string, "null"]
+          description: Rejection reason, e.g. forbidden AI stage target (RF-14).
+
+    AiTurn:
+      type: object
+      description: >
+        `context_snapshot` and `guardrail_outcome` are still rendered by the API as
+        internal diagnostics (admin-only "Detalhes técnicos", UI-10) and are NOT
+        part of this contract; clients must not depend on their shape.
+      required: [id, correlation_id, conversation_id, message_id, invocation_status, failure_reason, latency_ms, knowledge_evidence, action_evidence, response_delivery_status, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: integer
+          format: int64
+        message_id:
+          type: integer
+          format: int64
+        response_message_id:
+          type: [integer, "null"]
+          format: int64
+        invocation_status:
+          type: string
+          enum: [pending, suppressed, succeeded, failed]
+        model_provider:
+          type: [string, "null"]
+        model_reference:
+          type: [string, "null"]
+        input_tokens:
+          type: [integer, "null"]
+        output_tokens:
+          type: [integer, "null"]
+        cost_estimate:
+          type: [number, "null"]
+        latency_ms:
+          type: [integer, "null"]
+        failure_reason:
+          type: [string, "null"]
+          description: >
+            Includes `stale_pending`, `superseded`, `not_eligible`, `human_controlled`,
+            `config_unavailable`, `human_replied`, `inbox_has_active_bot`,
+            `output validation blocked: restricted_information`, or `<ExceptionClass>: <redacted message>`.
+        knowledge_evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeEvidence'
+        action_evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionEvidence'
+        response_delivery_status:
+          type: [string, "null"]
+          enum: [sent, delivered, read, failed, null]
+        created_at:
+          type: string
+          format: date-time
+
+    CadenceAttemptEvidence:
+      type: object
+      required: [id, step, cadence_version, template_reference, scheduled_at, sent_at, result, message_id, last_block_reason, last_checked_at, external_error]
+      properties:
+        id:
+          type: integer
+          format: int64
+        step:
+          type: integer
+        cadence_version:
+          type: integer
+        template_reference:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        sent_at:
+          type: [string, "null"]
+          format: date-time
+        result:
+          type: string
+          enum: [scheduled, sent, skipped, failed, cancelled, dispatched]
+        message_id:
+          type: [integer, "null"]
+          format: int64
+        last_block_reason:
+          type: [string, "null"]
+          description: >
+            RF-26 (3)/(4) deferral reason (e.g. `automation_disabled`, `not_eligible`,
+            `human_controlled`, RF-33 template reason) or cancellation reason
+            (`opt_out`, `conversation_resolved`).
+        last_checked_at:
+          type: [string, "null"]
+          format: date-time
+        external_error:
+          type: [string, "null"]
+
+    CadenceEnrollmentEvidence:
+      type: object
+      required: [id, opportunity_id, cadence_definition_id, status, current_step, next_attempt_at, attempts]
+      properties:
+        id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        cadence_definition_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [active, paused, cancelled, completed]
+        current_step:
+          type: integer
+        next_attempt_at:
+          type: [string, "null"]
+          format: date-time
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CadenceAttemptEvidence'
+
+    MakeDeadLetter:
+      type: object
+      required: [id, action, correlation_id, idempotency_key, retry_count, status, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        action:
+          type: string
+          enum: [proposal.generate, proposal.send]
+        correlation_id:
+          type: string
+        idempotency_key:
+          type: string
+        retry_count:
+          type: integer
+        status:
+          type: string
+          enum: [pending, sent, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    MakeCallbackRecord:
+      type: object
+      required: [id, action, correlation_id, signature_valid, applied, rejection_reason, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        action:
+          type: [string, "null"]
+        correlation_id:
+          type: [string, "null"]
+        signature_valid:
+          type: boolean
+        applied:
+          type: boolean
+        rejection_reason:
+          type: [string, "null"]
+          enum: [malformed_json, schema_invalid, unmatched_request, null]
+        created_at:
+          type: string
+          format: date-time
+
+    HandoffEvent:
+      type: object
+      required: [id, conversation_id, event_type, trigger, actor_type, actor_id, correlation_id, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        conversation_id:
+          type: integer
+          format: int64
+        event_type:
+          type: string
+          enum: [handoff.takeover, handoff.return_to_ai, agent_action.human_handoff]
+        trigger:
+          type: string
+          enum: [explicit, implicit, ai_action]
+          description: implicit = RF-18 human reply; explicit = POST handoff/return_to_ai; ai_action = RF-15.
+        actor_type:
+          type: [string, "null"]
+        actor_id:
+          type: [integer, "null"]
+          format: int64
+        correlation_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    RecentError:
+      type: object
+      required: [kind, id, reason, correlation_id, occurred_at]
+      properties:
+        kind:
+          type: string
+          enum: [ai_turn, cadence_attempt, make_callback]
+        id:
+          type: integer
+          format: int64
+        reason:
+          type: string
+        correlation_id:
+          type: [string, "null"]
+        occurred_at:
+          type: string
+          format: date-time
+
+    AuditEventSummary:
+      type: object
+      description: Existing audit feed row; `payload` still rendered but not part of this contract.
+      required: [id, event_type, subject_type, subject_id, actor_type, actor_id, correlation_id, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        event_type:
+          type: string
+        subject_type:
+          type: string
+        subject_id:
+          type: integer
+          format: int64
+        actor_type:
+          type: [string, "null"]
+        actor_id:
+          type: [integer, "null"]
+          format: int64
+        correlation_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ExecutionsFeed:
+      type: object
+      required: [cadence_evidence, template_availability, make_errors, handoff_events, recent_errors, audit_events]
+      properties:
+        cadence_evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/CadenceEnrollmentEvidence'
+        template_availability:
+          type: array
+          items:
+            $ref: '#/components/schemas/CadenceTemplateRow'
+        make_errors:
+          type: object
+          required: [dead_letters, callback_errors]
+          properties:
+            dead_letters:
+              type: array
+              items:
+                $ref: '#/components/schemas/MakeDeadLetter'
+            callback_errors:
+              type: array
+              items:
+                $ref: '#/components/schemas/MakeCallbackRecord'
+        handoff_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/HandoffEvent'
+        recent_errors:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/RecentError'
+        audit_events:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AuditEventSummary'
+
+    ContactOptOut:
+      type: object
+      required: [contact_id, opted_out]
+      properties:
+        contact_id:
+          type: integer
+          format: int64
+        opted_out:
+          type: boolean

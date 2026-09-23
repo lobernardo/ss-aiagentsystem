@@ -1,0 +1,367 @@
+asyncapi: 3.0.0
+info:
+  title: ScanSolo Production Complete — async contract delta
+  version: "1.2.0"
+  description: >
+    Delta over `.spec/features/scansolo-chatwoot-platform/asyncapi.yaml` (v1.1.0).
+    Covers CT-05 (outbound Make request, changed), CT-06 (inbound Make callback,
+    changed) and CT-09 (internal native message events consumed through the
+    existing `AsyncDispatcher` listener seam, `app/dispatchers/async_dispatcher.rb:23`).
+    COMPAT notes:
+    (1) `action` values stay `proposal.generate` / `proposal.send` — the values
+    enforced today by `ScanSolo::Make::CallbackVerifier::SCHEMA` and used as the
+    `MakeRequest.action` match key. SPEC CT-05 writes `generate|send`; switching
+    would break the prior contract and the verifier, so it is NOT applied here
+    (see PLAN Open Questions).
+    (2) The callback channel address is corrected to the real route
+    `POST /webhooks/scan_solo/make` (`config/routes.rb:737`); v1.1.0 documented
+    `/webhooks/scan_solo/make/callbacks`, which never existed.
+    (3) `requested_by_user_id` becomes nullable because AI-initiated
+    `proposal_generate` (RF-12) has no user actor.
+    (4) Replay protection is narrowed to APPLIED callbacks (RF-39): a rejected
+    callback no longer reserves its correlation id.
+servers:
+  make:
+    host: "{makeScenarioHost}"
+    protocol: https
+    description: >
+      Make scenario webhook. URL and bearer secret come only from Rails credentials
+      `scan_solo.make.scenario_url` / `scan_solo.make.secret` (HG-03); never
+      caller-supplied.
+    variables:
+      makeScenarioHost:
+        default: hook.make.example
+    security:
+      - $ref: '#/components/securitySchemes/makeOutboundAuth'
+  scanSoloWebhooks:
+    host: "{scanSoloHost}"
+    protocol: https
+    description: ScanSolo inbound callback receiver (`Webhooks::ScanSolo::MakeController`).
+    variables:
+      scanSoloHost:
+        default: app.scansolo.local
+    security:
+      - $ref: '#/components/securitySchemes/makeInboundSignature'
+  chatwootEventBus:
+    host: in-process
+    protocol: wisper
+    description: >
+      Internal Chatwoot dispatcher (`Rails.configuration.dispatcher` →
+      `AsyncDispatcher` → `ScanSolo::ConversationListener`). Not network-exposed.
+
+channels:
+  makeIntegrationRequest:
+    address: /scenario-webhook
+    servers:
+      - $ref: '#/servers/make'
+    description: Outbound request to the Make scenario (CT-05, RF-37).
+    messages:
+      makeIntegrationRequest:
+        $ref: '#/components/messages/MakeIntegrationRequest'
+
+  makeIntegrationCallback:
+    address: /webhooks/scan_solo/make
+    servers:
+      - $ref: '#/servers/scanSoloWebhooks'
+    description: >
+      Inbound callback (CT-06, RF-38, RF-39). Order: HMAC over raw body →
+      JSON parse → schema → MakeRequest match (correlation_id + action).
+      Responses: 401 invalid signature (nothing persisted); 422 other rejection,
+      recorded with `applied: false` without reserving the correlation id;
+      200 applied exactly once per correlation id through
+      `ScanSolo::Proposal::CallbackHandler`; duplicate of an applied callback → 200
+      with no re-application. Throttled by Rack::Attack
+      (`RATE_LIMIT_SCANSOLO_MAKE_CALLBACK`, default 60/min/IP).
+    messages:
+      makeIntegrationCallback:
+        $ref: '#/components/messages/MakeIntegrationCallback'
+
+  nativeMessageCreated:
+    address: message.created
+    servers:
+      - $ref: '#/servers/chatwootEventBus'
+    description: >
+      CT-09. Incoming → RF-01 eligibility, opportunity bootstrap (RF-22),
+      keyword opt-out (RF-16 b), AI turn enqueue. Outgoing, non-private, sender
+      `User`, without `additional_attributes.scansolo_origin` → implicit takeover
+      (RF-18).
+    messages:
+      nativeMessageEvent:
+        $ref: '#/components/messages/NativeMessageEvent'
+
+  nativeMessageUpdated:
+    address: message.updated
+    servers:
+      - $ref: '#/servers/chatwootEventBus'
+    description: >
+      CT-09. Status/`source_id` changes on a message referenced by a
+      `CadenceAttempt.message_id` or `ProposalVersion.sent_message_id` →
+      delivery reconciliation (RF-27, RF-41).
+    messages:
+      nativeMessageEvent:
+        $ref: '#/components/messages/NativeMessageEvent'
+
+operations:
+  sendMakeIntegrationRequest:
+    action: send
+    channel:
+      $ref: '#/channels/makeIntegrationRequest'
+    summary: >
+      `ScanSolo::Proposal::MakeProvider` → `ScanSolo::Make::OutboundRequestService`.
+      MakeRequest persisted before the HTTP call; correlation id = the
+      ProposalVersion's generate/send correlation id. Timeout → version failed
+      `timeout`; connection/DNS error → `network_error`; HTTP 5xx →
+      `provider_unavailable`.
+    messages:
+      - $ref: '#/channels/makeIntegrationRequest/messages/makeIntegrationRequest'
+
+  receiveMakeIntegrationCallback:
+    action: receive
+    channel:
+      $ref: '#/channels/makeIntegrationCallback'
+    summary: Apply a verified Make result to the matched ProposalVersion (RF-38).
+    messages:
+      - $ref: '#/channels/makeIntegrationCallback/messages/makeIntegrationCallback'
+
+  consumeNativeMessageCreated:
+    action: receive
+    channel:
+      $ref: '#/channels/nativeMessageCreated'
+    summary: ScanSolo listener entry point (RF-01, RF-16, RF-18, RF-22).
+    messages:
+      - $ref: '#/channels/nativeMessageCreated/messages/nativeMessageEvent'
+
+  consumeNativeMessageUpdated:
+    action: receive
+    channel:
+      $ref: '#/channels/nativeMessageUpdated'
+    summary: Delivery reconciliation (RF-27, RF-41).
+    messages:
+      - $ref: '#/channels/nativeMessageUpdated/messages/nativeMessageEvent'
+
+components:
+  securitySchemes:
+    makeOutboundAuth:
+      type: httpApiKey
+      in: header
+      name: Authorization
+      description: "`Bearer <scan_solo.make.secret>`; server-side only."
+    makeInboundSignature:
+      type: httpApiKey
+      in: header
+      name: X-Make-Signature
+      description: HMAC-SHA256 hex of the raw body with `scan_solo.make.inbound_signing_secret`.
+
+  messages:
+    MakeIntegrationRequest:
+      name: MakeIntegrationRequest
+      title: Outbound Make integration request
+      contentType: application/json
+      headers:
+        type: object
+        required: [Authorization, X-Idempotency-Key]
+        properties:
+          Authorization:
+            type: string
+            pattern: '^Bearer .+$'
+          X-Idempotency-Key:
+            type: string
+      payload:
+        $ref: '#/components/schemas/MakeIntegrationRequestPayload'
+
+    MakeIntegrationCallback:
+      name: MakeIntegrationCallback
+      title: Inbound Make integration callback
+      contentType: application/json
+      headers:
+        type: object
+        required: [X-Make-Signature]
+        properties:
+          X-Make-Signature:
+            type: string
+      payload:
+        $ref: '#/components/schemas/MakeIntegrationCallbackPayload'
+
+    NativeMessageEvent:
+      name: NativeMessageEvent
+      title: Native Chatwoot message event (internal)
+      contentType: application/x-ruby-object
+      payload:
+        $ref: '#/components/schemas/NativeMessageEventPayload'
+
+  schemas:
+    QualificationValue:
+      type: [string, number, boolean, "null"]
+
+    MakeIntegrationRequestPayload:
+      type: object
+      required: [correlation_id, idempotency_key, action, account_id, opportunity_id, proposal_version_id, qualification, requested_by_user_id, requested_at]
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+          description: Equals the ProposalVersion `generate_correlation_id` or `send_correlation_id` (RF-37).
+        idempotency_key:
+          type: string
+        action:
+          type: string
+          enum: [proposal.generate, proposal.send]
+        account_id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        proposal_version_id:
+          type: integer
+          format: int64
+        qualification:
+          type: object
+          description: >
+            NEW (CT-05). Keys = the published config's `required_qualification_fields`;
+            values = `contact.custom_attributes[field]`. Final field mapping and
+            price variables are HG-03.
+          propertyNames:
+            pattern: '^[a-z0-9_]+$'
+          additionalProperties:
+            $ref: '#/components/schemas/QualificationValue'
+        requested_by_user_id:
+          type: [integer, "null"]
+          format: int64
+          description: CHANGED — null when the request originates from the AI `proposal_generate` action.
+        requested_at:
+          type: string
+          format: date-time
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MakeLineItem'
+        notes:
+          type: string
+
+    MakeLineItem:
+      type: object
+      required: [product_name, quantity]
+      properties:
+        product_name:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+
+    MakeIntegrationCallbackPayload:
+      type: object
+      required: [correlation_id, idempotency_key, action, status]
+      properties:
+        correlation_id:
+          type: string
+        idempotency_key:
+          type: string
+        action:
+          type: string
+          enum: [proposal.generate, proposal.send]
+        status:
+          type: string
+          enum: [success, failure]
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalGeneratedResult'
+            - $ref: '#/components/schemas/ProposalSendConfirmedResult'
+            - $ref: '#/components/schemas/ProposalFailureResult'
+
+    ProposalGeneratedResult:
+      type: object
+      description: Applied by `CallbackHandler.apply_generate_result!` → version `generated` with value/currency/artifact_url.
+      required: [proposal_version_id, artifact_url, total_value, currency, valid_until]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        artifact_url:
+          type: string
+          format: uri
+        total_value:
+          type: number
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        valid_until:
+          type: string
+          format: date-time
+
+    ProposalSendConfirmedResult:
+      type: object
+      description: >
+        Applied by `CallbackHandler.apply_send_result!` → native template send
+        (RF-32/RF-33). Version becomes `sent` only after native delivery acceptance (RF-41).
+      required: [proposal_version_id, sent_at, transport_message_id]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        sent_at:
+          type: string
+          format: date-time
+        transport_message_id:
+          type: string
+
+    ProposalFailureResult:
+      type: object
+      required: [proposal_version_id, error_code, error_message, retryable]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        error_code:
+          type: string
+        error_message:
+          type: string
+        retryable:
+          type: boolean
+
+    NativeMessageEventPayload:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: object
+          required: [id, account_id, conversation_id, inbox_id, message_type, private, sender_type, status, source_id, created_at]
+          properties:
+            id:
+              type: integer
+              format: int64
+            account_id:
+              type: integer
+              format: int64
+            conversation_id:
+              type: integer
+              format: int64
+            inbox_id:
+              type: integer
+              format: int64
+            message_type:
+              type: string
+              enum: [incoming, outgoing, activity, template]
+            private:
+              type: boolean
+            sender_type:
+              type: [string, "null"]
+              enum: [User, AgentBot, Contact, null]
+              description: Only `User` can trigger implicit takeover (RF-18).
+            status:
+              type: string
+              enum: [sent, delivered, read, failed]
+            source_id:
+              type: [string, "null"]
+              description: Provider message id; non-null + non-failed = accepted (RF-27).
+            external_error:
+              type: [string, "null"]
+              description: "`content_attributes.external_error` when status is failed."
+            scansolo_origin:
+              type: [string, "null"]
+              enum: [ai, cadence, proposal, null]
+              description: "`additional_attributes.scansolo_origin`; any non-null value excludes the message from takeover."
+            created_at:
+              type: string
+              format: date-time

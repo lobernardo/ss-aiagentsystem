@@ -6,63 +6,62 @@
 
 ### Runtime and language
 
-- **Language**: Ruby 3.4.4 (`Gemfile`: `ruby '3.4.4'`) / JavaScript-TypeScript on Node 24.x (`package.json` `engines.node: "24.x"`)
-- **Framework**: Rails 7.2.3.1 (`Gemfile`: `gem 'rails', '7.2.3.1'`) with Vue 3.5.12 for the SPA (`package.json` `dependencies.vue: "^3.5.12"`)
+- **Language**: Ruby 3.4.4 (`.ruby-version`, Gemfile `ruby '3.4.4'`); JavaScript on Node 24.13.0 (`.nvmrc`, package.json `engines.node` 24.x)
+- **Framework**: Rails 7.2.3.1 (Gemfile.lock); Vue ^3.5.12 via Vite 6.4.2 + vite_rails 3.10.0
 
-| Component | Name | Version | Evidence |
-|---|---|---|---|
-| Backend language | Ruby | 3.4.4 | `Gemfile`, `.ruby-version` |
-| Backend framework | Rails | 7.2.3.1 | `Gemfile` |
-| App server | Puma | ~> 7.2, >= 7.2.1 | `Gemfile` |
-| Background jobs | Sidekiq | ~> 7.3.10 | `Gemfile`, `config/sidekiq.yml` |
-| Job scheduling | sidekiq-cron | >= 2.4.0 | `Gemfile`, `config/schedule.yml` |
-| Frontend framework | Vue | ^3.5.12 | `package.json` |
-| Frontend state (legacy) | Vuex | ~4.1.0 | `package.json` |
-| Frontend state (new) | Pinia | ^3.0.4 | `package.json` |
-| Frontend router | vue-router | ~4.4.5 | `package.json` |
-| Build tool | Vite | 6.4.2 | `package.json`, `vite.config.ts` |
-| Rails/Vite bridge | vite_rails / vite-plugin-ruby | ^5.2.1 | `Gemfile`, `package.json` |
-| Package manager (Ruby) | Bundler | via `Gemfile.lock` | `Gemfile` |
-| Package manager (JS) | pnpm | 10.2.0 | `package.json` `packageManager` |
-| Database | PostgreSQL | via `pg`, `pgvector`, `neighbor` gems | `Gemfile`, `config/database.yml` |
-| Cache/queue backing store | Redis | via `redis`, `redis-namespace` gems | `Gemfile`, `.env.example` (`REDIS_URL`) |
+| Component | Value | Source |
+|---|---|---|
+| Web server | Puma 7.2.1 | Gemfile.lock, `Procfile` web |
+| Background jobs | Sidekiq 7.3.10 + sidekiq-cron 2.4.0 | Gemfile.lock, `config/sidekiq.yml`, `config/schedule.yml` |
+| Database | PostgreSQL + pgvector (`pgvector/pgvector:pg16` in `docker-compose.production.yaml`) | `db/schema.rb` `enable_extension "vector"` |
+| Cache / pubsub | Redis (redis 5.0.6) | Gemfile.lock, `config/cable.yml` |
+| LLM client | ruby_llm 1.15.0, ruby_llm-schema 0.3.0 | Gemfile.lock, `lib/llm/` |
+| Vector search | neighbor 0.2.3, pgvector 0.1.1 | Gemfile.lock, `ScanSolo::KnowledgeChunk has_neighbors` |
+| Authorization | Pundit 2.3.0 | `app/policies/scan_solo/` |
+| JSON views | jbuilder 2.15.1 | `app/views/api/v1/accounts/scan_solo/` |
+| JSON schema | json_schemer 0.2.24 | `ScanSolo::Make::CallbackVerifier`, `ScanSolo::Actions::Executor` |
+| HTTP client | httparty 0.24.0 | `ScanSolo::Make::OutboundRequestService` |
+| Frontend state | Pinia ^3.0.4 (ScanSolo), Vuex ~4.1.0 (upstream) | `app/javascript/dashboard/store/scansolo/` |
+| Styling | Tailwind ^3.4.19 | package.json |
+| Package managers | Bundler 2.5.16, pnpm 10.x (`packageManager pnpm@10.2.0`) | `docker/Dockerfile`, package.json |
+| Container | `ruby:3.4.4-alpine3.21` + Node 24 multi-stage | `docker/Dockerfile` |
 
 ### Tests
 
-| Concern | Tool | Version | Evidence |
+| Role | Tool | Version | Config |
 |---|---|---|---|
-| Ruby test runner | RSpec | `rspec-rails >= 6.1.5` | `Gemfile`, `.rspec` |
-| Ruby assertions | RSpec matchers + shoulda-matchers | unpinned | `Gemfile` (group `:test`) |
-| Ruby mocking | webmock, mock_redis, factory_bot_rails, database_cleaner | unpinned | `Gemfile` |
-| Ruby coverage | simplecov / simplecov_json_formatter | >= 0.21 | `Gemfile` |
-| JS test runner | Vitest | 3.0.5 | `package.json` devDependencies, `vitest.config.ts` |
-| JS component testing | @vue/test-utils | ^2.4.6 | `package.json` |
-| JS coverage | @vitest/coverage-v8 | 3.0.5 | `package.json`, `pnpm test:coverage` script |
-| JS DOM shim | jsdom | ^27.2.0 | `package.json` |
-| E2E | Playwright | `tests/playwright/` directory | repo layout (digest) |
+| Ruby runner | rspec-rails | 7.0.1 | `.rspec` `--require spec_helper` |
+| Ruby assertions | rspec-expectations, shoulda-matchers | shoulda-matchers 5.3.0 | `spec/rails_helper.rb` |
+| Ruby mocks / data | factory_bot_rails 6.4.3, webmock 3.23.1, mock_redis 0.36.0, climate_control 1.2.0 | — | `spec/support/scansolo_webmock_enforcement.rb` |
+| Ruby DB isolation | database_cleaner-active_record | 2.1.0 | — |
+| Ruby coverage | simplecov + simplecov_json_formatter | 0.22.0 / 0.1.4 | `spec/coverage_helper.rb` |
+| JS runner | Vitest (jsdom ^27.2.0) | 3.0.5 | `vitest.config.ts` |
+| JS component tests | @vue/test-utils | ^2.4.6 | colocated `specs/` dirs |
+| JS coverage | @vitest/coverage-v8 | 3.0.5 | `pnpm run test:coverage` |
+| E2E | @playwright/test | ^1.56.1 | `tests/playwright/playwright.config.ts` |
+| In-app test doubles | `ScanSolo::TestMode::MockLlmProvider`, `MockEmbeddingProvider`, `ScanSolo::Proposal::MockProvider` | — | `app/services/scan_solo/test_mode/` |
 
-Commands: `bundle exec rspec spec/path/to/file_spec.rb` (Ruby, per `AGENTS.md`); `pnpm test` → `TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage` (`package.json`).
+Commands:
+
+```bash
+bundle exec rspec spec/path/to/file_spec.rb
+pnpm test                 # TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage
+pnpm run test:coverage    # TZ=UTC vitest --no-watch --no-cache --coverage
+bundle exec rubocop --parallel
+pnpm run eslint
+```
 
 ### External integrations
 
 | System | Client wiring |
 |---|---|
-| OpenAI | `ruby-openai`, `ruby_llm >= 1.14.1`, `ai-agents >= 0.12.0` gems; `lib/llm/feature_router.rb`, `config/llm.yml` |
-| Anthropic / Gemini | Routed through `ruby_llm` provider config, `config/llm.yml` `providers.anthropic` / `providers.gemini` |
-| Stripe | `stripe ~> 18.0` gem; `enterprise/api/v1/webhooks/stripe` |
-| Firecrawl | `firecrawl-sdk ~> 1.0` gem (required as `firecrawl`); `enterprise/webhooks/firecrawl` |
-| Twilio | `twilio-ruby` gem; `app/controllers/twilio/` |
-| Facebook Messenger | `facebook-messenger`, `koala` gems; `mount Facebook::Messenger::Server` (`config/routes.rb`) |
-| Slack | `slack-ruby-client ~> 2.7.0` gem; `app/controllers/integrations/slack_controller.rb` (per routes) |
-| LINE | `line-bot-api` gem; `webhooks/line/:line_channel_id` route |
-| Twitter | `twitty ~> 0.1.5` gem; `api/v1/twitter/authorization`, `webhooks/twitter` |
-| Shopify | `shopify_api` gem; `app/services/shopify/`, `integrations/shopify` routes |
-| Google (OAuth/Dialogflow/Translate) | `omniauth-google-oauth2`, `google-cloud-dialogflow-v2`, `google-cloud-translate-v3` gems |
-| Observability | `opentelemetry-sdk`, `opentelemetry-exporter-otlp` gems (LLM/app tracing); `datadog`, `sentry-rails`, `sentry-sidekiq`, `newrelic_rpm` (conditional, `Gemfile`) |
-| Search | `searchkick`, `opensearch-ruby`, `pg_search` gems |
-| Push notifications | `fcm`, `web-push >= 3.0.1` gems |
+| OpenAI chat | `RubyLLM.chat(model:)` in `ScanSolo::AiTurn::ModelInvoker`; route from `Llm::FeatureRouter` feature `scansolo_agent_response` |
+| OpenAI embeddings | `ScanSolo::Knowledge::EmbeddingService`; feature `scansolo_knowledge_embedding` (`text-embedding-3-small`) |
+| Make | `HTTParty.post` in `ScanSolo::Make::OutboundRequestService`; inbound `Webhooks::ScanSolo::MakeController` |
+| WhatsApp Cloud | Native Chatwoot `Channel::Whatsapp`; no ScanSolo-specific client |
 
 ## Related documents
 
-- [`architecture.md`](architecture.md) — how these components are wired into request/event flow
-- [`dependencies.md`](dependencies.md) — full dependency inventory grouped by purpose
+- [`dependencies.md`](dependencies.md) — gem/package inventory by purpose
+- [`coding_guidelines.md`](coding_guidelines.md) — lint rules and code patterns
+- [`architecture.md`](architecture.md) — how components wire together

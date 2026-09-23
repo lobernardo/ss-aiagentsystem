@@ -6,96 +6,192 @@
 
 ### Overview
 
-- Multi-tenant `Account` root aggregate scoping every conversation, contact, automation rule, and Captain assistant (`app/models/account.rb`).
-- `Conversation` state machine: `status` enum (`open`/`resolved`/`pending`/`snoozed`), `priority` enum (`low`/`medium`/`high`/`urgent`), assignee is polymorphic between a human `User` and an `ai_assignee` (agent bot/Captain assistant) (`app/models/conversation.rb`).
-- Rule-table driven automation: JSON `conditions`/`actions` evaluated against a fixed attribute/action vocabulary (`app/models/automation_rule.rb`).
-- Round-robin, rate-limited human assignment for open+unassigned conversations (`app/services/auto_assignment/assignment_service.rb`).
-- Captain AI agent tool registry: a fixed set of actions an AI assistant may take inside a conversation (`config/agents/tools.yml`).
-- LLM feature-to-model routing with per-account and installation-level overrides (`lib/llm/feature_router.rb`, `config/llm.yml`).
+- Account gate: ScanSolo behavior runs only when `Account#scansolo_enabled?` (`has_flags 1 => :scansolo_enabled`, column `scansolo_feature_flags`, `app/models/account.rb`).
+- Pipeline opportunity: 1 per conversation, 8 stages (`ScanSolo::PipelineOpportunity`).
+- AI control state: 1 `ConversationExtension` per conversation, 6 states gating AI turns.
+- AI turn: 1 per inbound message, guarded pipeline with evidence (`ScanSolo::AiTurn`).
+- Agent config: 1 draft per account, immutable published snapshots (`ScanSolo::AiAgentConfig`).
+- Knowledge: account-scoped sources chunked + embedded for cosine retrieval.
+- Cadence: versioned per-stage definitions, idempotent enrollments, scheduled attempts with evidence.
+- Proposal: 1 per opportunity, versioned, provider-driven generate/send with optional approval.
+- Registered actions: 8 action ids with classification and JSON schema.
+- Audit: `ScanSolo::AuditEvent` rows keyed by `correlation_id`, readonly after create.
 
-### Conversation status transitions
+### Pipeline stage transitions
 
-Implemented in `app/models/conversation.rb`.
+Implemented in `ScanSolo::Pipeline::StageTransitionService` (sole stage writer).
 
-| Trigger | From | To | Notes |
-|---|---|---|---|
-| `before_create` (`determine_conversation_status`) | new record | `resolved` | Contact is `blocked?` |
-| `before_create` (`determine_conversation_status`) | new record | `pending` | `campaign.sender_id.nil?` and `inbox.active_bot?`, or inbox has an active bot and no campaign |
-| `#toggle_status` | `open` | `resolved` | Manual toggle |
-| `#toggle_status` | `pending`/`snoozed` | `open` | Manual toggle forces open, bypassing the resolved branch |
-| `#bot_handoff!` | any (typically bot-assigned) | `open` | Clears `ai_assignee`, sets `waiting_since` if blank, dispatches `CONVERSATION_BOT_HANDOFF` unless `dispatch_event: false` |
-| `handle_resolved_status_change` (after_update_commit) | → `resolved` | `resolved` | Clears `waiting_since` via `update_column` (no callbacks re-triggered) |
-
-Extend by adding a new `before_create`/callback branch in `determine_conversation_status` or a new instance method that assigns `self.status`; enum values are fixed at `open: 0, resolved: 1, pending: 2, snoozed: 3`.
-
-### Automation rule validation and execution
-
-Implemented in `app/models/automation_rule.rb`, `app/services/automation_rules/`.
-
-- **Allowed condition attributes** (`conditions_attributes`): `content`, `email`, `country_code`, `status`, `message_type`, `browser_language`, `assignee_id`, `team_id`, `referer`, `city`, `company_name`, `inbox_id`, `mail_subject`, `phone_number`, `priority`, `conversation_language`, `labels`, `private_note`, plus any account-defined `custom_attribute_definitions`.
-- **Allowed actions** (`actions_attributes`): `send_message`, `add_label`, `remove_label`, `send_email_to_team`, `assign_team`, `assign_agent`, `remove_assigned_agent`, `remove_assigned_team`, `send_webhook_event`, `mute_conversation`, `send_attachment`, `change_status`, `resolve_conversation`, `open_conversation`, `pending_conversation`, `snooze_conversation`, `change_priority`, `send_email_transcript`, `add_private_note`.
-- Any condition/action outside these lists fails model validation (`json_conditions_format`, `json_actions_format`).
-- `query_operator` on a condition must be `AND` or `OR` (case-insensitive input, upcased before check) — `validate_single_condition`.
-- `execution_delay` (delayed rules) must be an integer in `10..43_200` minutes (10 min–30 days) — `EXECUTION_DELAY_RANGE`.
-
-**Delayed-rule eligibility matrix** (`execution_delay_supported_conditions`, `execution_delay_supported_event`):
-
-| execution_delay present? | event_name | conditions use `attribute_changed`? | conditions restricted to `status`/`inbox_id`? | Result |
-|---|---|---|---|---|
-| No | any | — | — | Valid (immediate rule) |
-| Yes | `message_created` | No | — | Valid |
-| Yes | `message_created` | Yes | — | Invalid — "cannot be used with attribute_changed conditions" |
-| Yes | conversation-level (e.g. status/label change) | No | Yes | Valid |
-| Yes | conversation-level | No | No (other attribute keys present) | Invalid — "only supports status and inbox conditions for conversation-level events" |
-
-Extend the delay matrix by adding to `DELAYED_CONVERSATION_ATTRIBUTES` (currently `%w[status inbox_id]`) if a new immutable conversation attribute becomes safe to key a delayed episode on.
-
-- `after_update` `discard_stale_pending_executions` (guarded by `execution_config_changed?` = active/execution_delay/event_name/conditions/actions changed) deletes `armed` (pending+processing) `AutomationRulePendingExecution` rows so a re-armed rule doesn't fire under its old definition.
-
-### Auto-assignment (round-robin, rate-limited)
-
-Implemented in `app/services/auto_assignment/assignment_service.rb`.
-
-- Eligibility gate (`AutoAssignment::AssignmentService#perform_bulk_assignment`): inbox must have `auto_assignment_v2_enabled?` **and** `enable_auto_assignment?`, must have unassigned open conversations, and must have at least one available agent — otherwise returns `0` immediately.
-- Candidate scope (`unassigned_conversations`): `inbox.conversations.unassigned.open`, minus conversations whose `last_activity_at` is older than `AssignmentPolicy#exclude_older_than_hours` (falls back to `AssignmentPolicy::DEFAULT_EXCLUDE_OLDER_THAN_HOURS` when no policy is set).
-- Ordering: `policy.longest_waiting?` → order by `last_activity_at ASC, created_at ASC`; otherwise → order by `created_at ASC`.
-- Per-conversation eligibility (`assignable?`): `status == 'open'` and `assignee_id.nil?`.
-- Agent selection: filter by team membership if the conversation has a `team_id` and the team allows auto-assign (`team.allow_auto_assign`) → filter by `AutoAssignment::RateLimiter#within_limit?` → `AutoAssignment::RoundRobinSelector#select_agent`.
-- Claim is atomic: `Conversation.transaction` + `lock('FOR UPDATE SKIP LOCKED')` on the target row before `update!(assignee: agent)`, so two overlapping bulk runs cannot double-assign the same conversation (`claim_and_assign`).
-- On success: `AutoAssignment::RateLimiter#track_assignment`, then `Rails.configuration.dispatcher.dispatch(Events::Types::ASSIGNEE_CHANGED, ...)`.
-
-### LLM feature-to-model routing
-
-Implemented in `lib/llm/feature_router.rb`, `config/llm.yml`, `lib/llm/models.rb`.
-
-**Resolution precedence** (`Llm::FeatureRouter.resolve(feature:, account:)`):
-
-| Order | Source | Condition | Resulting model |
-|---|---|---|---|
-| 1 | Account override | `account.captain_models[feature_key]` present and `Llm::Models.valid_model_for?` | that model, `source: :account_override` |
-| 2 | Installation override | `feature_key == 'conversation_completion'` and `ChatwootApp.self_hosted_paid?` and `InstallationConfig['CAPTAIN_OPEN_AI_MODEL']` present | that model, `source: :installation_override` |
-| 3 | Captain v2 assistant pin | `feature_key == 'assistant'` and `account.feature_enabled?('captain_integration_v2')` | `gpt-5.2` (`CAPTAIN_V2_ASSISTANT_MODEL`), `source: :default` |
-| 4 | Default | none of the above | `Llm::Models.default_model_for(feature_key)`, `source: :default` |
-
-Unknown `feature` values raise `Llm::FeatureRouter::UnknownFeatureError`. Extend by adding a new `feature_key` branch inside `model_and_source` and registering the feature in `Llm::Models`.
-
-### Captain AI agent tool registry
-
-Implemented in `config/agents/tools.yml`, resolved to `Captain::Tools::{PascalCase(id)}Tool` classes per the file header comment.
-
-| Tool id | Action |
+| Input | Outcome |
 |---|---|
-| `add_contact_note` | Add a note to a contact profile |
-| `add_private_note` | Add a private (internal-only) note to a conversation |
-| `update_priority` | Update conversation priority level |
-| `add_label_to_conversation` | Add a label to a conversation |
-| `faq_lookup` | Search FAQ responses using semantic similarity (pgvector) |
-| `resolve_conversation` | Resolve a conversation when the issue has been addressed |
-| `handoff` | Hand off the conversation to a human agent |
+| `target_stage` not in `PipelineOpportunity.stages` | 422 `stage must be one of ...` |
+| Current stage `ganho` or `perdido` | 422 `opportunity stage is terminal` |
+| Target `negociacao` and `authorized: false` | 422 `negociacao requires an explicit authorized action` |
+| Otherwise | `update!(stage:)` + `PipelineStageEvent(from, to, actor)` in 1 transaction |
 
-Extend by adding a new `- id:` entry and implementing the matching `Captain::Tools::<PascalCase>Tool` class.
+After success: `StopRecalculatePolicy.call(trigger:)` with `ganho -> won`, `perdido -> lost`, else `stage_changed`. Extend: add stage to `TERMINAL_STAGES` / `GUARDED_STAGES` / `CADENCE_TRIGGERS` constants.
+
+- Stages: `novo_lead:0 em_contato:1 em_qualificacao:2 qualificado:3 proposta_enviada:4 negociacao:5 ganho:6 perdido:7`.
+- API caller (`PipelineOpportunitiesController#stage_transitions`) passes `authorized: true`, actor `Current.user`; replays within 5 s (`STAGE_TRANSITION_IDEMPOTENCY_WINDOW`) with matching stage event return current state without a new transition.
+
+### First inbound moves Novo Lead to Em Contato
+
+- `ScanSolo::Pipeline::InboundMessageTransitionRule`: incoming message + opportunity in `novo_lead` -> `em_contato`. Fires once; later messages no-op.
+- Called by `ScanSolo::ConversationListener` after `record_customer_interaction!`.
+
+### Stale opportunity indicator
+
+- `ScanSolo::PIPELINE_STALE_THRESHOLD = 48.hours` (`config/initializers/scansolo_constants.rb`), not per-account.
+- Stale = `last_customer_interaction_at <= 48.hours.ago`; nil interaction is not stale (`ScanSolo::Pipeline::OpportunityQuery`).
+
+### AI turn pipeline
+
+`ScanSolo::AiTurn::TurnOrchestrator`, invoked by `ScanSolo::AiTurnJob`.
+
+| Step | Class | Failure outcome |
+|---|---|---|
+| Dedupe | `AiTurn.create!` (unique `message_id`, `correlation_id` = UUID) | return nil, no row |
+| Eligibility | `EligibilityGuard` — only `ai_active` eligible | `suppressed`, "conversation is human-controlled or opted out" |
+| Config | `AiAgentConfig.published_for(account)` + `enabled?` | `suppressed`, "no published/enabled AI agent config" |
+| Context | `ContextAssembler` — last 20 chat messages, contact, pipeline, `proposal_context: not_applicable`, knowledge (RAG), `durable_memory` | stored in `context_snapshot` |
+| Input guardrail | `InputGuardrail` — case-insensitive substring match on `forbidden_subjects` | `suppressed`, "input guardrail blocked: forbidden subject" |
+| Prompt | `PromptRedactor` replaces secret-shaped tokens with `[REDACTED]` | — |
+| Model | `ModelInvoker` via RubyLLM; instructions = role, objective, persona, tone, instructions, service_rules | `failed`, provider error class + message |
+| Output | `OutputValidator` | `failed`, "output validation blocked: <claim>" |
+| Send | transaction: `stage_transition` actions + `ResponseSender` (outgoing message from `AgentBot` named after config) | turn `succeeded` with tokens, model, `response_message_id` |
+
+- `SUPPORTED_ACTIONS = %w[stage_transition]`; other action types are skipped by the orchestrator.
+- `InputGuardrail#allowed_actions` always excludes `proposal_approve`, `proposal_send`.
+- Log lines pass through `PromptRedactor` via `config/initializers/scansolo_log_redaction.rb`.
+
+### Output claim blocking
+
+`ScanSolo::AiTurn::OutputValidator` blocks unless claim type is in `validated_claims` (orchestrator passes none):
+
+| Claim | Pattern |
+|---|---|
+| `price` | `/r\$\s?\d|\b\d+([.,]\d{2})?\s?reais\b/i` |
+| `proposal_sent` | `/proposta (foi )?enviada|enviei a proposta/i` |
+| `delivery_status` | `/pedido entregue|entrega confirmada|status da entrega/i` |
+
+Extend: add a key to `CLAIM_PATTERNS`.
+
+### Model routing
+
+- `ScanSolo::AiAgent::ModelResolver`: `Llm::FeatureRouter.resolve(feature: 'scansolo_agent_response')`; overrides with `config.model_selection` when `Llm::Models.valid_model_for?`.
+- `config/llm.yml`: `scansolo_agent_response` models `gpt-4.1-mini` (default), `gpt-4.1`, `gpt-5.1`, `gpt-5.2`; `scansolo_knowledge_embedding` `text-embedding-3-small`; both `internal: true`.
+
+### Agent config draft and publish
+
+- `AiAgentConfig.draft_for!` = `find_or_create_by!(account:, status: :draft)`; partial unique index enforces 1 draft per account.
+- `ScanSolo::AiAgent::PublishService` copies `FIELDS` into a new `published` row and points `draft.published_version` at it, in 1 transaction; previous published rows stay untouched.
+- `require_proposal_approval` defaults `true` (schema).
+
+### Knowledge ingestion and retrieval
+
+- `IngestionService`: split on blank lines, wrap at `CHUNK_SIZE = 500` chars; delete old chunks and insert new ones in 1 transaction.
+- `RetrievalService`: enabled sources of the account only; `nearest_neighbors(:embedding, distance: 'cosine')`, `DEFAULT_TOP_K = 5`; `similarity_score = clamp(1 - distance, 0, 1)`.
+- Outage (`ActiveRecord::StatementInvalid`, `PG::Error`, `RubyLLM::Error`, `RubyLLM::ConfigurationError`) -> `{ results: [], failure_reason: "..." }`, no raise.
+- Deleting a source destroys its chunks (`dependent: :destroy`).
+
+### Human handoff state machine
+
+States (`ConversationExtension#ai_control_state`): `ai_active:0 handoff_requested:1 awaiting_human:2 human_active:3 paused:4 closed:5`.
+
+| Service | From | To | Side effects |
+|---|---|---|---|
+| `HandoffAction` (registered action) | any | `handoff_requested` | none (no note) |
+| `Handoff::HandoffService` | `ai_active`, `handoff_requested` | `awaiting_human` | 9-line private note; other states no-op |
+| `Handoff::TakeoverService` | not `human_active` | `human_active` | HandoffService, `AuditEvent handoff.takeover`, cancel scheduled cadence attempts |
+| `Handoff::ReturnToAiService` | not `ai_active` | `ai_active` | `AuditEvent handoff.return_to_ai`; sole path back to AI |
+
+- Note lines (pt-BR): Motivo da transferência, Resumo (last 3 chat messages), Objetivo do cliente, Campos de qualificação coletados, Objeções, Etapa do pipeline, Status da proposta (`não aplicável`), Ações pendentes, Próximo passo recomendado.
+- Authorization: `ScanSolo::HandoffPolicy` — administrator or conversation `assignee_id == user.id`.
+
+### Cadence enrollment and scheduling
+
+- `Cadence::EnrollmentService`: `find_or_create_by!(opportunity, cadence_definition)`; creates 1 attempt per `offsets` entry: `step = i+1`, `scheduled_at = enrollment.created_at + offset hours`, `template_reference = "scansolo_cadence_<stage>_v<version>_step<n>"`.
+- `CadenceDefinition.current_for(stage)` = highest active `version` for stage.
+- Manual enroll: `LifecycleService.enroll!` raises `UnauthorizedError` unless `authorized: true`; policy `CadenceEnrollmentPolicy#create?` requires administrator.
+- `pause!` active only, clears `next_attempt_at`; `resume!` shifts every scheduled attempt by pause duration; `cancel!` marks scheduled attempts `cancelled`.
+
+### Cadence stop/recalculate triggers
+
+`ScanSolo::Cadence::StopRecalculatePolicy`:
+
+| Trigger | Source | Effect |
+|---|---|---|
+| `stage_changed`, `won`, `lost` | `StageTransitionService` | cancel all active/paused enrollments |
+| `opt_out` | `CadenceSignalAction` (`POLICY_TRIGGERS`) | cancel all |
+| `manual_pause` | `CadenceSignalAction` (`POLICY_TRIGGERS`) | pause all active |
+| `replacement` | in `TRIGGERS`; no caller observed | cancel all |
+| takeover (`handle_takeover`) | `TakeoverService` | cancel all |
+| unknown | — | `ArgumentError` |
+
+Only `scheduled` attempts change; sent attempts are never rewritten. Extend: add to `TRIGGERS` (and `PAUSING_TRIGGERS` for pause semantics).
+
+### Reply completeness
+
+- `Cadence::ReplyCompletenessDetector`: required fields = published config `required_qualification_fields`, checked via `contact.custom_attributes[field].present?`.
+- All present -> cancel all enrollments; some missing -> cancel only the next scheduled attempt per active enrollment.
+
+### Due attempt sending
+
+`ScanSolo::CadenceDueAttemptJob.process_attempt!` under row lock:
+
+| Condition | Result |
+|---|---|
+| attempt not `scheduled` or enrollment not `active` | skip |
+| outside 09:00-20:00 `America/Sao_Paulo` (`SendingWindow`) | reschedule to `next_in_window` (today or tomorrow 09:00) |
+| no enabled published config | `skipped` (`automation_disabled`) |
+| `Channel::Whatsapp` without approved template named `template_reference` | `skipped` (`template_unavailable`) |
+| non-WhatsApp channel | template treated as available |
+| send raises | `failed` |
+| send ok | `sent`, `sent_at` set |
+
+- `AttemptEvidenceRecorder` raises `AlreadyRecordedError` on a terminal attempt; updates `current_step` = max terminal step, `next_attempt_at`, `completed` when none scheduled.
+- Test mode: `enroll!(test_mode: true)` processes attempts immediately with `enforce_window: false`.
+
+### Registered actions
+
+`ScanSolo::Actions::Registry::HANDLERS`, synced into `scan_solo_agent_actions`:
+
+| action_id | Classification |
+|---|---|
+| `qualification_field` | automatic |
+| `stage_transition` | automatic |
+| `private_note` | automatic |
+| `proposal_generate` | automatic |
+| `proposal_approve` | requires_confirmation |
+| `proposal_send` | requires_confirmation |
+| `cadence_signal` | automatic |
+| `human_handoff` | automatic |
+
+- `Actions::Executor`: rejects unregistered/`disabled` (`UnregisteredActionError`); JSON-schema-validates params (`InvalidParamsError`); unique `idempotency_key` resumes an existing execution; `ConfirmationGate` keeps `requires_confirmation` pending until `confirmed: true`; success writes `AuditEvent agent_action.<id>`; exception -> `failed`.
+- Registry/Executor have no caller outside `app/services/scan_solo/actions/`.
+
+### Proposal lifecycle
+
+| Step | Service | Guard | Result |
+|---|---|---|---|
+| Generate | `Proposal::GenerateService` | all `required_qualification_fields` present on contact, else 422 `campos obrigatórios da proposta incompletos` | new current version `generating`; provider callback |
+| Callback (generate) | `Proposal::CallbackHandler.apply_generate_result!` | matching `generate_correlation_id`, not yet applied (row lock) | `generated` + value/currency/artifact_url, or `failed` |
+| Approve | `Proposal::ApproveService` | version `is_current` | `approved_at`, `approved` if was `generated`; idempotent |
+| Send | `Proposal::SendService` | current; `generated`/`approved`/`sent`; approval present when `approval_required?` | provider send |
+| Callback (send) | `CallbackHandler.apply_send_result!` | matching `send_correlation_id`, not yet applied | `NativeTemplateSender` (`scansolo_proposal_send`), `sent`; or `failed` |
+| Success | `Proposal::SuccessHandler` | opportunity not `ganho`/`perdido` | stage -> `proposta_enviada`, enroll `CadenceDefinition.current_for('proposta_enviada')` |
+
+- `approval_required?` = no published config OR `require_proposal_approval`.
+- `RetryPolicy`: only `failed` with reason in `timeout network_error provider_unavailable`; new correlation id; else `UnsafeRetryError`.
+- Default provider everywhere: `ScanSolo::Proposal::MockProvider` (value `1500.0`, currency `BRL`, artifact `https://mock-proposals.scansolo.test/<id>.pdf`).
+
+### Make callback trust
+
+- `ScanSolo::Make::CallbackVerifier`: HMAC-SHA256 of raw body with credential `scan_solo.make.inbound_signing_secret`, `secure_compare` against `X-Make-Signature`; then JSON parse, JSON schema, match `MakeRequest` by `correlation_id` + `action`.
+- Rejection reasons: `invalid_signature`, `malformed_json`, `schema_invalid`, `unmatched_request`.
+- `MakeRequest.dead_letter` = `failed` with `retry_count >= 3` (`DEAD_LETTER_RETRY_THRESHOLD`).
 
 ## Related documents
 
-- [`api_contracts.md`](api_contracts.md) — endpoints that expose automation rules, assignment policies, and Captain assistants
-- [`data_model.md`](data_model.md) — schema backing `Conversation`, `AutomationRule`, and Captain entities
+- [`data_model.md`](data_model.md) — tables, enums and indexes behind these rules
+- [`api_contracts.md`](api_contracts.md) — endpoints that trigger these rules
+- [`architecture.md`](architecture.md) — async flows and layer boundaries

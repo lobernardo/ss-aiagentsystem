@@ -8,52 +8,55 @@
 
 | Service | Purpose |
 |---|---|
-| OpenAI | LLM completions for Captain AI features; `ruby-openai`, `ai-agents >= 0.12.0`, `ruby_llm >= 1.14.1` gems (`Gemfile`); routed via `lib/llm/feature_router.rb` |
-| Anthropic, Gemini | Alternate LLM providers configured in `config/llm.yml` `providers` (`anthropic`, `gemini`) |
-| Meta WhatsApp Cloud API | Primary customer messaging channel; `app/controllers/webhooks/whatsapp_controller.rb`, `Channel::Whatsapp` model |
-| Facebook Messenger, Instagram | `facebook-messenger`, `koala` gems; `mount Facebook::Messenger::Server` (`config/routes.rb`) |
-| Twilio | SMS/WhatsApp/Voice; `twilio-ruby` gem; voice routes gated `ChatwootApp.enterprise?` |
-| Slack | `slack-ruby-client ~> 2.7.0` gem; `api/v1/integrations/slack` |
-| Twitter | `twitty ~> 0.1.5` gem; `api/v1/twitter/authorization`, `webhooks/twitter` |
-| LINE, Telegram | `line-bot-api` gem; `webhooks/line/:line_channel_id`, `webhooks/telegram/:bot_token` |
-| Shopify | `shopify_api` gem; `app/services/shopify/`, `api/v1/integrations/shopify` |
-| Notion, Linear | `api/v1/integrations/notion`, `api/v1/integrations/linear` OAuth + entity sync |
-| Microsoft, Google | `omniauth-*` gems; `google-cloud-dialogflow-v2`, `google-cloud-translate-v3` gems |
-| Stripe | Billing/subscriptions; `stripe ~> 18.0` gem; `enterprise/api/v1/webhooks/stripe` |
-| Firecrawl | Web crawling for knowledge-base/RAG ingestion; `firecrawl-sdk ~> 1.0` gem; `enterprise/webhooks/firecrawl` |
-| AWS S3 / Azure Blob / Google Cloud Storage | ActiveStorage backends; `aws-sdk-s3`, `azure-blob`, `google-cloud-storage >= 1.48.0` gems |
-| AWS SES | Inbound email via ActionMailbox; `aws-actionmailbox-ses ~> 0` gem |
-| Sentry / Datadog / New Relic / Elastic APM / Scout APM | Error/APM monitoring, loaded conditionally on env vars (`Gemfile` comment: "loaded only when environment variables are set") |
-| OpenTelemetry (OTLP exporter) | LLM/app observability tracing; `opentelemetry-sdk`, `opentelemetry-exporter-otlp` gems |
-| OpenSearch | Full-text search backend; `opensearch-ruby`, `searchkick` gems |
-| Firebase Cloud Messaging, Web Push | Push notifications; `fcm`, `web-push >= 3.0.1` gems |
+| OpenAI (via RubyLLM, `lib/llm`) | Agent replies (`scansolo_agent_response`: gpt-4.1-mini default, gpt-4.1, gpt-5.1, gpt-5.2) and embeddings (`scansolo_knowledge_embedding`: text-embedding-3-small); key from InstallationConfig `CAPTAIN_OPEN_AI_API_KEY`, endpoint `CAPTAIN_OPEN_AI_ENDPOINT` |
+| Meta WhatsApp Cloud API | Inbound/outbound customer messages through native `Channel::Whatsapp`; approved templates read from `channel.message_templates` |
+| Make (make.com) | Inbound signed callback `/webhooks/scan_solo/make`; outbound scenario URL from credential `scan_solo.make.scenario_url` (client present, not called) |
+| S3-compatible object storage | ActiveStorage backend in prod overlay (`docker-compose.scansolo.yaml`, `ACTIVE_STORAGE_SERVICE=s3_compatible`) |
+| SMTP | Upstream Chatwoot mailers (`SMTP_*`) |
+| Observability SaaS | Sentry, Datadog, Elastic APM, New Relic, Scout (upstream gems, env-driven) |
 
 ### Internal libraries
 
-| Package/module | Role |
+| Package | Role |
 |---|---|
-| `lib/chatwoot_app.rb` | App-wide feature flags (`ChatwootApp.enterprise?`, `ChatwootApp.self_hosted_paid?`) gating enterprise routes and installation-level LLM overrides |
-| `lib/captain/` | Captain AI task services: `base_task_service.rb`, `summary_service.rb`, `reply_suggestion_service.rb`, `rewrite_service.rb`, `label_suggestion_service.rb`, `follow_up_service.rb`, `csat_utility_analysis_service.rb`, `tool_instrumentation.rb` |
-| `lib/llm/` | `feature_router.rb` (model resolution precedence), `models.rb` (model registry backed by `config/llm_models.json`), `config.rb`, `exception_trackable.rb` |
-| `lib/custom_exceptions/` | Domain error hierarchy (`Base`, `Account::InvalidEmail`, `CallAlreadyAccepted`, `CustomFilter`, `WhatsappContactInfoRequestError`, `data_import/`) |
-| `lib/seeders/` | `Seeders::AccountSeeder` — sample-data generator for dev/demo accounts (`AGENTS.md`) |
-| `lib/redis/` | Redis connection/config helpers shared by cache, Sidekiq, ActionCable |
-| `lib/integrations/`, `lib/webhooks/` | Shared plumbing for third-party integration and inbound webhook handling |
-| `app/dispatchers/` | `Dispatcher`, `SyncDispatcher`, `AsyncDispatcher`, `BaseDispatcher` — internal domain-event fan-out (not a third-party package, but a first-party pub/sub layer) |
-| `enterprise/` | Proprietary overlay package mirroring `app/` (Captain AI, SLA, voice, SAML, portal, companies) under a separate license (`enterprise/LICENSE`, `README.md` licensing boundary) |
+| `lib/llm/` (`Llm::Config`, `Llm::FeatureRouter`, `Llm::Models`) | RubyLLM initialization, per-feature model routing from `config/llm.yml` / `config/llm_models.json` |
+| `lib/custom_exceptions/` | Upstream custom exception hierarchy used by `RequestExceptionHandler` |
+| `rubocop/*.rb` | Project custom RuboCop cops |
+| `app/listeners/base_listener.rb` + `app/dispatchers/async_dispatcher.rb` | Wisper pub/sub seam; `ScanSolo::ConversationListener` registered at line 23 |
+| `ScanSolo::TestMode::*`, `ScanSolo::Proposal::MockProvider` | In-app providers for test mode and default proposal provider |
+
+### Key gems and packages
+
+| Name | Version | Used for |
+|---|---|---|
+| rails | 7.2.3.1 | framework |
+| pg, pgvector 0.1.1, neighbor 0.2.3 | — | Postgres, `vector(1536)`, `nearest_neighbors` |
+| ruby_llm | 1.15.0 (Gemfile `>= 1.14.1`) | LLM calls |
+| ruby_llm-schema | 0.3.0 | structured-output schemas |
+| sidekiq, sidekiq-cron | 7.3.10, 2.4.0 | jobs, `config/schedule.yml` |
+| wisper | 2.0.0 | dispatcher/listener |
+| pundit | 2.3.0 | `app/policies/scan_solo/` |
+| jbuilder | 2.15.1 | ScanSolo JSON views |
+| json_schemer | 0.2.24 | Make callback + action param validation |
+| httparty | 0.24.0 | Make outbound POST |
+| flag_shih_tzu | 0.3.23 | `Account#scansolo_enabled` bitflag |
+| rack-attack | Gemfile `>= 6.7.0` | Make callback throttle |
+| devise_token_auth | 1.2.5 | API auth headers |
+| vue / pinia / axios / camelcase-keys | ^3.5.12 / ^3.0.4 / ^1.15.0 / — | ScanSolo dashboard modules |
 
 ### Shared infrastructure
 
-| Infrastructure | Role |
+| Component | Dependency |
 |---|---|
-| Redis | Sidekiq queue backend, ActionCable pub/sub, `Rails.cache` store (`REDIS_URL`, `.env.example`; `redis`/`redis-namespace` gems) |
-| Sidekiq | Background job execution across 15 named queues (`critical` → `action_mailbox_incineration`, priority-ordered, `config/sidekiq.yml`) |
-| sidekiq-cron | Scheduled jobs: `internal_check_new_versions_job`, `trigger_scheduled_items_job`, `trigger_hourly_scheduled_items_job`, `trigger_imap_email_inboxes_job`, `remove_stale_contact_inboxes_job`, `remove_stale_redis_keys_job` (`config/schedule.yml`) |
-| PostgreSQL + pgvector | Primary datastore and vector similarity search for Captain FAQ/document embeddings (`config/database.yml`, `pg`/`pgvector`/`neighbor` gems) |
-| Sidekiq::Web | Mounted at `/monitoring/sidekiq`, authenticated as `super_admin` (`config/routes.rb`) |
-| OpenTelemetry OTLP exporter | Centralized tracing sink for LLM and app spans (`opentelemetry-exporter-otlp` gem) |
+| PostgreSQL 16 + pgvector | All `scan_solo_*` tables; `docker-compose.production.yaml` service `postgres` |
+| Redis | Sidekiq queues, ActionCable, cache; prod compose `redis` with `requirepass` |
+| Sidekiq queues | `medium` (`ScanSolo::AiTurnJob`), `scheduled_jobs` (`ScanSolo::CadenceDueAttemptJob` cron `*/5 * * * *`); concurrency `SIDEKIQ_CONCURRENCY` default 10 |
+| Rails encrypted credentials | `scan_solo.make.scenario_url`, `scan_solo.make.secret`, `scan_solo.make.inbound_signing_secret` |
+| Rails logger | Redacting formatter wrapping all log lines (`config/initializers/scansolo_log_redaction.rb`) |
+| Docker Compose | `docker-compose.production.yaml` (rails, sidekiq, postgres, redis; image `scansolo-chatwoot:${SCANSOLO_IMAGE_TAG:-local}`) + `docker-compose.scansolo.yaml` overlay (healthchecks, log rotation, proxy/TLS, storage, backup) |
 
 ## Related documents
 
-- [`tech_stack.md`](tech_stack.md) — language/framework/runtime versions
-- [`architecture.md`](architecture.md) — how these dependencies are wired into the request/event flow
+- [`tech_stack.md`](tech_stack.md) — runtime versions and test tooling
+- [`architecture.md`](architecture.md) — integration points in context
+- [`api_contracts.md`](api_contracts.md) — Make callback contract

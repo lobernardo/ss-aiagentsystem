@@ -6,52 +6,48 @@
 
 ### Purpose
 
-ScanSolo AI Agent System runs a self-hosted conversational sales platform — WhatsApp inbox, human handoff, contact/CRM context, commercial pipeline, knowledge base, follow-up cadences and proposal generation — built as an extension layer on top of the Chatwoot Community Edition codebase (`README.md`).
+ScanSolo AI Agent System extends Chatwoot Community (Rails 7.2 + Vue 3) with an account-gated sales layer — pipeline/Kanban, guarded AI agent turns, RAG knowledge base, follow-up cadences, proposals, human handoff and audit visibility — on top of native conversations (`README.md`, `app/**/scan_solo/`).
 
 ### Business problem
 
-- Needs one operational system for ScanSolo instead of the previous Lexus CRM, which the README demotes to "reference source for proven behavior and contracts, not a runtime dependency after cutover" (`README.md`).
-- Needs an official Meta WhatsApp Cloud API inbox with human handoff and contact context — implemented via `app/controllers/webhooks/whatsapp_controller.rb`, `Webhooks::WhatsappEventsJob`, `app/models/channel/whatsapp.rb`-backed inboxes, and `Conversation#bot_handoff!` (`app/models/conversation.rb`).
-- Needs an AI sales/service agent that can act inside a conversation (add notes, change priority/labels, look up FAQs, resolve, or hand off) — implemented by the Captain agent tool registry (`config/agents/tools.yml`, `enterprise/app/services/captain/tools`, `lib/captain/`).
-- Needs deterministic automation (assignment, follow-up, rule-based actions) instead of manual triage — implemented by `AutomationRule` (`app/models/automation_rule.rb`) and `AutoAssignment::AssignmentService` (`app/services/auto_assignment/assignment_service.rb`).
-- Production activation of real WhatsApp numbers, production LLM keys, and Make webhooks is explicitly deferred until "the complete system has passed isolated tests and a human cutover gate" (`README.md`, "Production activation is intentionally deferred").
+- Inbound WhatsApp leads need an AI first response that never speaks while a human controls the conversation (`ScanSolo::AiTurn::EligibilityGuard`).
+- Sales stage must be tracked per conversation with an auditable history (`ScanSolo::PipelineOpportunity`, `ScanSolo::PipelineStageEvent`).
+- Follow-ups must go out only via approved templates inside 09:00-20:00 America/Sao_Paulo (`ScanSolo::Cadence::SendingWindow`, `TemplateAvailabilityGuard`).
+- AI must not state price, delivery status or proposal-sent claims without a validated action result (`ScanSolo::AiTurn::OutputValidator`).
+- Proposal value/currency/artifact must come only from a provider callback, never from model output (`ScanSolo::Proposal::CallbackHandler`).
 
 ### Consumers and integrations
 
 | System | Role |
 |---|---|
-| Dashboard SPA (`app/javascript`, Vue 3) | Agent/admin web UI, consumes `api/v1` and `api/v2` |
-| Website/Widget SDK (`vite.lib.config.ts`, `app/javascript` widget) | Embeddable chat widget, consumes `api/v1/widget` |
-| Meta WhatsApp Cloud API | Inbound/outbound WhatsApp messages via `app/controllers/webhooks/whatsapp_controller.rb` and `Channel::Whatsapp` |
-| Facebook Messenger / Instagram / Twitter / LINE / Telegram / TikTok / SMS / Slack | Channel webhooks under `app/controllers/webhooks/*`, `mount Facebook::Messenger::Server` (`config/routes.rb`) |
-| Shopify, Notion, Linear, Microsoft, Google, Twilio | OAuth-integrated third-party apps under `app/controllers/{shopify,notion,linear,microsoft,google,twilio}` |
-| Make (per README architecture diagram) | Downstream automation target for proposal/tenant integrations — not yet a coded integration point in this repo, per README flow diagram |
-| Platform API clients | Provisioning of agent bots/accounts/users via `app/controllers/platform/api` |
-| Super Admin operators | Instance administration via `app/controllers/super_admin` |
-| Stripe | Billing/subscription webhooks, `enterprise/api/v1/webhooks/stripe` (`config/routes.rb`) |
-| Firecrawl | Knowledge base/RAG ingestion webhook, `enterprise/webhooks/firecrawl` (`config/routes.rb`, `firecrawl-sdk` gem) |
-| OpenAI / Anthropic / Gemini | LLM providers routed through `lib/llm/feature_router.rb` and `config/llm.yml` |
+| Chatwoot dashboard SPA (`app/javascript/dashboard/routes/dashboard/scansolo/`) | Operator UI: 6 modules pipeline, agent, knowledge, followups, proposals, executions |
+| Account-scoped REST API `/api/v1/accounts/:account_id/scan_solo/*` | Backend for the SPA (`config/routes.rb` `namespace :scan_solo`) |
+| Native Chatwoot WhatsApp channel (`Channel::Whatsapp`) | Inbound messages; outbound via `conversation.messages.create!` |
+| OpenAI via RubyLLM (`lib/llm`, `config/llm.yml`) | Agent responses (`scansolo_agent_response`) and embeddings (`scansolo_knowledge_embedding`) |
+| Make (make.com) | Signed inbound callback `POST /webhooks/scan_solo/make`; outbound client `ScanSolo::Make::OutboundRequestService` (no non-comment caller in `app/`) |
+| Sidekiq + sidekiq-cron | `ScanSolo::AiTurnJob`, `ScanSolo::CadenceDueAttemptJob` (every 5 min) |
+| PostgreSQL + pgvector | `scan_solo_*` tables, `vector(1536)` embeddings |
 
 ### Macro flow
 
-1. Inbound channel event arrives (WhatsApp webhook `POST webhooks/whatsapp/:phone_number`, widget message, email via ActionMailbox, or another channel webhook) — `config/routes.rb`.
-2. Channel controller validates signature/token and enqueues a Sidekiq job (e.g. `Webhooks::WhatsappEventsJob.perform_later`) — `app/controllers/webhooks/whatsapp_controller.rb`.
-3. Job builds/updates `Contact`, `Conversation`, and `Message` records for the account/inbox.
-4. `Conversation` model callbacks fire domain events (`CONVERSATION_CREATED`, `CONVERSATION_UPDATED`, `CONVERSATION_BOT_HANDOFF`, etc.) through `Rails.configuration.dispatcher.dispatch` — `app/models/conversation.rb`.
-5. `Dispatcher` fans the event out to `SyncDispatcher` (in-process) and `AsyncDispatcher` (`EventDispatcherJob` on Sidekiq) — `app/dispatchers/dispatcher.rb`, `app/dispatchers/async_dispatcher.rb`.
-6. Registered listeners react: `AutomationRuleListener` evaluates `AutomationRule` conditions/actions, `WebhookListener`/`HookListener`/`InstallationWebhookListener` fire outbound webhooks, `NotificationListener`/`ParticipationListener` notify agents, `CaptainListener` (enterprise) triggers the AI agent — `app/listeners/`, `enterprise/app/listeners/`.
-7. If the inbox has an active bot, `Conversation#assigned_entity` resolves to `ai_assignee` and Captain (`lib/captain/`, `enterprise/app/services/captain/`) drafts/sends a reply using tools from `config/agents/tools.yml`, or calls `bot_handoff!` to release to a human agent.
-8. `AutoAssignment::AssignmentService` picks up unassigned open conversations for eligible inboxes and assigns a human agent via round robin, honoring `AssignmentPolicy` rate limits — `app/services/auto_assignment/assignment_service.rb`.
-9. Terminal state: message/conversation persisted in Postgres, agent/contact see it via ActionCable push (`ActionCableListener`) and the SPA, and/or an outbound webhook/notification is delivered.
+1. Customer message arrives on native Chatwoot inbox; `Message` persisted by upstream code.
+2. `AsyncDispatcher` fires `message_created` to `ScanSolo::ConversationListener` (`app/dispatchers/async_dispatcher.rb:23`).
+3. Listener exits unless message is incoming and `account.scansolo_enabled?`; updates `last_customer_interaction_at`, applies `novo_lead -> em_contato` rule.
+4. Listener enqueues `ScanSolo::AiTurnJob` (queue `medium`).
+5. `ScanSolo::AiTurn::TurnOrchestrator` dedupes turn, checks eligibility + published config, assembles context (history, contact, pipeline, RAG), runs input guardrail, invokes model, validates output.
+6. In one transaction: supported actions (`stage_transition`) execute, `ResponseSender` creates outgoing message from AgentBot and stores turn evidence (`invocation_status: succeeded`).
+7. Stage changes stop/recalculate cadences; `CadenceDueAttemptJob` sends due template attempts and records evidence.
+8. Operators review turns, executions and audit events via `ai_turns` and `executions` endpoints.
 
 ### Out of scope
 
-- Copying proprietary `enterprise/` implementation into the ScanSolo-specific layer without an adopted Enterprise license — "Do not copy proprietary implementation from upstream `enterprise/` unless a valid Enterprise license is intentionally adopted later" (`README.md`, Licensing boundary).
-- Connecting real production credentials (WhatsApp number, Meta production webhook/token, production OpenAI key, production Make webhooks, real proposal credentials, final DNS/TLS, real customer messaging, Lexus cutover) before the cutover gate (`README.md`, "Production activation is intentionally deferred").
-- Make-side proposal/tenant-specific integration logic — the README places it downstream of Chatwoot ("Make -> proposal / tenant-specific integrations") and no Make client code exists in this repo tree.
+- Lexus CRM migration and production cutover: design-only docs (`docs/migration/SCANSOLO_LEXUS_CUTOVER_DESIGN.md`, `docs/runbooks/PRODUCTION_CUTOVER.md`); no code reads or writes Lexus.
+- `enterprise/` proprietary overlay: README licensing boundary forbids copying its implementation into ScanSolo code.
+- Real Make proposal dispatch: `GenerateService`/`SendService`/`RetryPolicy` default `provider: ScanSolo::Proposal::MockProvider`.
 
 ## Related documents
 
-- [`architecture.md`](architecture.md) — directory layout, layers, and async event flow
-- [`domain_rules.md`](domain_rules.md) — automation, assignment, and Captain agent rule behavior
-- [`api_contracts.md`](api_contracts.md) — HTTP endpoint index and webhook payload formats
+- [`architecture.md`](architecture.md) — layers, directory layout, async flows
+- [`domain_rules.md`](domain_rules.md) — pipeline, turn, cadence, handoff, proposal rules
+- [`api_contracts.md`](api_contracts.md) — ScanSolo REST endpoints and Make callback
+- [`tech_stack.md`](tech_stack.md) — languages, frameworks, test tooling

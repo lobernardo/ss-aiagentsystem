@@ -6,82 +6,265 @@
 
 ### HTTP endpoints
 
-Route source: `config/routes.rb`. OpenAPI 3.1 spec: `swagger/swagger.json`, `swagger/paths/`. Auth schemes defined in `swagger/index.yml`: `userApiKey` / `agentBotApiKey` / `platformAppApiKey`, all sent as the `api_access_token` header.
+Scope: ScanSolo endpoints only (`config/routes.rb` `namespace :scan_solo`, `post 'webhooks/scan_solo/make'`). Upstream Chatwoot API documented in `swagger/`; no ScanSolo paths there.
 
-| Family | Base path | Auth | Notes |
-|---|---|---|---|
-| Account-scoped API | `/api/v1/accounts/:account_id/*` | `userApiKey` or `agentBotApiKey` (per endpoint) | Conversations, contacts, messages, automation rules, macros, labels, teams, inboxes, campaigns, portals, Captain (`config/routes.rb`) |
-| Captain (AI agent) | `/api/v1/accounts/:account_id/captain/*` | `userApiKey` | Assistants, agent sessions, documents, scenarios, FAQ suggestions, custom tools, copilot threads/messages, tasks (`rewrite`/`summarize`/`reply_suggestion`/`label_suggestion`/`follow_up`) |
-| Reports v2 | `/api/v2/accounts/:account_id/reports/*`, `summary_reports`, `live_reports` | `userApiKey` | Aggregate metrics; no request body, query-param filtered |
-| Enterprise billing | `/enterprise/api/v1/accounts/:id/*` (checkout, subscription, limits, topup) | `userApiKey`, gated by `ChatwootApp.enterprise?` | `config/routes.rb` |
-| Platform API | `/platform/api/v1/*` | `platformAppApiKey` | Provisioning: users, agent_bots, accounts, account_users, email_channel_migrations |
-| Public inbox API | `/public/api/v1/inboxes/:id/contacts/:id/conversations/*` | none (public, contact-scoped by inbox/contact identifier) | Widget/contact-facing conversation + message creation |
-| Help Center (portal) | `/hc/:slug`, `/hc/:slug/:locale/articles`, `/categories`, `/search` | none (public) | Public knowledge-base rendering, incl. `.md`/`.png` article variants |
-| Super Admin | `/super_admin/*` | Devise `super_admin` session | Accounts, users, agent_bots, platform_apps, instance_status, `Sidekiq::Web` mount at `/monitoring/sidekiq` |
-| Channel webhooks | `/webhooks/{whatsapp,instagram,line,telegram,sms,tiktok,shopify}/*`, `/bot` (Facebook Messenger) | Per-channel signature/token verification | Inbound provider push, see Message formats below |
-| Devise auth | `/auth/*` (devise_token_auth) | token-based | `confirmations`, `passwords`, `sessions`, `token_validations`, `omniauth_callbacks` overridden under `devise_overrides/` |
+Common rules (account-scoped endpoints):
 
-### Conversations — create
+- Base path `/api/v1/accounts/:account_id/scan_solo`.
+- Auth: Chatwoot `devise_token_auth` headers (`access-token`, `client`, `uid`) or `api_access_token`, inherited from `Api::V1::Accounts::BaseController`.
+- `ScanSolo::BaseController` `prepend_before_action :ensure_scansolo_enabled`: account without `scansolo_enabled` -> 404 before auth.
+- Pundit denial -> 401 (`ScanSolo::*Policy`).
+- `ActiveRecord::RecordInvalid` -> 422 `{"message": "...", "attributes": [...]}` (`RequestExceptionHandler#render_record_invalid`).
+- Record outside account scope -> 404.
 
-`POST /api/v1/accounts/:account_id/conversations` (`swagger/paths/application/conversation/index.yml`, operationId `newConversation`).
+| Method | Path | Controller#action | Auth / policy | Success |
+|---|---|---|---|---|
+| GET | `/pipeline_opportunities` | `pipeline_opportunities#index` | any member | 200 array |
+| GET | `/pipeline_opportunities/:id` | `#show` | any member | 200 |
+| PATCH/PUT | `/pipeline_opportunities/:id` | `#update` (`owner_id`) | any member | 200 |
+| POST | `/pipeline_opportunities/:id/stage_transitions` | `#stage_transitions` | any member | 200 opportunity |
+| POST | `/pipeline_opportunities/:pipeline_opportunity_id/proposals/generate` | `proposals#generate` | any member | 200 version |
+| GET | `/proposals` | `proposals#index` | any member | 200 array |
+| GET | `/proposals/:id` | `proposals#show` | any member | 200 |
+| POST | `/proposals/:id/approve` | `proposals#approve` | any member | 200 version |
+| POST | `/proposals/:id/send` | `proposals#send_proposal` | any member | 200 version |
+| GET | `/ai_agent_config` | `ai_agent_configs#show` | any member | 200 `{draft, published}` |
+| PUT | `/ai_agent_config/draft` | `#draft` | any member | 200 draft |
+| POST | `/ai_agent_config/publish` | `#publish` | any member | 200 published |
+| GET | `/knowledge/sources` | `knowledge/sources#index` | any member | 200 array |
+| POST | `/knowledge/sources` | `#create` (JSON or multipart `file`) | any member | 200 source |
+| PATCH/PUT | `/knowledge/sources/:id` | `#update` | any member | 200 |
+| DELETE | `/knowledge/sources/:id` | `#destroy` | any member | 204 |
+| POST | `/knowledge/sources/:id/reindex` | `#reindex` | any member | 200 |
+| POST | `/knowledge/retrieval_tests` | `knowledge/retrieval_tests#create` | any member | 200; blank `query` -> 422 `{"errors": ["query is required"]}` |
+| GET | `/ai_turns` | `ai_turns#index` (latest 50) | any member | 200 array |
+| GET | `/ai_turns/:correlation_id` | `ai_turns#show` | any member | 200 |
+| GET | `/cadence_enrollments` | `cadence_enrollments#index` (active + paused) | any member | 200 array |
+| POST | `/cadence_enrollments` | `#create` | administrator | 200 enrollment |
+| POST | `/cadence_enrollments/:id/pause` | `#pause` | any member | 200 |
+| POST | `/cadence_enrollments/:id/resume` | `#resume` | any member | 200 |
+| POST | `/cadence_enrollments/:id/cancel` | `#cancel` | any member | 200 |
+| GET | `/conversations/:conversation_id/control_state` | `conversations/handoff#show` | any member (no `authorize`) | 200 |
+| POST | `/conversations/:conversation_id/handoff` | `#create` | administrator or assigned agent | 200 |
+| POST | `/conversations/:conversation_id/return_to_ai` | `#return_to_ai` | administrator or assigned agent | 200 |
+| GET | `/executions` | `executions#index` | any member | 200 object |
+| POST | `/webhooks/scan_solo/make` (root, not account-scoped) | `webhooks/scan_solo/make#process_callback` | HMAC `X-Make-Signature` | 200 / 401 / 422 |
 
-Response `200`:
+#### Pipeline opportunities
+
+- Request `stage_transitions`: `target_stage` (string, one of 8 stages). Errors: invalid stage / terminal / `negociacao` guard -> 422. Replay (same stage, same user, ≤5 s) -> 200 without new event.
+- Response fields (`_pipeline_opportunity.json.jbuilder`): `id, account_id, contact_id, contact_name, conversation_id, owner_id, stage, last_customer_interaction_at, next_follow_up_at, created_at, updated_at, stage_history[] {id, from_stage, to_stage, actor_type, actor_id, created_at}`.
+
+Request (`spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_spec.rb`):
+
+```json
+{ "target_stage": "em_contato" }
+```
+
+Response shape (values from the same spec):
+
 ```json
 {
-  "id": 42,
-  "account_id": 1,
-  "inbox_id": 3
+  "id": 12,
+  "account_id": 3,
+  "contact_id": 41,
+  "contact_name": "Maria Souza",
+  "conversation_id": 87,
+  "owner_id": null,
+  "stage": "em_contato",
+  "last_customer_interaction_at": null,
+  "next_follow_up_at": null,
+  "created_at": "2026-09-18T12:00:00.000Z",
+  "updated_at": "2026-09-18T12:05:00.000Z",
+  "stage_history": [
+    { "id": 5, "from_stage": "novo_lead", "to_stage": "em_contato", "actor_type": "User", "actor_id": 9, "created_at": "2026-09-18T12:05:00.000Z" }
+  ]
 }
 ```
 
-Error `403` uses `#/components/schemas/bad_request_error`.
+#### Proposals
 
-### Messages — create (conversation-scoped)
+- `generate`: `correlation_id` required (`params.require`). Missing required qualification fields -> 422.
+- `approve` / `send`: `proposal_version_id` + `correlation_id` required. Non-current version -> 422; send without generate -> 422; send without approval when `approval_required` -> 422.
+- Version fields (`_proposal_version.json.jbuilder`): `id, proposal_id, version_number, status, is_current, value, currency, artifact_url, failure_reason, approved_at, approval_required, sent_at` (`sent_at` = `send_callback_applied_at`).
+- Proposal fields: `id, opportunity_id, contact_name, current_version_id, versions[]`.
 
-`POST /api/v1/accounts/:account_id/conversations/:conversation_id/messages` (`swagger/paths/application/conversation/messages/create.yml`, operationId `create-a-new-message-in-a-conversation`). Auth: `userApiKey` or `agentBotApiKey`.
+Request (`spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb`):
 
-Text/JSON body uses `#/components/schemas/conversation_message_create_payload`. WhatsApp template example from the spec:
+```json
+{ "proposal_version_id": 21, "correlation_id": "5f0c2e7a-9b1d-4c3e-8a64-2d9f1b7e0c11" }
+```
+
+Response after generate with `ScanSolo::Proposal::MockProvider`:
 
 ```json
 {
-  "content": "Hi your order 121212 is confirmed. Please wait for further updates",
-  "template_params": {
-    "name": "order_confirmation",
-    "category": "MARKETING",
-    "language": "en",
-    "processed_params": {
-      "body": { "1": "121212" },
-      "header": { "media_url": "https://picsum.photos/200/300", "media_type": "image" }
-    }
+  "id": 21,
+  "proposal_id": 8,
+  "version_number": 1,
+  "status": "generated",
+  "is_current": true,
+  "value": "1500.0",
+  "currency": "BRL",
+  "artifact_url": "https://mock-proposals.scansolo.test/21.pdf",
+  "failure_reason": null,
+  "approved_at": null,
+  "approval_required": true,
+  "sent_at": null
+}
+```
+
+#### AI agent config
+
+- `draft` permits: `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours, require_proposal_approval`, arrays `qualification_playbook, required_qualification_fields, restricted_information, forbidden_subjects`.
+- `show` returns `{ "draft": {...}, "published": {...} | null }`; each carries all permitted fields + `id, status, updated_at`.
+- `publish` returns a new published snapshot id each call.
+
+Request (`spec/requests/api/v1/accounts/scan_solo/ai_agent_configs_spec.rb`):
+
+```json
+{
+  "name": "Agente Comercial",
+  "enabled": true,
+  "model_provider": "openai",
+  "model_selection": "gpt-4.1",
+  "role": "SDR virtual",
+  "objective": "Qualificar leads",
+  "persona": "Consultivo",
+  "tone": "Profissional",
+  "instructions": "Responda em pt-BR",
+  "service_rules": "Nunca prometa desconto",
+  "qualification_playbook": ["orcamento", "prazo"],
+  "required_qualification_fields": ["orcamento"],
+  "restricted_information": ["preco_interno"],
+  "forbidden_subjects": ["concorrentes"],
+  "transfer_criteria": "Cliente pede humano",
+  "response_limits": "Ate 3 mensagens por turno",
+  "service_hours": "09:00-20:00 America/Sao_Paulo"
+}
+```
+
+#### Knowledge
+
+- `create` permits `source_type` (`document|faq|company_info`), `title`, `content`, `origin` (required by model); optional multipart `file` (ActiveStorage). Ingests synchronously.
+- `update` permits `enabled, title, content, origin`.
+- Source fields: `id, source_type, title, content, origin, enabled, added_by_id, chunks_count, file_attached, created_at, updated_at`.
+- Retrieval test: `query` (required), `top_k` (default 5). Response `{results[] {chunk_id, source_id, source_type, content_snippet, similarity_score}, failure_reason}`.
+
+Requests (`spec/requests/api/v1/accounts/scan_solo/knowledge/*_spec.rb`):
+
+```json
+{ "source_type": "faq", "title": "Horário de atendimento", "content": "Atendemos de segunda a sexta, das 9h às 20h.", "origin": "manual" }
+```
+
+```json
+{
+  "results": [
+    { "chunk_id": 14, "source_id": 6, "source_type": "faq", "content_snippet": "Qual o horário de atendimento? Atendemos de segunda a sexta, das 9h às 20h.", "similarity_score": 0.91 }
+  ],
+  "failure_reason": null
+}
+```
+
+#### AI turns
+
+- Lookup by `correlation_id`, scoped to account conversations; unknown -> 404.
+- Fields: `id, correlation_id, conversation_id, message_id, response_message_id, invocation_status, model_provider, model_reference, input_tokens, output_tokens, cost_estimate, latency_ms, failure_reason, guardrail_outcome, knowledge_evidence (= context_snapshot.knowledge_context), action_evidence, context_snapshot, created_at`.
+
+```json
+{
+  "id": 30,
+  "correlation_id": "b7a4c1d2-3e5f-4a6b-9c8d-0e1f2a3b4c5d",
+  "invocation_status": "succeeded",
+  "model_provider": "scansolo_test_mode",
+  "model_reference": "scansolo-mock-llm",
+  "guardrail_outcome": { "blocked": false, "forbidden_subject_hit": null, "allowed_actions": ["qualification_field", "stage_transition", "private_note", "proposal_generate", "cadence_signal", "human_handoff"] },
+  "failure_reason": null
+}
+```
+
+#### Cadence enrollments
+
+- `create`: `opportunity_id`, `cadence_definition_id`; non-admin -> 401; idempotent per pair.
+- Fields: `id, opportunity_id, cadence_definition_id, status, current_step, next_attempt_at` (`ScanSolo::CadenceEnrollmentSerializer`) + `contact_name, cadence_stage, cadence_version`.
+
+```json
+{ "opportunity_id": 12, "cadence_definition_id": 2 }
+```
+
+```json
+{ "id": 4, "opportunity_id": 12, "cadence_definition_id": 2, "status": "active", "current_step": 0, "next_attempt_at": "2026-09-19T12:00:00.000Z", "contact_name": "Maria Souza", "cadence_stage": "proposta_enviada", "cadence_version": 1 }
+```
+
+#### Conversation control
+
+- `handoff` permits `reason`; response `{conversation_id, ai_control_state, updated_at}`. Repeat takeover -> 200, no second note/audit.
+
+```json
+{ "reason": "Cliente pediu para falar com humano" }
+```
+
+```json
+{ "conversation_id": 87, "ai_control_state": "human_active", "updated_at": "2026-09-18T12:10:00.000Z" }
+```
+
+#### Executions
+
+- Response keys: `cadence_evidence[]` (enrollment + `attempts[] {id, step, cadence_version, template_reference, scheduled_at, sent_at, result}`), `make_errors {dead_letters[], callback_errors[]}`, `audit_events[]` (latest 100).
+
+```json
+{
+  "cadence_evidence": [],
+  "make_errors": {
+    "dead_letters": [ { "id": 3, "action": "proposal.generate", "correlation_id": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f", "idempotency_key": "f0e1d2c3-b4a5-4968-8776-655443322110", "retry_count": 3, "status": "failed", "created_at": "2026-09-18T12:00:00.000Z" } ],
+    "callback_errors": [ { "id": 2, "action": "proposal.generate", "correlation_id": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f", "signature_valid": true, "applied": false, "rejection_reason": "schema_invalid", "created_at": "2026-09-18T12:01:00.000Z" } ]
+  },
+  "audit_events": []
+}
+```
+
+### Message formats
+
+#### Make inbound callback — `POST /webhooks/scan_solo/make`
+
+- Header `X-Make-Signature` = hex HMAC-SHA256(raw body, credential `scan_solo.make.inbound_signing_secret`).
+- Schema (`ScanSolo::Make::CallbackVerifier::SCHEMA`): required `correlation_id, idempotency_key, action (proposal.generate|proposal.send), status (success|failure)`; `result` oneOf generate `{proposal_version_id, artifact_url, total_value, currency(3), valid_until}` | send `{proposal_version_id, sent_at, transport_message_id}` | error `{proposal_version_id, error_code, error_message, retryable}`.
+- Responses: invalid/missing signature -> 401, nothing stored; malformed JSON / schema invalid / unmatched request -> 422 + `MakeCallback(applied: false, rejection_reason)`; duplicate `correlation_id` -> 200, no reapply; valid -> 200, `MakeCallback(applied: true)`, `MakeRequest` -> `completed` (success) or `failed`.
+- Rate limit: Rack::Attack `webhooks/scan_solo/make`, `RATE_LIMIT_SCANSOLO_MAKE_CALLBACK` (default 60/min/IP).
+
+Payload (`spec/requests/webhooks/scan_solo/make_controller_spec.rb`):
+
+```json
+{
+  "correlation_id": "4b6f0f8e-2d1a-4c9b-9e37-5a0c1d2e3f40",
+  "idempotency_key": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+  "action": "proposal.generate",
+  "status": "success",
+  "result": {
+    "proposal_version_id": 7,
+    "artifact_url": "https://mock-proposals.scansolo.test/7.pdf",
+    "total_value": 1500.0,
+    "currency": "BRL",
+    "valid_until": "2026-09-30T12:00:00Z"
   }
 }
 ```
 
-Multipart form (`attachments[]`) example:
-```json
-{
-  "content": "Here is the screenshot",
-  "message_type": "outgoing",
-  "private": false,
-  "attachments[]": ["screenshot.png"]
-}
-```
+#### Make outbound request
 
-Errors: `404` conversation not found, `403` access denied (both `#/components/schemas/bad_request_error`).
+- `ScanSolo::Make::OutboundRequestService`: `POST` to credential `scan_solo.make.scenario_url`, headers `Authorization: Bearer <scan_solo.make.secret>`, `X-Idempotency-Key`, body = payload + `correlation_id`, `idempotency_key`, `action`; timeout 10 s.
+- Non-2xx or exception -> `MakeRequest failed`, `retry_count += 1`; exception re-raised. No automatic retry loop; `retry_count >= 3` surfaces in `dead_letter`.
+- No non-comment caller in `app/`.
 
-### Message formats (async/webhook)
+#### Sidekiq jobs
 
-- **WhatsApp inbound**: `POST webhooks/whatsapp/:phone_number` — `Webhooks::WhatsappController#process_payload` verifies Meta signature (`MetaTokenVerifyConcern`), rejects payloads for numbers listed in `GlobalConfig.get_value('INACTIVE_WHATSAPP_NUMBERS')`, no-ops on `tracking_events`-only changesets, otherwise enqueues `Webhooks::WhatsappEventsJob.perform_later(params.to_unsafe_hash)` on Sidekiq (`app/controllers/webhooks/whatsapp_controller.rb`).
-- **Facebook Messenger**: mounted via `Facebook::Messenger::Server` at `/bot` (`config/routes.rb`), handled by the `facebook-messenger` gem's own routing/postback dispatch.
-- **Instagram**: `GET/POST webhooks/instagram` — verify + events, separate from the WhatsApp Cloud API webhook.
-- **LINE**: `POST webhooks/line/:line_channel_id` → `Webhooks::LineController#process_payload`.
-- **Telegram**: `POST webhooks/telegram/:bot_token` → `Webhooks::TelegramController#process_payload`.
-- **SMS**: `POST webhooks/sms/:phone_number` → `Webhooks::SmsController#process_payload`.
-- **Shopify**: `POST webhooks/shopify` → `Webhooks::ShopifyController#events`.
-- **Domain event fan-out** (internal, not externally addressable): `Dispatcher#dispatch` → `AsyncDispatcher` → `EventDispatcherJob.perform_later(event_name, timestamp, data)` on Sidekiq's `default`-tier queues (`config/sidekiq.yml`); consumed by `app/listeners/*` and `enterprise/app/listeners/*`. No DLQ beyond Sidekiq's built-in retry (`config/sidekiq.yml`: `:max_retries: 3`); failed jobs fall into Sidekiq's dead set per Sidekiq defaults.
-- **Outbound webhooks**: `WebhookListener`/`HookListener` deliver account-configured `Webhook` records (`resources :webhooks` under `api/v1/accounts/:account_id`) and `integrations/hooks` app subscriptions when a dispatched event matches.
+| Job | Queue | Args | Retry |
+|---|---|---|---|
+| `ScanSolo::AiTurnJob` | `medium` | `message_id`, `llm_provider:` (class name string), `actions:` | Sidekiq defaults; `ApplicationJob` discards `ActiveJob::DeserializationError` |
+| `ScanSolo::CadenceDueAttemptJob` | `scheduled_jobs` | none (cron `*/5 * * * *`) | send errors caught per attempt -> attempt `failed` |
 
 ## Related documents
 
-- [`domain_rules.md`](domain_rules.md) — automation/assignment logic triggered by these endpoints and events
-- [`architecture.md`](architecture.md) — full inbound-webhook-to-response flow diagram
+- [`domain_rules.md`](domain_rules.md) — rules behind each 422 and state change
+- [`data_model.md`](data_model.md) — persisted entities returned by these endpoints
+- [`architecture.md`](architecture.md) — request and async flow diagrams

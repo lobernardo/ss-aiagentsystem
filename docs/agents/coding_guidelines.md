@@ -4,31 +4,63 @@
 
 ## AS IS — Current state
 
-### 1. Enterprise extension points instead of forked classes
+### 1. Compact class definitions under the `ScanSolo::` namespace
 
-OSS models/dispatchers call `prepend_mod_with`/`include_mod_with` at the bottom of the file so `enterprise/` can extend behavior without editing the OSS class body — verified in `app/models/conversation.rb` (`Conversation.include_mod_with('Audit::Conversation')`, `Conversation.prepend_mod_with('Conversation')`), `app/models/automation_rule.rb` (`AutomationRule.prepend_mod_with('AutomationRule')`), and `app/dispatchers/async_dispatcher.rb` (`AsyncDispatcher.prepend_mod_with('AsyncDispatcher')`). 26 files under `app/models` use this pattern. Enforced procedurally by `AGENTS.md` ("add an Enterprise module ... instead of editing OSS files directly").
+- Write `class ScanSolo::Cadence::SendingWindow`, not nested `module ScanSolo; module Cadence`.
+- Enforced by `.rubocop.yml` `Style/ClassAndModuleChildren: EnforcedStyle: compact`.
+- Seen in every file under `app/services/scan_solo/`, `app/models/scan_solo/`, `app/controllers/api/v1/accounts/scan_solo/`.
 
-### 2. Service objects as `pattr_initialize` command classes
+### 2. Service objects with class-level `.call`
 
-Multi-step domain operations are plain Ruby objects under `app/services/<namespace>/` initialized with `pattr_initialize` (from `attr_extras` gem) and a single public `perform`/entry method — verified in `app/services/auto_assignment/assignment_service.rb` (`pattr_initialize [:inbox!]`), `app/services/auto_assignment/round_robin_selector.rb`, `app/services/auto_assignment/rate_limiter.rb`, `app/services/auto_assignment/agent_assignment_service.rb`, `app/services/auto_assignment/inbox_round_robin_service.rb` — 78 occurrences of `pattr_initialize` across `app/services`.
+- Pattern: `def self.call(...)` delegating to `new(...).call`; inputs exposed via private `attr_reader`.
+- Seen in `ScanSolo::AiTurn::TurnOrchestrator`, `ScanSolo::Cadence::EnrollmentService`, `ScanSolo::Handoff::TakeoverService`, `ScanSolo::Proposal::GenerateService`, `ScanSolo::Knowledge::RetrievalService`.
+- Result structs via `Struct.new(..., keyword_init: true)` with predicate methods (`ModelInvoker::Result#failed?`, `TemplateAvailabilityGuard::Result#blocked?`, `CallbackVerifier::Result#valid?`).
 
-### 3. Domain events dispatched through `Rails.configuration.dispatcher`, not direct callbacks
+### 3. Single "sole path" writer per state transition
 
-Model lifecycle callbacks never call listeners directly; they call `Rails.configuration.dispatcher.dispatch(EVENT_NAME, Time.zone.now, ...)`, and `Dispatcher` fans out to `SyncDispatcher` + `AsyncDispatcher` — verified in `app/models/conversation.rb` (`dispatcher_dispatch` private method) and `app/dispatchers/dispatcher.rb`. This decouples ActiveRecord callbacks from side effects (`wisper 2.0.0` gem backs the pattern per `Gemfile` comment referencing the pub/sub blog post).
+- One service owns each mutation; controllers and other services call it instead of updating columns.
+- `StageTransitionService` (stage), `EnrollmentService` (enrollment create), `AttemptEvidenceRecorder` (attempt result), `ReturnToAiService` (back to `ai_active`), `CallbackHandler` (proposal value/currency/artifact_url and `sent`).
+- Cadence stop logic routes through `StopRecalculatePolicy` -> `LifecycleService`.
 
-### 4. RuboCop-enforced style (150-char lines, custom cops)
+### 4. Business-rule rejection raises `ActiveRecord::RecordInvalid`
 
-Ruby style is enforced by `.rubocop.yml`: `Layout/LineLength: Max: 150`, `Metrics/ClassLength: Max: 175` (with named exceptions for `message.rb`/`conversation.rb`), `Metrics/MethodLength: Max: 19`, plus four repo-custom cops required from `./rubocop/*.rb` (`use_from_email.rb`, `custom_cop_location.rb`, `attachment_download.rb`, `one_class_per_file.rb`) and `rubocop-performance`/`rubocop-rails`/`rubocop-rspec`/`rubocop-factory_bot` plugins.
+- Add to `record.errors`, then `raise ActiveRecord::RecordInvalid, record`; `RequestExceptionHandler#render_record_invalid` returns 422 `{message, attributes}`.
+- Seen in `StageTransitionService#reject!`, `SendService#reject!`, `ApproveService#reject_unless_current!`, `GenerateService#reject_if_incomplete!`.
+- No bespoke `rescue` in ScanSolo controllers.
 
-### 5. Frontend: ESLint Airbnb-base + Vue 3 recommended, Prettier-formatted
+### 5. Controller shape: gate, scope, authorize, delegate
 
-`.eslintrc.js` extends `airbnb-base/legacy`, `prettier`, `plugin:vue/vue3-recommended`, `plugin:@intlify/vue-i18n/recommended`, and enforces `vue/component-name-in-template-casing: PascalCase`, `vue/custom-event-name-casing: camelCase`, `vue/block-order: [script, template, style]`, and `vue/no-bare-strings-in-template` (i18n-only templates). `package.json` `lint-staged` runs `eslint --fix` on staged `app/**/*.{js,vue}`.
+- Inherit `Api::V1::Accounts::ScanSolo::BaseController` (`prepend_before_action :ensure_scansolo_enabled` -> 404).
+- Scope every lookup by `Current.account` (`where(account_id: Current.account.id).find(...)` or `joins(:opportunity).where(scan_solo_pipeline_opportunities: { account_id: ... })`).
+- Call `authorize(record)` (Pundit, `ScanSolo::*Policy`) before delegating to a service; reference models with leading `::ScanSolo::`.
+- Whitelist input with `params.permit(...)` / `params.require(...)`.
 
-### 6. Custom exception hierarchy under `lib/custom_exceptions/`
+### 6. Idempotency backed by unique indexes
 
-Domain-specific error classes subclass `CustomExceptions::Base` and are namespaced by aggregate — verified in `lib/custom_exceptions/base.rb`, `lib/custom_exceptions/account.rb` (`CustomExceptions::Account::InvalidEmail`), `lib/custom_exceptions/call_already_accepted.rb`, `lib/custom_exceptions/custom_filter.rb`, `lib/custom_exceptions/whatsapp_contact_info_request_error.rb`. Matches `AGENTS.md` "Error Handling: Use custom exceptions (`lib/custom_exceptions/`)".
+- Guard in code (`find_or_create_by!`, `exists?`, `with_lock` + applied timestamp) and back with a DB unique index; rescue `ActiveRecord::RecordNotUnique` to return the existing row.
+- Seen in `EnrollmentService` (`idx_scansolo_cadence_enrollments_on_opportunity_and_definition`), `TurnOrchestrator#create_turn` (unique `message_id`), `Webhooks::ScanSolo::MakeController` (unique `correlation_id`), `Actions::Executor` (unique `idempotency_key`).
+
+### 7. Ruby style limits
+
+- Line length max 150 — enforced by `.rubocop.yml` `Layout/LineLength`.
+- 2-space indent, LF, UTF-8, trailing newline — enforced by `.editorconfig`.
+- Pre-commit runs `rubocop -a` on staged `.rb` and `eslint --fix` on `app/**/*.{js,vue}` — enforced by `.husky/pre-commit` + package.json `lint-staged`.
+
+### 8. Vue: `<script setup>`, Pinia stores, server-confirmed state
+
+- All 9 `.vue` files under `app/javascript/dashboard/routes/dashboard/scansolo/` use `<script setup>`.
+- Stores: `defineStore('scansolo<Name>', {...})` exporting `useScansolo<Name>Store`, payloads passed through `camelcaseKeys(..., { deep: true })` (`store/scansolo/pipelineOpportunities.js`).
+- API clients extend `ApiClient` with `accountScoped: true` (`api/scansoloPipelineOpportunities.js`).
+- Event names camelCase, component names PascalCase, no bare strings in templates — enforced by `.eslintrc.js` `vue/custom-event-name-casing`, `vue/component-name-in-template-casing`, `vue/no-bare-strings-in-template`.
+- Strings live in `app/javascript/dashboard/i18n/locale/en/scansolo.json`.
+
+### 9. Tests never reach real providers
+
+- `spec/support/scansolo_webmock_enforcement.rb` lists forbidden hosts (`api.openai.com`, `graph.facebook.com`, `hook(s).*.make.com`, ...) and credential env keys.
+- Stub providers with `ScanSolo::TestMode::MockLlmProvider` / `MockEmbeddingProvider`; request specs authenticate via `create_new_auth_token` and assert on `response.parsed_body`.
 
 ## Related documents
 
-- [`architecture.md`](architecture.md) — where these patterns sit in the layered structure
-- [`domain_rules.md`](domain_rules.md) — concrete rule/service classes that follow the service-object pattern
+- [`tech_stack.md`](tech_stack.md) — tool versions and test commands
+- [`architecture.md`](architecture.md) — layer responsibilities these patterns implement
+- [`domain_rules.md`](domain_rules.md) — the rules the sole-path services enforce

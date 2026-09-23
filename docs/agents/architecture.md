@@ -6,110 +6,130 @@
 
 ### Style
 
-Layered monolith: a single Rails 7.2 app (models/services/controllers/jobs) serves both a JSON API and a Vue 3 SPA, with a parallel proprietary overlay tree (`enterprise/`) that patches OSS classes via `prepend_mod_with`/`include_mod_with` (e.g. `Conversation.prepend_mod_with('Conversation')` in `app/models/conversation.rb`) rather than forking them.
+Rails MVC monolith (Chatwoot fork) with a Vue 3 SPA; ScanSolo code is an isolated `ScanSolo::` namespace across `app/{models,services,jobs,policies,serializers,controllers,views}/scan_solo/`, hooked into upstream via the Wisper dispatcher/listener seam and service objects with a class-level `.call`.
 
 ### Directory layout
 
 ```
-.
-├── app/
-│   ├── actions/          # command-style domain actions
-│   ├── builders/          # object builders (accounts, inboxes, ...)
-│   ├── channels/          # ActionCable channels (realtime push to SPA)
-│   ├── controllers/       # api/v1, api/v2, platform, public, super_admin, webhooks, per-channel OAuth
-│   ├── dispatchers/       # sync/async domain event fan-out (Dispatcher, SyncDispatcher, AsyncDispatcher)
-│   ├── javascript/        # Vue 3 SPA: dashboard, widget, SDK
-│   ├── jobs/               # Sidekiq job classes
-│   ├── listeners/          # Wisper-style event listeners (automation, webhooks, notifications)
-│   ├── mailboxes/          # ActionMailbox inbound email routing
-│   ├── models/             # ActiveRecord models (57 top-level files)
-│   ├── policies/           # Pundit authorization policies
-│   ├── services/            # business services, one namespace per channel/feature
-│   └── views/               # Jbuilder/ERB views incl. mailers
-├── enterprise/              # proprietary overlay: mirrors app/ (actions, controllers, jobs, models,
-│                             # services, policies, dispatchers, listeners) + Captain AI, SLA, voice, SAML, portal, companies
-├── config/                  # routes.rb, sidekiq.yml, schedule.yml, database.yml, llm.yml, llm_models.json,
-│                             # agents/tools.yml (Captain tool registry), initializers/
-├── db/                       # migrate/ (180 files), schema.rb, seeds.rb
-├── lib/                       # chatwoot_app.rb, captain/ (AI task services), llm/ (feature_router, models),
-│                               # integrations/, webhooks/, redis/, seeders/, tasks/
-├── swagger/                   # OpenAPI 3.1 spec (definitions/, paths/, parameters/, swagger.json)
-├── spec/                      # RSpec suite (path only, not read for content)
-├── tests/playwright/          # e2e tests
-├── docker/                    # Dockerfile, dockerfiles/{rails,vite}, entrypoints/
-└── docker-compose*.yaml        # rails, sidekiq, vite, postgres/pgvector, redis, mailhog topology
+app/
+  controllers/api/v1/accounts/scan_solo/   # REST API, inherits ScanSolo::BaseController (404 gate)
+    conversations/handoff_controller.rb    # control_state / handoff / return_to_ai
+    knowledge/                             # sources CRUD + retrieval_tests
+  controllers/webhooks/scan_solo/          # Make signed inbound callback (ActionController::API)
+  models/scan_solo/                        # 17 AR models, tables scan_solo_*
+  services/scan_solo/
+    ai_turn/                               # TurnOrchestrator + guard/context/guardrail/invoker/validator/sender
+    ai_agent/                              # ModelResolver, PublishService
+    knowledge/                             # ingestion, embedding, retrieval, reindex
+    pipeline/                              # StageTransitionService, rules, queries
+    cadence/                               # enrollment, lifecycle, window, guards, evidence
+    handoff/                               # handoff note, takeover, return-to-AI
+    actions/                               # Registry, Executor, ConfirmationGate, 8 action handlers
+    proposal/                              # generate/approve/send, callback, retry, MockProvider
+    make/                                  # outbound client, callback verifier, dead-letter query
+    messaging/                             # NativeTemplateSender
+    test_mode/                             # MockLlmProvider, MockEmbeddingProvider
+    conversation_listener.rb               # BaseListener subscriber
+    audit_logger.rb                        # AuditEvent writer
+  jobs/scan_solo/                          # AiTurnJob, CadenceDueAttemptJob
+  policies/scan_solo/                      # Pundit policies
+  serializers/scan_solo/                   # CadenceEnrollmentSerializer
+  views/api/v1/accounts/scan_solo/         # jbuilder responses
+  javascript/dashboard/
+    routes/dashboard/scansolo/             # 6 module screens + scansoloModules.js
+    store/scansolo/                        # Pinia stores
+    api/scansolo*.js                       # ApiClient subclasses
+config/
+  routes.rb                                # namespace :scan_solo + webhooks/scan_solo/make
+  llm.yml                                  # scansolo_agent_response, scansolo_knowledge_embedding
+  schedule.yml                             # scan_solo_cadence_due_attempt_job
+  initializers/scansolo_*.rb               # constants, log redaction
+db/migrate/2026091*_*scan_solo*            # ScanSolo schema
+enterprise/                                # upstream proprietary overlay (not used by ScanSolo)
+lib/llm/                                   # RubyLLM wrapper, FeatureRouter
+spec/**/scan_solo/                         # RSpec suites
 ```
 
 ### Layer responsibilities
 
 | Layer | Owns | Does NOT own |
 |---|---|---|
-| `app/controllers` | Request parsing, auth/policy checks, param whitelisting, response shape | Business rules, persistence writes beyond delegating to models/services |
-| `app/models` | Schema-backed state, validations, associations, lifecycle callbacks that dispatch domain events (`app/models/conversation.rb`) | Cross-cutting orchestration across multiple aggregates (delegated to `app/services`) |
-| `app/services` | Multi-step domain operations (`AutoAssignment::AssignmentService`, `AutomationRules::ActionService`) | HTTP concerns, direct route awareness |
-| `app/dispatchers` + `app/listeners` | Fan-out of domain events to sync/async subscribers (`Dispatcher`, `AsyncDispatcher`, `AutomationRuleListener`) | Business logic of what a listener does once notified (delegated to the listener's own service calls) |
-| `app/jobs` | Sidekiq-queued background work (channel ingestion, scheduled jobs) | Request/response cycle |
-| `enterprise/` | Proprietary extensions (Captain AI, SLA, voice, SAML, companies, billing) layered via `prepend_mod_with`/`include_mod_with` and enterprise-only routes gated by `ChatwootApp.enterprise?` (`config/routes.rb`) | Core OSS contracts — must stay behavior-compatible per `AGENTS.md` Enterprise Edition Notes |
-| `app/javascript` | Vue 3 SPA (dashboard/widget/SDK), Vuex/Pinia state | Server-side validation (mirrors, does not replace, Rails strong params) |
+| Controllers (`Api::V1::Accounts::ScanSolo::*`) | `scansolo_enabled?` 404 gate, account scoping via `Current.account`, Pundit `authorize`, strong params | Business rules; stage/state changes |
+| Policies (`ScanSolo::*Policy`) | Role checks (administrator, assigned agent) | Data scoping (`Scope#resolve` returns `none`) |
+| Services (`app/services/scan_solo/`) | All state transitions; "sole path" writers (stage, cadence, handoff, proposal callback) | HTTP rendering |
+| Models (`app/models/scan_solo/`) | Enums, uniqueness, readonly audit rows, `draft_for!`/`published_for`/`resolve_for` lookups | Cross-entity workflows |
+| Jobs (`app/jobs/scan_solo/`) | Async turn execution, cron-driven cadence sends | Eligibility logic (delegated to services) |
+| Views (jbuilder) + serializer | JSON response shape | Queries beyond association reads |
+| Listener (`ScanSolo::ConversationListener`) | Enable check, pipeline bookkeeping, job enqueue | AI logic |
+| Vue SPA + Pinia | Rendering server-confirmed state | Local guessing of transition outcomes |
 
 ### External integration points
 
 | System | Client/config | Notes |
 |---|---|---|
-| Meta WhatsApp Cloud API | `app/controllers/webhooks/whatsapp_controller.rb`, `Channel::Whatsapp` model | Verifies Meta signature via `MetaTokenVerifyConcern`, enqueues `Webhooks::WhatsappEventsJob`, filters `tracking_events`-only payloads and inactive numbers via `GlobalConfig` |
-| Facebook Messenger | `mount Facebook::Messenger::Server, at: 'bot'` (`config/routes.rb`), `koala`/`facebook-messenger` gems | Also has dedicated postback handling per `config/routes.rb` webhook routes |
-| Twilio (SMS/WhatsApp/Voice) | `app/controllers/twilio/`, `twilio-ruby` gem, `enterprise/app/services/voice/` | Voice routes gated by `ChatwootApp.enterprise?` |
-| Slack, Shopify, Notion, Linear, Microsoft, Google, TikTok | `app/controllers/integrations/*`, per-vendor `app/services/*` namespaces | OAuth authorization + webhook endpoints under `api/v1/*/authorization` |
-| OpenAI / Anthropic / Gemini | `lib/llm/feature_router.rb`, `config/llm.yml`, `ruby_llm`/`ruby-openai`/`ai-agents` gems | Model selection precedence: per-account override → installation override (self-hosted paid only) → default from `Llm::Models` |
-| Stripe | `enterprise/api/v1/webhooks/stripe`, `stripe` gem | Billing/subscription checkout, gated `ChatwootApp.enterprise?` |
-| Firecrawl | `enterprise/webhooks/firecrawl`, `firecrawl-sdk` gem | Knowledge base/RAG web crawling ingestion |
-| Postgres + pgvector | `config/database.yml`, `pg`/`pgvector`/`neighbor` gems | Vector similarity search backs Captain FAQ/document embeddings |
-| Redis | `REDIS_URL` (`.env.example`), `redis`/`redis-namespace` gems | Sidekiq queue backend, ActionCable, caching |
-| Sidekiq | `config/sidekiq.yml`, `config/schedule.yml` (`sidekiq-cron`) | Background job execution and cron scheduling |
+| OpenAI (RubyLLM) | `lib/llm`, `ScanSolo::AiAgent::ModelResolver`, `config/llm.yml` | InstallationConfig `CAPTAIN_OPEN_AI_API_KEY`; per-config `model_selection` override |
+| Embeddings | `ScanSolo::Knowledge::EmbeddingService` | `text-embedding-3-small`, 1536 dims |
+| Make | `ScanSolo::Make::OutboundRequestService`, `CallbackVerifier` | Credentials `scan_solo.make.{scenario_url,secret,inbound_signing_secret}`; HMAC-SHA256 `X-Make-Signature` |
+| WhatsApp | Native `Channel::Whatsapp` | Sends via `conversation.messages.create!`; templates from `channel.message_templates` |
+| Rack::Attack | `config/initializers/rack_attack.rb` | `webhooks/scan_solo/make` throttle, `RATE_LIMIT_SCANSOLO_MAKE_CALLBACK` default 60/min/IP |
 
-### Macro flow: inbound WhatsApp message → automation/AI response
+### Macro flow: inbound message to AI reply
 
 ```
-Meta WhatsApp Cloud API
-        |  POST webhooks/whatsapp/:phone_number
-        v
-Webhooks::WhatsappController#process_payload
-  - verify_meta_signature! (MetaTokenVerifyConcern)
-  - reject inactive numbers / tracking-only events
-        |
-        v
-Webhooks::WhatsappEventsJob (Sidekiq, queue: default)
-  - builds/updates Contact, Conversation, Message
-        |
-        v
-Conversation model callbacks
-  - after_create_commit / after_update_commit
-  - Rails.configuration.dispatcher.dispatch(event, ...)
-        |
-        v
-Dispatcher
-  +--> SyncDispatcher   (in-process listeners)
-  +--> AsyncDispatcher  --> EventDispatcherJob (Sidekiq)
-              |
-              v
-      Listeners (app/listeners/, enterprise/app/listeners/)
-        - AutomationRuleListener  -> AutomationRule conditions/actions
-        - CaptainListener (enterprise) -> AI agent tool run (config/agents/tools.yml)
-        - WebhookListener / HookListener -> outbound webhook
-        - NotificationListener / ActionCableListener -> agent UI push
-        |
-        v
-   [AI reply sent] or [Conversation#bot_handoff! -> human agent]
-        |
-        v
-AutoAssignment::AssignmentService (round robin, rate-limited)
-        |
-        v
-Terminal: Message persisted, agent notified via ActionCable, SPA renders
+Message (incoming, persisted)
+   |
+   v
+AsyncDispatcher --message_created--> ScanSolo::ConversationListener
+   |  scansolo_enabled? no -> stop
+   |  PipelineOpportunity#record_customer_interaction!
+   |  InboundMessageTransitionRule (novo_lead -> em_contato)
+   v
+ScanSolo::AiTurnJob (queue: medium)
+   v
+TurnOrchestrator
+   +-> AiTurn.create! (unique message_id)   dup -> stop
+   +-> EligibilityGuard (ai_active?)       no  -> suppressed
+   +-> AiAgentConfig.published_for         none/disabled -> suppressed
+   +-> ContextAssembler (history, contact, pipeline, RAG)
+   +-> InputGuardrail (forbidden_subjects) hit -> suppressed
+   +-> ModelInvoker (RubyLLM)              error -> failed
+   +-> OutputValidator (claims)            hit -> failed
+   v
+transaction { stage_transition actions ; ResponseSender -> outgoing Message ; turn succeeded }
+```
+
+### Macro flow: cadence due attempts
+
+```
+sidekiq-cron */5 * * * *
+   v
+ScanSolo::CadenceDueAttemptJob (queue: scheduled_jobs)
+   v  CadenceAttempt.scheduled where scheduled_at <= now
+process_attempt!  (row lock FOR UPDATE)
+   +-> not scheduled / enrollment not active -> skip
+   +-> outside 09:00-20:00 America/Sao_Paulo -> reschedule next_in_window
+   +-> TemplateAvailabilityGuard blocked     -> record_skipped!
+   +-> NativeTemplateSender                  -> record_sent!
+   +-> exception                             -> record_failed!
+   v
+AttemptEvidenceRecorder advances enrollment current_step / next_attempt_at / completed
+```
+
+### Macro flow: Make inbound callback
+
+```
+POST /webhooks/scan_solo/make  (Rack::Attack throttle)
+   v
+CallbackVerifier: HMAC sig -> JSON parse -> JSON schema -> MakeRequest match
+   +-> invalid_signature                -> 401, nothing persisted
+   +-> correlation_id already recorded  -> 200, no reapply
+   +-> other rejection                  -> MakeCallback(applied: false) + 422
+   +-> valid                            -> MakeCallback(applied: true) + MakeRequest completed|failed + 200
 ```
 
 ## Related documents
 
-- [`project_overview.md`](project_overview.md) — product purpose and macro request-to-response flow
-- [`domain_rules.md`](domain_rules.md) — automation rule and assignment decision logic referenced by the listeners above
-- [`tech_stack.md`](tech_stack.md) — language, framework, and infrastructure versions backing each layer
+- [`project_overview.md`](project_overview.md) — purpose, consumers, end-to-end flow
+- [`domain_rules.md`](domain_rules.md) — rules implemented by each service
+- [`data_model.md`](data_model.md) — scan_solo_* tables and invariants
+- [`dependencies.md`](dependencies.md) — external services and shared infrastructure

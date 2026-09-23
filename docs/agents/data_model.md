@@ -4,43 +4,158 @@
 
 ## AS IS — Current state
 
-### Entities
-
-Source: `db/schema.rb` (98 tables), model annotations in `app/models/*.rb`, `enterprise/app/models/*.rb`.
-
-| Entity | Table | Key attributes | Relationships | Invariants |
-|---|---|---|---|---|
-| `Account` | `accounts` | `name`, `domain` (max 100, inbound email routing only), `feature_flags`/`feature_flags_ext_1` (bitset via `FlagShihTzu`), `settings` jsonb (`captain_models`, `captain_features`, `auto_resolve_after`), `limits` jsonb, `status` enum | `has_many :conversations, :contacts, :automation_rules, :macros, :campaigns, ...` (`app/models/account.rb`) | `name` required; `domain` ≤ 100 chars; `settings` validated against `SETTINGS_PARAMS_SCHEMA` via `JsonSchemaValidator` |
-| `Conversation` | `conversations` | `status` enum (open/resolved/pending/snoozed), `priority` enum (low/medium/high/urgent), `uuid` (unique), `display_id` (DB-trigger generated, per-account sequence `conv_dpid_seq_<account_id>`), `additional_attributes`/`custom_attributes` jsonb, `waiting_since`, `first_reply_created_at` | `belongs_to :account, :inbox, :contact, :contact_inbox`; `belongs_to :assignee` (User, optional) and polymorphic `belongs_to :ai_assignee` (`assignee_agent_bot_id`/`assignee_agent_bot_type`); `has_many :messages, :mentions, :reporting_events`; `has_one :csat_survey_response` | `account_id`/`inbox_id`/`contact_id` required; `uuid` unique; `display_id` set via Postgres trigger (`app/models/conversation.rb` `trigger.before(:insert)`) |
-| `Contact` | `contacts` | `name`, `email`, `phone_number`, `identifier`, `blocked` (bool), `contact_type` enum (default `visitor`), `additional_attributes`/`custom_attributes` jsonb | `belongs_to :account`, `belongs_to :company` (optional, enterprise) | Unique `(email, account_id)` and `(identifier, account_id)`; partial index `index_contacts_on_nonempty_fields` requires at least one of email/phone/identifier populated |
-| `AutomationRule` | `automation_rules` | `event_name`, `conditions`/`actions` jsonb (not null), `active` (bool, default true), `execution_delay` int (10–43200 min) | `belongs_to :account`; `has_many :pending_executions` (`AutomationRulePendingExecution`); `has_many_attached :files` | See `domain_rules.md` for the full condition/action vocabulary and delay-eligibility matrix |
-| `Message` | `messages` | conversation-scoped chat message | `belongs_to :conversation`, `:account`; polymorphic `sender` | Excluded from `Metrics/ClassLength` RuboCop cap (`app/models/message.rb`, `.rubocop.yml`) — non-trivial model |
-| `Inbox` | `inboxes` | channel-polymorphic (`channel_type`/`channel_id`) | `has_many :conversations`, `belongs_to :account` | One of `channel_whatsapp`, `channel_email`, `channel_api`, `channel_web_widgets`, etc. via polymorphic association |
-| `Channel::Whatsapp` | `channel_whatsapp` | `phone_number`, `provider` (`whatsapp_cloud`), `provider_config` jsonb (webhook_verify_token, app secrets) | `has_one :inbox` (polymorphic target) | Used by `Webhooks::WhatsappController` to resolve signature/verify-token per channel |
-| `CaptainAssistant` (`Captain::Assistant`) | `captain_assistants` | assistant config for the AI agent | `belongs_to :account`; associated `captain_documents`, `captain_scenarios`, `captain_faq_suggestions`, `captain_custom_tools` (`enterprise/app/models/captain/`) | Backs the Captain AI tool-using agent (`config/agents/tools.yml`) |
-| `AgentSession` (`Captain::AgentSession`) | `agent_sessions` | Captain agent run/session tracking | `belongs_to :account` | Exposed read-only via `GET /api/v1/accounts/:id/captain/agent_sessions/:id` |
-| `ArticleEmbedding` | `article_embeddings` | vector embedding column (pgvector) | `belongs_to :article` | Backs `faq_lookup` semantic search tool (`config/agents/tools.yml`); requires `neighbor`/`pgvector` gems |
-| `SlaPolicy` / `AppliedSla` (enterprise) | `sla_policies`, `applied_slas` | SLA thresholds and per-conversation application | `belongs_to :account` | Enterprise-only (`enterprise/app/models/sla_policy.rb`, `applied_sla.rb`) |
-| `AssignmentPolicy` | `assignment_policies`, `inbox_assignment_policies`, `inbox_capacity_limits` | round-robin/longest-waiting config, `exclude_older_than_hours` | `has_many :inboxes` (through join) | Consumed by `AutoAssignment::AssignmentService` (`app/services/auto_assignment/assignment_service.rb`) |
-
 ### Storage
 
-- **Engine**: PostgreSQL, configured in `config/database.yml` (adapter `postgresql`, `POSTGRES_HOST`/`POSTGRES_USERNAME`/`POSTGRES_PASSWORD` env vars, statement timeout `POSTGRES_STATEMENT_TIMEOUT` default `14s`).
-- **Vector extension**: `pgvector`/`neighbor` gems (`Gemfile`) back similarity search on `article_embeddings` and Captain document/FAQ tables.
-- **Schema location**: `db/schema.rb` (98 `create_table` statements); migrations in `db/migrate/` (180 files).
-- **Migration tool**: Rails' built-in ActiveRecord migrations (`bin/rails db:migrate`); DB triggers created via `hairtrigger` gem (e.g. `conversations` `display_id` sequence trigger in `app/models/conversation.rb`).
-- **Seeding**: `db/seeds.rb` for minimal data; `Seeders::AccountSeeder` (`lib/seeders/`) for richer per-account sample data, invoked via `Internal::SeedAccountJob` or Super Admin `Accounts#seed` (`AGENTS.md`).
-- **Search index**: `searchkick`/`opensearch-ruby` gems provide full-text/OpenSearch indexing outside Postgres for search-heavy models.
+| Item | Value |
+|---|---|
+| Engine | PostgreSQL (`config/database.yml`); prod image `pgvector/pgvector:pg16` |
+| Extensions | `pg_stat_statements`, `pg_trgm`, `pgcrypto`, `plpgsql`, `vector` (`db/schema.rb`) |
+| Schema | `db/schema.rb` (ScanSolo tables prefixed `scan_solo_`) |
+| Migrations | ActiveRecord, `db/migrate/20260917231850_*` .. `20260918080001_*` (21 ScanSolo files) |
+| Upstream touch point | `accounts.scansolo_feature_flags bigint default 0` (`has_flags 1 => :scansolo_enabled`), separate from upstream `feature_flags` |
+| File storage | ActiveStorage (`KnowledgeSource has_one_attached :file`) |
+
+### Entities
+
+#### PipelineOpportunity — `scan_solo_pipeline_opportunities`
+
+| Column | Type | Notes |
+|---|---|---|
+| account_id, contact_id, conversation_id | bigint not null | `belongs_to` Account, Contact, Conversation |
+| owner_id | bigint | `belongs_to :owner, class_name: 'User', optional` |
+| stage | integer default 0 | enum `novo_lead em_contato em_qualificacao qualificado proposta_enviada negociacao ganho perdido` |
+| last_customer_interaction_at | datetime | set by `record_customer_interaction!` |
+
+- Unique `conversation_id`. `has_many :stage_events`, `:cadence_enrollments`; `has_one :proposal`.
+
+#### PipelineStageEvent — `scan_solo_pipeline_stage_events`
+
+- `opportunity_id` not null, `from_stage`/`to_stage` string not null (validated against stage keys), polymorphic `actor` optional, `created_at` only.
+- `readonly?` after persist (append-only history).
+
+#### ConversationExtension — `scan_solo_conversation_extensions`
+
+- `conversation_id` unique, `ai_control_state` integer enum `ai_active handoff_requested awaiting_human human_active paused closed` (default `ai_active`).
+- `resolve_for(conversation)` = `find_or_create_by!`.
+
+#### AiAgentConfig — `scan_solo_ai_agent_configs`
+
+| Column | Type |
+|---|---|
+| account_id | bigint not null |
+| status | integer enum `draft published` |
+| published_version_id | self-reference (draft -> latest published snapshot) |
+| name, model_provider, model_selection, role, objective, persona, tone, service_hours | string |
+| instructions, service_rules, transfer_criteria, response_limits | text |
+| qualification_playbook, required_qualification_fields, restricted_information, forbidden_subjects | jsonb array default `[]` |
+| enabled | boolean default false |
+| require_proposal_approval | boolean default true |
+
+- Partial unique index `account_id WHERE status = 0` -> 1 draft per account.
+
+#### AiTurn — `scan_solo_ai_turns`
+
+| Column | Type | Notes |
+|---|---|---|
+| message_id | bigint not null unique | triggering message |
+| conversation_id | bigint not null | |
+| correlation_id | string not null unique | |
+| invocation_status | integer enum `pending suppressed succeeded failed` | |
+| model_provider, model_reference | string | |
+| input_tokens, output_tokens, latency_ms | integer | |
+| cost_estimate | decimal(10,6) | |
+| failure_reason | text | |
+| context_snapshot, guardrail_outcome | jsonb `{}` | |
+| knowledge_evidence, action_evidence | jsonb `[]` | |
+| response_message_id | bigint | optional `belongs_to :response_message` |
+
+#### AgentAction — `scan_solo_agent_actions`
+
+- `action_id` string unique, `classification` enum `read_only automatic requires_confirmation disabled`, `schema` jsonb. Synced from `ScanSolo::Actions::Registry::HANDLERS`.
+
+#### AgentActionExecution — `scan_solo_agent_action_executions`
+
+- `action_id`, `turn_id` (optional), `correlation_id`, `idempotency_key` unique, `params` jsonb, `status` enum `pending executed failed`, `confirmed_at`, `audit_event_id`.
+
+#### KnowledgeSource — `scan_solo_knowledge_sources`
+
+- `account_id` not null, `added_by_id` (User), `source_type` enum `document faq company_info`, `title`, `content` text, `origin` (required), `enabled` default true.
+- `has_many :knowledge_chunks, dependent: :destroy`; `has_one_attached :file`.
+
+#### KnowledgeChunk — `scan_solo_knowledge_chunks`
+
+- `source_id` not null, `content` text not null, `position` integer, `embedding vector(1536)`.
+- `has_neighbors :embedding, normalize: true`; no ivfflat/hnsw index -> exact nearest-neighbor scan.
+
+#### CadenceDefinition — `scan_solo_cadence_definitions`
+
+- `stage` string, `version` integer (unique per stage), `offsets` jsonb array of hours, `active` boolean; `scope :active`, `current_for(stage)`.
+- `template_reference_for(step)` = `scansolo_cadence_<stage>_v<version>_step<step>`.
+
+#### CadenceEnrollment — `scan_solo_cadence_enrollments`
+
+- `opportunity_id`, `cadence_definition_id` (unique pair), `status` enum `active paused cancelled completed`, `current_step` default 0, `next_attempt_at`, `paused_at`.
+- `has_many :attempts, dependent: :destroy`.
+
+#### CadenceAttempt — `scan_solo_cadence_attempts`
+
+- `enrollment_id` + `step` unique, `cadence_version`, `template_reference`, `scheduled_at` not null, `sent_at`, `result` enum `scheduled sent skipped failed cancelled`.
+- `TERMINAL_RESULTS = sent skipped failed cancelled`; terminal rows never rewritten (`AttemptEvidenceRecorder`).
+
+#### Proposal — `scan_solo_proposals`
+
+- `opportunity_id` unique (1 per opportunity), `current_version_id` pointer.
+
+#### ProposalVersion — `scan_solo_proposal_versions`
+
+| Column | Type | Notes |
+|---|---|---|
+| proposal_id + version_number | unique | `assign_version_number` before create |
+| status | enum `generating generated approved sent failed` | |
+| is_current | boolean | partial unique index `proposal_id WHERE is_current` |
+| value | decimal(12,2) | written only by `CallbackHandler` |
+| currency, artifact_url, failure_reason | string | |
+| generate_correlation_id, send_correlation_id | string unique | |
+| generate_requested_at, generate_callback_applied_at, send_requested_at, send_callback_applied_at | datetime | callback idempotency markers |
+| approved_at, approved_by (polymorphic) | | |
+| sent_message_id | bigint | `belongs_to :sent_message, class_name: 'Message'` |
+
+- Creating a current version unmarks the previous one and syncs `proposals.current_version_id`.
+
+#### MakeRequest — `scan_solo_make_requests`
+
+- `account_id`, `correlation_id` unique, `idempotency_key`, `action`, `payload` jsonb, `status` enum `pending sent completed failed`, `retry_count`.
+- `scope :dead_letter` = `failed` and `retry_count >= 3`.
+
+#### MakeCallback — `scan_solo_make_callbacks`
+
+- `correlation_id` unique (nullable), `action`, `signature_valid`, `applied`, `rejection_reason`, `payload` jsonb, `created_at` only; `readonly?` after persist.
+
+#### AuditEvent — `scan_solo_audit_events`
+
+- Polymorphic `subject` (not null) and `actor` (optional), `event_type`, `correlation_id`, `payload` jsonb, `created_at` only; `readonly?` after persist.
+- Event types written: `handoff.takeover`, `handoff.return_to_ai`, `agent_action.<action_id>`.
+
+### Relationships
+
+```
+Account 1--* PipelineOpportunity *--1 Conversation 1--1 ConversationExtension
+PipelineOpportunity 1--* PipelineStageEvent
+PipelineOpportunity 1--* CadenceEnrollment *--1 CadenceDefinition
+CadenceEnrollment 1--* CadenceAttempt
+PipelineOpportunity 1--1 Proposal 1--* ProposalVersion
+Message 1--1 AiTurn 1--* AgentActionExecution *--1 AgentAction
+Account 1--* AiAgentConfig (1 draft -> published_version)
+Account 1--* KnowledgeSource 1--* KnowledgeChunk
+Account 1--* MakeRequest ~ MakeCallback (by correlation_id)
+```
 
 ### Cache
 
-- **Backend**: Redis (`REDIS_URL` in `.env.example`; `redis`/`redis-namespace` gems in `Gemfile`).
-- `Rails.cache.fetch('super_admin:dashboard_stats', expires_in: 30.minutes)` — `app/controllers/super_admin/dashboard_controller.rb`.
-- `Rails.cache.read`/`write` with a 6-hour TTL for IMAP fetch failure counters — `app/jobs/inboxes/fetch_imap_emails_job.rb`.
-- `Rails.cache.read`/`write` with a `CACHE_TTL` for Shopify subscription snapshots — `app/services/shopify/subscription_fetcher.rb`.
-- Redis also backs Sidekiq's queue storage (`config/sidekiq.yml`) and ActionCable pub/sub, separate from the `Rails.cache` store usages above.
+- No ScanSolo-specific cache; Redis is used by upstream Sidekiq, ActionCable (`config/cable.yml`) and Rails cache.
 
 ## Related documents
 
-- [`domain_rules.md`](domain_rules.md) — behavior implemented on top of `Conversation`, `AutomationRule`, and Captain entities
-- [`dependencies.md`](dependencies.md) — Postgres/Redis/pgvector dependency versions and purpose
+- [`domain_rules.md`](domain_rules.md) — state machines over these enums
+- [`api_contracts.md`](api_contracts.md) — JSON representations of these entities
+- [`architecture.md`](architecture.md) — which layer writes each table

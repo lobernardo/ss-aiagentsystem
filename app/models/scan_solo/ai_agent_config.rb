@@ -7,6 +7,7 @@
 # Table name: scan_solo_ai_agent_configs
 #
 #  id                            :bigint           not null, primary key
+#  allowed_inbox_ids             :jsonb            not null
 #  enabled                       :boolean          default(FALSE), not null
 #  forbidden_subjects            :jsonb            not null
 #  instructions                  :text
@@ -14,6 +15,7 @@
 #  model_selection               :string
 #  name                          :string
 #  objective                     :string
+#  opt_out_keywords              :jsonb            not null
 #  persona                       :string
 #  qualification_playbook        :jsonb            not null
 #  require_proposal_approval     :boolean          default(TRUE), not null

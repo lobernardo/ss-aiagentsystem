@@ -8,6 +8,9 @@
 #
 #  id                 :bigint           not null, primary key
 #  cadence_version    :integer          not null
+#  external_error     :text
+#  last_block_reason  :string
+#  last_checked_at    :datetime
 #  result             :integer          default("scheduled"), not null
 #  scheduled_at       :datetime         not null
 #  sent_at            :datetime
@@ -16,15 +19,18 @@
 #  created_at         :datetime         not null
 #  updated_at         :datetime         not null
 #  enrollment_id      :bigint           not null
+#  message_id         :bigint
 #
 # Indexes
 #
 #  index_scan_solo_cadence_attempts_on_enrollment_id           (enrollment_id)
 #  index_scan_solo_cadence_attempts_on_enrollment_id_and_step  (enrollment_id,step) UNIQUE
+#  index_scan_solo_cadence_attempts_on_message_id              (message_id)
 #
 # Foreign Keys
 #
 #  fk_rails_...  (enrollment_id => scan_solo_cadence_enrollments.id)
+#  fk_rails_...  (message_id => messages.id)
 #
 class ScanSolo::CadenceAttempt < ApplicationRecord
   self.table_name = 'scan_solo_cadence_attempts'

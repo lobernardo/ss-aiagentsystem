@@ -14,7 +14,7 @@
 #
 # Indexes
 #
-#  index_scan_solo_make_callbacks_on_correlation_id  (correlation_id) UNIQUE
+#  index_scan_solo_make_callbacks_on_correlation_id  (correlation_id) UNIQUE WHERE (applied = true)
 #
 class ScanSolo::MakeCallback < ApplicationRecord
   self.table_name = 'scan_solo_make_callbacks'

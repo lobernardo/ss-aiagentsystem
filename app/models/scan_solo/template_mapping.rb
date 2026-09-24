@@ -1,3 +1,26 @@
+# == Schema Information
+#
+# Table name: scan_solo_template_mappings
+#
+#  id            :bigint           not null, primary key
+#  language      :string           not null
+#  params        :jsonb            not null
+#  stage         :string           not null
+#  step          :integer
+#  template_name :string           not null
+#  created_at    :datetime         not null
+#  updated_at    :datetime         not null
+#  account_id    :bigint           not null
+#
+# Indexes
+#
+#  idx_on_account_id_stage_step_c33edb498d          (account_id,stage,step) UNIQUE NULLS NOT DISTINCT
+#  index_scan_solo_template_mappings_on_account_id  (account_id)
+#
+# Foreign Keys
+#
+#  fk_rails_...  (account_id => accounts.id)
+#
 class ScanSolo::TemplateMapping < ApplicationRecord
   self.table_name = 'scan_solo_template_mappings'
 

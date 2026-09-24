@@ -15,7 +15,7 @@
 #
 # Indexes
 #
-#  idx_scansolo_cadence_enrollments_on_opportunity_and_definition  (opportunity_id,cadence_definition_id) UNIQUE
+#  idx_scansolo_cadence_enrollments_on_opportunity_and_definition  (opportunity_id,cadence_definition_id) UNIQUE WHERE (status = ANY (ARRAY[0, 1]))
 #  index_scan_solo_cadence_enrollments_on_cadence_definition_id    (cadence_definition_id)
 #  index_scan_solo_cadence_enrollments_on_opportunity_id           (opportunity_id)
 #

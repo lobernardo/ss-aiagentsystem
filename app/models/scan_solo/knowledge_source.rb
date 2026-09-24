@@ -7,16 +7,20 @@
 #
 # Table name: scan_solo_knowledge_sources
 #
-#  id          :bigint           not null, primary key
-#  content     :text
-#  enabled     :boolean          default(TRUE), not null
-#  origin      :string
-#  source_type :integer          default("document"), not null
-#  title       :string
-#  created_at  :datetime         not null
-#  updated_at  :datetime         not null
-#  account_id  :bigint           not null
-#  added_by_id :bigint
+#  id           :bigint           not null, primary key
+#  chunk_count  :integer          default(0), not null
+#  content      :text
+#  enabled      :boolean          default(TRUE), not null
+#  index_error  :text
+#  index_status :integer          default("pending"), not null
+#  indexed_at   :datetime
+#  origin       :string
+#  source_type  :integer          default("document"), not null
+#  title        :string
+#  created_at   :datetime         not null
+#  updated_at   :datetime         not null
+#  account_id   :bigint           not null
+#  added_by_id  :bigint
 #
 # Indexes
 #

@@ -6,7 +6,8 @@ RSpec.describe ScanSolo::Messaging::NativeTemplateSender do
   let(:account) { create(:account) }
 
   def call(conversation:, template_reference: 'scansolo_cadence_novo_lead_v1_step1', template_params: {}, actor: nil)
-    described_class.call(conversation: conversation, template_reference: template_reference, template_params: template_params, actor: actor)
+    described_class.call(conversation: conversation, template_reference: template_reference, origin: 'cadence',
+                         template_params: template_params, actor: actor)
   end
 
   describe 'native message-create path (RF-70)' do

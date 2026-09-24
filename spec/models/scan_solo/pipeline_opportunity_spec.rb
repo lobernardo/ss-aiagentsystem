@@ -36,12 +36,11 @@ RSpec.describe ScanSolo::PipelineOpportunity do
   end
 
   describe 'uniqueness' do
-    it 'rejects a second opportunity for the same conversation' do
+    it 'rejects a second opportunity for the same conversation through the unique index' do
       opportunity
       duplicate = described_class.new(account: account, contact: contact, conversation: conversation)
 
-      expect(duplicate).not_to be_valid
-      expect(duplicate.errors[:conversation_id]).to be_present
+      expect { duplicate.save! }.to raise_error(ActiveRecord::RecordNotUnique)
     end
   end
 

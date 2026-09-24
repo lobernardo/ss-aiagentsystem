@@ -25,7 +25,7 @@ RSpec.describe ScanSolo::Eligibility do
   end
 
   it 'fails closed when no published config exists' do
-    draft.update!(published_version: nil)
+    draft.reload.update!(published_version: nil)
     expect(described_class.for_inbox(account: account, inbox: inbox).reason).to eq('config_unavailable')
   end
 

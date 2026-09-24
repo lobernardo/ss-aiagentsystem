@@ -2,7 +2,7 @@
 # (an API key/token pattern) may reach a rendered log line or a prompt
 # payload sent to the LLM provider. Applied by config/initializers/
 # scansolo_log_redaction.rb to every log line and by
-# ScanSolo::AiTurn::TurnOrchestrator to the assembled prompt before it is
+# ScanSolo::AiTurn::PromptBuilder to the whole provider payload before it is
 # handed to ScanSolo::AiTurn::ModelInvoker, so a secret accidentally present
 # in stored config/context (e.g. copy-pasted into an agent's instructions)
 # never leaves the server boundary.

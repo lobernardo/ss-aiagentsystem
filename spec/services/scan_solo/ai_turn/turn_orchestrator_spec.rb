@@ -4,10 +4,12 @@ require 'rails_helper'
 
 RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
   let(:account) { create(:account, scansolo_enabled: true) }
+  let(:inbox) { create(:inbox, account: account) }
   let(:contact) { create(:contact, account: account) }
-  let(:conversation) { create(:conversation, account: account, contact: contact) }
+  let(:conversation) { create(:conversation, account: account, inbox: inbox, contact: contact) }
   let(:message) do
-    create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact)
+    create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, sender: contact,
+                     content: 'Quero um orçamento')
   end
 
   let!(:opportunity) do
@@ -17,63 +19,166 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
 
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente ScanSolo', enabled: true)
+    draft.update!(name: 'Agente ScanSolo', enabled: true, allowed_inbox_ids: [inbox.id], required_qualification_fields: %w[budget])
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
-  describe 'RF-44: a registered action result is visible no later than the outbound message being queued' do
-    it 'applies the requested stage transition in the same transaction as the outbound send' do
-      described_class.call(
-        message: message,
-        llm_provider: ScanSolo::TestMode::MockLlmProvider,
-        actions: [{ type: 'stage_transition', params: { target_stage: 'qualificado', authorized: true } }]
-      )
+  def turn
+    ScanSolo::AiTurn.find_by!(message_id: message.id)
+  end
 
-      expect(opportunity.reload.stage).to eq('qualificado')
-      expect(conversation.messages.outgoing.count).to eq(1)
-
-      turn = ScanSolo::AiTurn.find_by(message_id: message.id)
-      expect(turn).to be_succeeded
-      expect(turn.action_evidence).not_to be_empty
-    end
-
-    it 'rolls back the action together with the send when the send fails' do
-      allow(ScanSolo::AiTurn::ResponseSender).to receive(:call).and_raise(ActiveRecord::RecordInvalid, opportunity)
-
-      expect do
-        described_class.call(
-          message: message,
-          llm_provider: ScanSolo::TestMode::MockLlmProvider,
-          actions: [{ type: 'stage_transition', params: { target_stage: 'qualificado', authorized: true } }]
-        )
-      end.to raise_error(ActiveRecord::RecordInvalid)
-
-      expect(opportunity.reload.stage).to eq('em_qualificacao')
-    end
-
-    it 'is a no-op for actions when no pipeline opportunity exists for the conversation' do
-      other_conversation = create(:conversation, account: account, contact: contact)
-      other_message = create(:message, account: account, conversation: other_conversation,
-                                       message_type: :incoming, sender: contact)
-
-      expect do
-        described_class.call(
-          message: other_message,
-          llm_provider: ScanSolo::TestMode::MockLlmProvider,
-          actions: [{ type: 'stage_transition', params: { target_stage: 'qualificado', authorized: true } }]
-        )
-      end.not_to raise_error
-
-      expect(other_conversation.messages.outgoing.count).to eq(1)
-    end
+  def ai_replies
+    conversation.messages.outgoing.where(private: false)
   end
 
   describe 'without any actions, the canonical guarded turn still runs end to end' do
-    it 'creates one turn and sends one outbound message' do
+    it 'creates one turn and sends one outbound message tagged as AI-originated' do
       described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
 
       expect(ScanSolo::AiTurn.where(message_id: message.id).count).to eq(1)
-      expect(conversation.messages.outgoing.count).to eq(1)
+      expect(ai_replies.sole.additional_attributes['scansolo_origin']).to eq('ai')
+      expect(turn).to have_attributes(invocation_status: 'succeeded', model_provider: 'scansolo_test_mode',
+                                      model_reference: 'scansolo-mock-llm')
+      expect(turn.input_tokens).to be_positive
+      expect(turn.latency_ms).not_to be_nil
+    end
+  end
+
+  describe 'RF-06: restricted_information in the model output' do
+    it 'fails the turn and sends nothing' do
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(restricted_information: ['margem interna'])
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+      provider = ->(**kwargs) { ScanSolo::TestMode::MockLlmProvider.call(**kwargs, fixture_response: 'Nossa Margem Interna é 40%') }
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: restricted_information')
+      expect(ai_replies.count).to eq(0)
+    end
+  end
+
+  describe 'RF-07: any exception after the turn row exists ends the turn failed and is reported once' do
+    let(:tracker) { instance_double(ChatwootExceptionTracker, capture_exception: nil) }
+
+    let(:provider_requesting_stage_move) do
+      actions = [{ 'action_id' => 'stage_transition', 'params' => { 'target_stage' => 'qualificado' } }]
+      ->(**kwargs) { ScanSolo::TestMode::MockLlmProvider.call(**kwargs, fixture_actions: actions) }
+    end
+
+    before { allow(ChatwootExceptionTracker).to receive(:new).and_return(tracker) }
+
+    {
+      'context' => -> { allow(ScanSolo::AiTurn::ContextAssembler).to receive(:call).and_raise(StandardError, 'boom') },
+      'retrieval' => -> { allow(ScanSolo::Knowledge::RetrievalService).to receive(:call).and_raise(StandardError, 'boom') },
+      'guardrail' => -> { allow(ScanSolo::AiTurn::InputGuardrail).to receive(:call).and_raise(StandardError, 'boom') },
+      'model' => -> { allow(ScanSolo::TestMode::MockLlmProvider).to receive(:call).and_raise(StandardError, 'boom') },
+      'validation' => -> { allow(ScanSolo::AiTurn::OutputValidator).to receive(:call).and_raise(StandardError, 'boom') },
+      'actions' => -> { allow(ScanSolo::Actions::Registry).to receive(:call).and_raise(StandardError, 'boom') },
+      'send' => -> { allow(ScanSolo::AiTurn::ResponseSender).to receive(:call).and_raise(StandardError, 'boom') }
+    }.each do |stage, failure|
+      it "marks the turn failed when the #{stage} stage raises" do
+        instance_exec(&failure)
+
+        described_class.call(message: message, llm_provider: provider_requesting_stage_move)
+
+        expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'StandardError: boom')
+        expect(ChatwootExceptionTracker).to have_received(:new)
+          .with(an_instance_of(StandardError), account: account, tags: { scansolo_correlation_id: turn.correlation_id }).once
+        expect(tracker).to have_received(:capture_exception).once
+        expect(ai_replies.count).to eq(0)
+        expect(opportunity.reload).to be_em_qualificacao
+      end
+    end
+
+    it 'redacts secret-shaped values from the recorded failure reason' do
+      allow(ScanSolo::AiTurn::ContextAssembler).to receive(:call).and_raise(StandardError, 'key sk-live_abcdefghijklmnop leaked')
+
+      described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(turn.failure_reason).to eq('StandardError: key [REDACTED] leaked')
+    end
+
+    it 'brings an attachment-only incoming message to a terminal state' do
+      attachment_only = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming,
+                                         sender: contact, content: nil)
+
+      described_class.call(message: attachment_only, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(ScanSolo::AiTurn.find_by!(message_id: attachment_only.id)).to be_succeeded
+    end
+  end
+
+  describe 'RF-09: idempotent re-runs' do
+    %i[succeeded suppressed failed].each do |status|
+      it "is a no-op for a #{status} turn" do
+        existing = ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid,
+                                            invocation_status: status)
+
+        expect { described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider) }
+          .not_to(change { [existing.reload.attributes, ai_replies.count] })
+      end
+    end
+
+    it 'resumes a pending turn without a response on the same row and correlation id' do
+      pending_turn = ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid)
+
+      described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      resumed = ScanSolo::AiTurn.where(message_id: message.id).sole
+      expect(resumed).to have_attributes(id: pending_turn.id, invocation_status: 'succeeded', correlation_id: pending_turn.correlation_id)
+      expect(ai_replies.count).to eq(1)
+    end
+  end
+
+  describe 'RF-10: eligibility before the model call' do
+    it 'suppresses without invoking the model while the conversation is human-controlled' do
+      ScanSolo::ConversationExtension.resolve_for(conversation).update!(ai_control_state: :human_active)
+      allow(ScanSolo::TestMode::MockLlmProvider).to receive(:call).and_call_original
+
+      described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(turn).to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
+      expect(ScanSolo::TestMode::MockLlmProvider).not_to have_received(:call)
+    end
+
+    it 'suppresses a trigger that is no longer the latest incoming message before invoking the model (RF-11)' do
+      message
+      create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, sender: contact)
+
+      described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(turn).to have_attributes(invocation_status: 'suppressed', failure_reason: 'superseded')
+    end
+  end
+
+  describe 'RF-28: the reply-completeness rule after the turn' do
+    let(:definition) { ScanSolo::CadenceDefinition.create!(stage: 'em_qualificacao', version: 1, offsets: [24, 48, 72]) }
+    let!(:enrollment) do
+      travel_to(1.hour.ago) { ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: definition) }
+    end
+
+    it 'cancels every scheduled attempt once all required fields are present' do
+      contact.update!(custom_attributes: { 'budget' => '5000' })
+
+      described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(ScanSolo::CadenceAttempt.scheduled.count).to eq(0)
+    end
+
+    it 'cancels only the next scheduled attempt on a partial reply' do
+      described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(enrollment.attempts.order(:step).pluck(:result)).to eq(%w[cancelled scheduled scheduled])
+    end
+
+    it 'leaves an enrollment created by the triggering message itself untouched' do
+      ScanSolo::Cadence::LifecycleService.cancel!(enrollment)
+      fresh = ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: definition)
+      fresh.update!(created_at: message.created_at)
+
+      described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(fresh.attempts.pluck(:result).uniq).to eq(['scheduled'])
     end
   end
 end

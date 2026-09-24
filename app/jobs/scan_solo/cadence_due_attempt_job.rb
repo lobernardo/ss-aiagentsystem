@@ -45,7 +45,8 @@ class ScanSolo::CadenceDueAttemptJob < ApplicationJob
   def self.send_attempt!(attempt, enrollment)
     send_result = ScanSolo::Messaging::NativeTemplateSender.call(
       conversation: enrollment.opportunity.conversation,
-      template_reference: attempt.template_reference
+      template_reference: attempt.template_reference,
+      origin: 'cadence'
     )
     ScanSolo::Cadence::AttemptEvidenceRecorder.record_sent!(attempt, message: send_result.message)
   rescue StandardError => e

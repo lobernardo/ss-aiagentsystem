@@ -24,6 +24,14 @@ class ScanSolo::Handoff::HandoffService
     'perdido' => 'Perdido'
   }.freeze
 
+  PROPOSAL_STATUS_LABELS = {
+    'generating' => 'Gerando',
+    'generated' => 'Gerada',
+    'approved' => 'Aprovada',
+    'sent' => 'Enviada',
+    'failed' => 'Falhou'
+  }.freeze
+
   RECENT_MESSAGE_LIMIT = 3
 
   def self.call(conversation:, reason:, actor: nil)
@@ -116,11 +124,13 @@ class ScanSolo::Handoff::HandoffService
     STAGE_LABELS.fetch(opportunity.stage, opportunity.stage)
   end
 
-  # No ScanSolo proposal module exists yet -- mirrors
-  # ScanSolo::AiTurn::ContextAssembler's explicit not-applicable marker for
-  # proposal_context rather than a silently absent element.
+  # RF-21: the pt-BR label of the current proposal version's status, or an
+  # explicit not-applicable marker when the opportunity has no proposal yet.
   def proposal_status
-    'não aplicável'
+    current_version = opportunity&.proposal&.current_version
+    return 'não aplicável' if current_version.blank?
+
+    PROPOSAL_STATUS_LABELS.fetch(current_version.status)
   end
 
   def pending_actions

@@ -3,28 +3,38 @@
 # (spec/spec_helper.rb) already blocks any non-localhost HTTP request in the
 # suite, so this class deliberately never issues one — it is pure Ruby, no
 # HTTP client, and requires no production LLM credential (RF-25).
+#
+# It answers in the same structured shape the real provider returns
+# (`content` = `{'reply' => ..., 'actions' => [...]}`, RF-05) and keeps the
+# last payload it received in `last_payload`, so specs can assert exactly
+# what would have been sent to the provider.
 class ScanSolo::TestMode::MockLlmProvider
   DEFAULT_RESPONSE = 'Resposta simulada do modo de teste do ScanSolo: nenhum envio real foi realizado.'.freeze
   PROVIDER = 'scansolo_test_mode'.freeze
   MODEL = 'scansolo-mock-llm'.freeze
 
-  def self.call(config:, prompt:, fixture_response: nil)
-    new(config: config).call(prompt: prompt, fixture_response: fixture_response)
+  class << self
+    attr_reader :last_payload
+  end
+
+  def self.call(config:, payload:, fixture_response: nil, fixture_actions: [])
+    @last_payload = payload
+    new(config: config).call(payload: payload, fixture_response: fixture_response, fixture_actions: fixture_actions)
   end
 
   def initialize(config:)
     @config = config
   end
 
-  def call(prompt:, fixture_response: nil)
-    content = fixture_response || DEFAULT_RESPONSE
+  def call(payload:, fixture_response: nil, fixture_actions: [])
+    reply = fixture_response || DEFAULT_RESPONSE
 
     {
-      content: content,
+      content: { 'reply' => reply, 'actions' => fixture_actions },
       provider: PROVIDER,
       model: MODEL,
-      input_tokens: prompt.to_s.length,
-      output_tokens: content.length,
+      input_tokens: payload.to_json.length,
+      output_tokens: reply.length,
       real_send: false
     }
   end

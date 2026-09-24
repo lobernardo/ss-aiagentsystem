@@ -14,16 +14,22 @@
 # on rejection -- so a caller must read the returned message's own status
 # to know the outcome, and never invents a separate "sent" flag here
 # (RF-72).
+#
+# `origin` (`cadence` or `proposal`) is stored as `scansolo_origin` so the
+# listener never mistakes a ScanSolo send -- even one carrying an actor user,
+# like the proposal send -- for a manual human reply (RF-18).
 class ScanSolo::Messaging::NativeTemplateSender
   Result = Struct.new(:message, keyword_init: true)
 
-  def self.call(conversation:, template_reference:, template_params: {}, actor: nil)
-    new(conversation: conversation, template_reference: template_reference, template_params: template_params, actor: actor).call
+  def self.call(conversation:, template_reference:, origin:, template_params: {}, actor: nil)
+    new(conversation: conversation, template_reference: template_reference, origin: origin, template_params: template_params,
+        actor: actor).call
   end
 
-  def initialize(conversation:, template_reference:, template_params: {}, actor: nil)
+  def initialize(conversation:, template_reference:, origin:, template_params: {}, actor: nil)
     @conversation = conversation
     @template_reference = template_reference
+    @origin = origin
     @template_params = template_params
     @actor = actor
   end
@@ -35,7 +41,7 @@ class ScanSolo::Messaging::NativeTemplateSender
       message_type: :outgoing,
       content: template_params[:fallback_content].presence || template_reference,
       sender: actor,
-      additional_attributes: { 'template_params' => native_template_params }
+      additional_attributes: { 'template_params' => native_template_params, 'scansolo_origin' => origin }
     )
 
     Result.new(message: message)
@@ -43,7 +49,7 @@ class ScanSolo::Messaging::NativeTemplateSender
 
   private
 
-  attr_reader :conversation, :template_reference, :template_params, :actor
+  attr_reader :conversation, :template_reference, :origin, :template_params, :actor
 
   def native_template_params
     {

@@ -13,7 +13,8 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
 
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente', enabled: true, required_qualification_fields: %w[budget])
+    draft.update!(name: 'Agente', enabled: true, required_qualification_fields: %w[budget],
+                  allowed_inbox_ids: [conversation.inbox_id])
     ScanSolo::AiAgent::PublishService.new(account: account).call
     create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact, content: 'Quero saber mais sobre o produto')
   end
@@ -37,12 +38,21 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
       expect(content).to include('Próximo passo recomendado:')
     end
 
+    it 'shows the pt-BR label of the current proposal version status (RF-21)' do
+      proposal = ScanSolo::Proposal.create!(opportunity: opportunity)
+      proposal.versions.create!(status: :generated)
+
+      described_class.call(conversation: conversation, reason: 'transferência', actor: agent)
+
+      expect(conversation.messages.where(private: true).last.content).to include('Status da proposta: Gerada')
+    end
+
     it 'suppresses further automatic AI replies by moving control state away from ai_active' do
       described_class.call(conversation: conversation, reason: 'transferência', actor: agent)
 
       extension = ScanSolo::ConversationExtension.resolve_for(conversation)
       expect(extension).to be_awaiting_human
-      expect(ScanSolo::AiTurn::EligibilityGuard.eligible?(conversation: conversation)).to be false
+      expect(extension).not_to be_ai_active
     end
 
     it 'produces zero further AI-authored replies on a subsequent inbound message until an authorized return to AI' do
@@ -51,7 +61,8 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
       message = create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact, content: 'Mais uma pergunta')
       ScanSolo::AiTurnJob.new.perform(message.id)
 
-      expect(ScanSolo::AiTurn.find_by(message_id: message.id)).to be_suppressed
+      turn = ScanSolo::AiTurn.find_by(message_id: message.id)
+      expect(turn).to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
       expect(conversation.messages.outgoing.where(private: false).count).to eq(0)
     end
 

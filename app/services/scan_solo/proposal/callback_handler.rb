@@ -56,6 +56,7 @@ class ScanSolo::Proposal::CallbackHandler
     message = ScanSolo::Messaging::NativeTemplateSender.call(
       conversation: conversation,
       template_reference: template_reference,
+      origin: 'proposal',
       template_params: { fallback_content: proposal_version.artifact_url },
       actor: actor
     ).message

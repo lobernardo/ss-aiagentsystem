@@ -40,4 +40,26 @@ RSpec.describe ScanSolo::Cadence::EnrollmentService do
 
     expect(ScanSolo::CadenceEnrollment.find_by(opportunity: opportunity, cadence_definition: cadence_definition).attempts.count).to eq(4)
   end
+
+  describe 'RF-30: re-enroll after the previous enrollment for the pair is closed' do
+    it 'creates a new active enrollment once the previous one is cancelled' do
+      first = call
+      ScanSolo::Cadence::LifecycleService.cancel!(first)
+
+      second = call
+
+      expect(second.id).not_to eq(first.id)
+      expect(second).to be_active
+      expect(second.attempts.scheduled.count).to eq(4)
+      expect(ScanSolo::CadenceEnrollment.where(opportunity: opportunity).pluck(:status)).to contain_exactly('cancelled', 'active')
+    end
+
+    it 'returns the paused enrollment instead of creating a second open one' do
+      first = call
+      ScanSolo::Cadence::LifecycleService.pause!(first)
+
+      expect(call.id).to eq(first.id)
+      expect(ScanSolo::CadenceEnrollment.where(opportunity: opportunity).count).to eq(1)
+    end
+  end
 end

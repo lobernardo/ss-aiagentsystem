@@ -8,21 +8,24 @@
 #
 # Wired in from:
 # - ScanSolo::Pipeline::StageTransitionService (T12) for stage_changed/won/lost
-# - ScanSolo::Actions::CadenceSignalAction for opt_out/manual_pause/replacement
-# - ScanSolo::Handoff::TakeoverService (T41) for human takeover (RF-56)
+# - ScanSolo::OptOut::MarkService for opt_out; ScanSolo::Actions::CadenceSignalAction for manual_pause
+# - ScanSolo::Handoff::TakeoverService for human takeover and the AI
+#   `human_handoff` action for handoff (RF-15, RF-19)
+#
+# Takeover/handoff pause instead of cancel (superseding the prior RF-56
+# "pause or cancel"): ScanSolo::Cadence::ResumeOnReturnService resumes the
+# paused schedule, shifted by the paused duration, on return to AI (RF-29).
 class ScanSolo::Cadence::StopRecalculatePolicy
-  TRIGGERS = %w[stage_changed won lost opt_out manual_pause replacement].freeze
+  TRIGGERS = %w[stage_changed won lost opt_out manual_pause replacement handoff].freeze
 
-  PAUSING_TRIGGERS = %w[manual_pause].freeze
+  PAUSING_TRIGGERS = %w[manual_pause handoff].freeze
 
   def self.call(opportunity:, trigger:)
     new(opportunity: opportunity, trigger: trigger).call
   end
 
   def self.handle_takeover(opportunity:)
-    return if opportunity.blank?
-
-    ScanSolo::Cadence::LifecycleService.cancel_all_for_opportunity!(opportunity)
+    call(opportunity: opportunity, trigger: 'handoff')
   end
 
   def initialize(opportunity:, trigger:)

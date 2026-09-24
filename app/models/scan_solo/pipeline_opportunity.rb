@@ -56,7 +56,9 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
     perdido: 7
   }
 
-  validates :conversation_id, uniqueness: true
+  # One opportunity per conversation is enforced by the unique index only, so
+  # ScanSolo::Pipeline::OpportunityBootstrapService's create_or_find_by! can
+  # converge concurrent creators on the same row (RF-22).
 
   def record_customer_interaction!(at:)
     update!(last_customer_interaction_at: at)

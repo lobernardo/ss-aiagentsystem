@@ -6,6 +6,12 @@
 # caller/test can assert all five sources were considered without treating a
 # missing key as an oversight.
 #
+# The opportunity context carries the collected and missing required
+# qualification fields of the published config (RF-05), and the knowledge
+# context carries exactly the chunks that go into the prompt, with the
+# `{source_id, source_title, chunk_id, similarity_score}` evidence the turn
+# persists (RF-46); a retrieval outage yields no chunks plus its reason.
+#
 # Durable semantic memory (RF-40) is a sixth, auxiliary key: it is included
 # only when a memory_provider is injected, and its absence never removes
 # conversation_history, which always comes straight from native `Message`
@@ -15,12 +21,13 @@ class ScanSolo::AiTurn::ContextAssembler
 
   NOT_APPLICABLE = { available: false, reason: 'not_applicable' }.freeze
 
-  def self.call(message:, retrieval_service: ScanSolo::Knowledge::RetrievalService, memory_provider: nil)
-    new(message: message, retrieval_service: retrieval_service, memory_provider: memory_provider).call
+  def self.call(message:, config:, retrieval_service: ScanSolo::Knowledge::RetrievalService, memory_provider: nil)
+    new(message: message, config: config, retrieval_service: retrieval_service, memory_provider: memory_provider).call
   end
 
-  def initialize(message:, retrieval_service: ScanSolo::Knowledge::RetrievalService, memory_provider: nil)
+  def initialize(message:, config:, retrieval_service: ScanSolo::Knowledge::RetrievalService, memory_provider: nil)
     @message = message
+    @config = config
     @conversation = message.conversation
     @account = message.account
     @retrieval_service = retrieval_service
@@ -40,7 +47,7 @@ class ScanSolo::AiTurn::ContextAssembler
 
   private
 
-  attr_reader :message, :conversation, :account, :retrieval_service, :memory_provider
+  attr_reader :message, :config, :conversation, :account, :retrieval_service, :memory_provider
 
   def conversation_history
     conversation.messages.chat.order(created_at: :desc).limit(RECENT_MESSAGE_LIMIT).reload.reverse.map do |m|
@@ -65,11 +72,16 @@ class ScanSolo::AiTurn::ContextAssembler
     opportunity = ScanSolo::PipelineOpportunity.find_by(conversation_id: conversation.id)
     return NOT_APPLICABLE if opportunity.blank?
 
+    required_fields = Array(config.required_qualification_fields)
+    attributes = opportunity.contact.custom_attributes
+
     {
       available: true,
       stage: opportunity.stage,
       owner_id: opportunity.owner_id,
-      last_customer_interaction_at: opportunity.last_customer_interaction_at
+      last_customer_interaction_at: opportunity.last_customer_interaction_at,
+      collected_fields: attributes.slice(*required_fields).compact_blank,
+      missing_fields: required_fields.select { |field| attributes[field].blank? }
     }
   end
 
@@ -80,8 +92,20 @@ class ScanSolo::AiTurn::ContextAssembler
     NOT_APPLICABLE
   end
 
+  # An attachment-only message has no text to search with, so it retrieves
+  # nothing instead of embedding an empty query.
   def knowledge_context
-    retrieval_service.call(account: account, query: message.content.to_s)
+    return { chunks: [], failure_reason: nil } if message.content.blank?
+
+    retrieval = retrieval_service.call(account: account, query: message.content)
+    chunks = retrieval[:results].map do |result|
+      {
+        source_id: result.source_id, source_title: result.source_title, chunk_id: result.chunk_id,
+        similarity_score: result.similarity_score, content: result.content_snippet
+      }
+    end
+
+    { chunks: chunks, failure_reason: retrieval[:failure_reason] }
   end
 
   def durable_memory

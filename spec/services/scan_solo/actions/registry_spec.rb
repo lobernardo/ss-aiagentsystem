@@ -53,7 +53,7 @@ RSpec.describe ScanSolo::Actions::Registry do
       expect(conversation.messages.where(private: true).last.content).to eq('Cliente pediu desconto.')
     end
 
-    it 'executes the human_handoff action, moving the conversation to handoff_requested' do
+    it 'executes the human_handoff action, moving the conversation to awaiting_human with the handoff note (RF-15)' do
       result = described_class.call(
         action_id: 'human_handoff',
         params: { conversation_id: conversation.id, reason: 'cliente pediu para falar com humano' },
@@ -62,7 +62,8 @@ RSpec.describe ScanSolo::Actions::Registry do
       )
 
       expect(result.pending).to be false
-      expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_handoff_requested
+      expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_awaiting_human
+      expect(conversation.messages.where(private: true).count).to eq(1)
     end
 
     it 'executes the cadence_signal action for a valid signal' do
@@ -89,6 +90,7 @@ RSpec.describe ScanSolo::Actions::Registry do
     end
 
     it 'executes proposal_generate as an automatic action' do
+      allow(ScanSolo::Proposal::Integration).to receive(:provider!).and_return(ScanSolo::Proposal::MockProvider)
       result = described_class.call(
         action_id: 'proposal_generate',
         params: { opportunity_id: opportunity.id },
@@ -98,6 +100,7 @@ RSpec.describe ScanSolo::Actions::Registry do
 
       expect(result.pending).to be false
       expect(result.side_effect_result[:action]).to eq('proposal.generate')
+      expect(ScanSolo::ProposalVersion.find(result.side_effect_result[:proposal_version_id])).to be_generated
     end
 
     it 'gates proposal_send behind confirmation (requires_confirmation classification)' do

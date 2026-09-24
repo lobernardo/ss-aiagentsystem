@@ -79,10 +79,10 @@ RSpec.describe ScanSolo::Make::OutboundRequestService do
       message = create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact)
 
       draft = ScanSolo::AiAgentConfig.draft_for!(account)
-      draft.update!(name: 'Agente ScanSolo', enabled: true)
+      draft.update!(name: 'Agente ScanSolo', enabled: true, allowed_inbox_ids: [message.inbox_id])
       ScanSolo::AiAgent::PublishService.new(account: account).call
 
-      ScanSolo::AiTurn::TurnOrchestrator.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider, actions: [])
+      ScanSolo::AiTurn::TurnOrchestrator.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
 
       expect(WebMock).not_to have_requested(:post, /hook\.make/)
     end

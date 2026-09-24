@@ -8,19 +8,24 @@
 # call while already `human_active` is a no-op, producing no duplicate
 # audit entry.
 #
-# RF-56: also pauses/cancels any scheduled-but-unsent cadence step for this
-# conversation's opportunity in the same processing window, through
-# ScanSolo::Cadence::StopRecalculatePolicy.handle_takeover (T53) -- an
-# already-sent step is never retroactively altered.
+# RF-19: also pauses (never cancels) the active cadence enrollments of this
+# conversation's opportunity through
+# ScanSolo::Cadence::StopRecalculatePolicy.handle_takeover -- scheduled
+# attempts stay `scheduled` and are shifted on return to AI (RF-29).
+#
+# `trigger` records how the takeover happened in the audit payload:
+# `explicit` (POST .../handoff) or `human_reply` (implicit, RF-18, from
+# ScanSolo::ConversationListener).
 class ScanSolo::Handoff::TakeoverService
-  def self.call(conversation:, reason:, actor:)
-    new(conversation: conversation, reason: reason, actor: actor).call
+  def self.call(conversation:, reason:, actor:, trigger: 'explicit')
+    new(conversation: conversation, reason: reason, actor: actor, trigger: trigger).call
   end
 
-  def initialize(conversation:, reason:, actor:)
+  def initialize(conversation:, reason:, actor:, trigger:)
     @conversation = conversation
     @reason = reason
     @actor = actor
+    @trigger = trigger
   end
 
   def call
@@ -35,7 +40,7 @@ class ScanSolo::Handoff::TakeoverService
       event_type: 'handoff.takeover',
       actor: actor,
       correlation_id: SecureRandom.uuid,
-      payload: { conversation_id: conversation.id, reason: reason }
+      payload: { conversation_id: conversation.id, reason: reason, trigger: trigger }
     )
 
     ScanSolo::Cadence::StopRecalculatePolicy.handle_takeover(opportunity: opportunity)
@@ -45,7 +50,7 @@ class ScanSolo::Handoff::TakeoverService
 
   private
 
-  attr_reader :conversation, :reason, :actor
+  attr_reader :conversation, :reason, :actor, :trigger
 
   def opportunity
     ScanSolo::PipelineOpportunity.find_by(conversation_id: conversation.id)

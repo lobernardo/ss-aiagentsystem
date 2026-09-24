@@ -28,4 +28,8 @@ class ScanSolo::ContactExtension < ApplicationRecord
   def self.resolve_for(contact)
     find_or_create_by!(contact: contact)
   end
+
+  def self.opted_out?(contact)
+    exists?(contact: contact, opted_out: true)
+  end
 end

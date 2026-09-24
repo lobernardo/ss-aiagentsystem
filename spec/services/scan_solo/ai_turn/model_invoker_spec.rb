@@ -5,14 +5,71 @@ require 'rails_helper'
 RSpec.describe ScanSolo::AiTurn::ModelInvoker do
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:config) { ScanSolo::AiAgentConfig.draft_for!(account) }
+  let(:payload) do
+    {
+      system: 'regras do agente',
+      messages: [{ role: 'user', content: 'oi' }, { role: 'assistant', content: 'olá!' }, { role: 'user', content: 'quero preço' }],
+      schema: { name: 'scansolo_turn', strict: false, schema: { type: 'object' } }
+    }
+  end
 
-  describe 'RF-21: resolves through the injected/default provider, never a second hand-rolled client' do
-    it 'delegates to the injected llm_provider when given' do
-      result = described_class.call(config: config, prompt: 'ola', llm_provider: ScanSolo::TestMode::MockLlmProvider)
+  describe 'structured output through the injected provider' do
+    it 'returns the reply, the requested actions and the measured latency' do
+      actions = [{ 'action_id' => 'human_handoff', 'params' => { 'reason' => 'pediu humano' } }]
+      provider = ->(**kwargs) { ScanSolo::TestMode::MockLlmProvider.call(**kwargs, fixture_response: 'Olá!', fixture_actions: actions) }
+
+      result = described_class.call(config: config, payload: payload, llm_provider: provider)
 
       expect(result).not_to be_failed
-      expect(result.content).to be_present
-      expect(result.provider).to eq(ScanSolo::TestMode::MockLlmProvider::PROVIDER)
+      expect(result).to have_attributes(content: 'Olá!', actions: actions, provider: 'scansolo_test_mode', model: 'scansolo-mock-llm')
+      expect(result.latency_ms).to be >= 0
+    end
+
+    it 'raises for output that does not follow the {reply, actions} schema' do
+      provider = ->(**) { { content: 'texto solto', provider: 'x', model: 'y' } }
+
+      expect { described_class.call(config: config, payload: payload, llm_provider: provider) }
+        .to raise_error(described_class::InvalidOutputError)
+    end
+
+    it 'lets a non-provider exception propagate to the orchestrator (RF-07)' do
+      provider = ->(**) { raise ArgumentError, 'bug' }
+
+      expect { described_class.call(config: config, payload: payload, llm_provider: provider) }.to raise_error(ArgumentError)
+    end
+  end
+
+  describe 'real provider path (RubyLLM)' do
+    let(:reply) { instance_double(RubyLLM::Message, content: { 'reply' => 'ok', 'actions' => [] }, input_tokens: 11, output_tokens: 3) }
+    let(:chat) { instance_double(RubyLLM::Chat) }
+    let(:llm_context) { instance_double(RubyLLM::Context) }
+
+    before do
+      allow(Llm::Config).to receive(:initialize!)
+      allow(ScanSolo::AiAgent::ModelResolver).to receive(:resolve).and_return(provider: 'openai', model: 'gpt-4.1-mini')
+      allow(RubyLLM).to receive(:context).and_return(llm_context)
+      allow(llm_context).to receive(:chat).with(model: 'gpt-4.1-mini').and_return(chat)
+      allow(chat).to receive_messages(with_instructions: chat, with_schema: chat, add_message: nil, ask: reply)
+    end
+
+    it 'sends the system message as instructions, the schema and the history as chat messages' do
+      result = described_class.call(config: config, payload: payload)
+
+      expect(chat).to have_received(:with_instructions).with('regras do agente')
+      expect(chat).to have_received(:with_schema).with(payload[:schema])
+      expect(chat).to have_received(:add_message).with(role: :user, content: 'oi')
+      expect(chat).to have_received(:add_message).with(role: :assistant, content: 'olá!')
+      expect(chat).to have_received(:ask).with('quero preço')
+      expect(result).to have_attributes(content: 'ok', provider: 'openai', model: 'gpt-4.1-mini', input_tokens: 11, output_tokens: 3)
+    end
+
+    it 'bounds the model call with the ScanSolo timeout and a single retry' do
+      llm_config = Struct.new(:request_timeout, :max_retries).new
+      allow(RubyLLM).to receive(:context).and_yield(llm_config).and_return(llm_context)
+
+      described_class.call(config: config, payload: payload)
+
+      expect(llm_config.to_h).to eq(request_timeout: ScanSolo::AI_TURN_MODEL_TIMEOUT.to_i, max_retries: ScanSolo::AI_TURN_MODEL_MAX_RETRIES)
     end
   end
 
@@ -20,7 +77,7 @@ RSpec.describe ScanSolo::AiTurn::ModelInvoker do
     it 'returns a failure result instead of raising when the provider raises a configuration error' do
       allow(Llm::Config).to receive(:initialize!).and_raise(RubyLLM::ConfigurationError, 'missing openai_api_key')
 
-      result = described_class.call(config: config, prompt: 'ola')
+      result = described_class.call(config: config, payload: payload)
 
       expect(result).to be_failed
       expect(result.failure_reason).to include('RubyLLM::ConfigurationError')
@@ -30,41 +87,16 @@ RSpec.describe ScanSolo::AiTurn::ModelInvoker do
     it 'returns a failure result on a timeout' do
       allow(Llm::Config).to receive(:initialize!).and_raise(Timeout::Error, 'timed out')
 
-      result = described_class.call(config: config, prompt: 'ola')
+      result = described_class.call(config: config, payload: payload)
 
       expect(result).to be_failed
       expect(result.failure_reason).to include('Timeout::Error')
     end
 
-    it 'never raises past its own boundary for a provider error' do
-      allow(Llm::Config).to receive(:initialize!).and_raise(RubyLLM::Error, 'malformed output')
+    it 'redacts secret-shaped values from the failure reason' do
+      allow(Llm::Config).to receive(:initialize!).and_raise(RubyLLM::Error, 'bad key sk-live_abcdefghijklmnop')
 
-      expect { described_class.call(config: config, prompt: 'ola') }.not_to raise_error
-    end
-  end
-
-  describe 'RF-42: a provider failure leaves already-persisted history intact and sends nothing' do
-    let(:contact) { create(:contact, account: account) }
-    let(:conversation) { create(:conversation, account: account, contact: contact) }
-    let(:message) do
-      create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact)
-    end
-
-    before do
-      config.update!(name: 'Agente ScanSolo', enabled: true)
-      ScanSolo::AiAgent::PublishService.new(account: account).call
-      allow(Llm::Config).to receive(:initialize!).and_raise(RubyLLM::ConfigurationError, 'missing openai_api_key')
-    end
-
-    it 'records a failed turn, sends zero outbound messages, and preserves prior history' do
-      ScanSolo::AiTurnJob.new.perform(message.id)
-
-      turn = ScanSolo::AiTurn.find_by(message_id: message.id)
-      expect(turn).to be_failed
-      expect(turn.failure_reason).to be_present
-      expect(conversation.messages.outgoing.count).to eq(0)
-      expect(conversation.messages.incoming.count).to eq(1)
-      expect(message.reload).to be_persisted
+      expect(described_class.call(config: config, payload: payload).failure_reason).not_to include('sk-live_abcdefghijklmnop')
     end
   end
 end

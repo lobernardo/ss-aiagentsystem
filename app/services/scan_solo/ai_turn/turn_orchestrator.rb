@@ -1,158 +1,189 @@
-# Sole entry point for a canonical guarded AI turn (RF-35-RF-44), called by
-# ScanSolo::AiTurnJob once the triggering message is already persisted
-# natively. Sequences: dedupe turn creation (RF-36) -> eligibility guard
-# (RF-37) -> published config lookup -> context assembly (RF-39) -> input
-# guardrail (RF-38) -> model invocation (RF-42) -> output validation
-# (RF-41) -> registered action execution -> approved-response send (RF-43).
+# Sole entry point for a canonical guarded AI turn, called by
+# ScanSolo::AiTurnJob (which holds the per-conversation Redis mutex, RF-11)
+# once the triggering message is already persisted natively. Sequences:
+# turn lookup/creation (RF-09) -> eligibility (RF-10) -> context and
+# retrieval (RF-05, RF-46) -> input guardrail -> model invocation ->
+# output validation (RF-06) -> locked pre-send recheck (RF-10) -> actions ->
+# approved-response send -> reply-completeness cadence rule (RF-28).
 #
-# `actions:` is the turn's registered tool/action requests (RF-44) — a list
-# of already-decided, schema-shaped action requests. The full model-driven
-# action-request/authorization layer (classification, confirmation gating,
-# free-form-parameter rejection) is a later phase's dedicated executor; this
-# orchestrator only guarantees the transactional property RF-44 requires
-# now: whatever actions are supplied execute inside the same transaction as
-# the outbound response, so an action's effect (e.g. a stage transition) is
-# never visible without the response being queued, and never queues the
-# response without the action's effect landing first.
+# Turn states are always terminal at the end of a run (RF-07): a terminal
+# turn is never reprocessed and a `pending` turn without a response resumes
+# on the same row and correlation id (RF-09); any exception after the turn
+# row exists marks it `failed` with the exception class and redacted message
+# and reports it with the correlation id.
+#
+# Model-requested actions (RF-12, RF-13) run exclusively through
+# ScanSolo::Actions::Registry, after the recheck and in the same transaction
+# as the outgoing message, each keyed by the turn correlation id and its
+# position; the conversation/opportunity ids come from the turn, never from
+# the model. An action that was not offered to the model, is unregistered or
+# fails schema validation raises, which rolls back every earlier action and
+# fails the turn with 0 messages (all-or-nothing).
+#
+# The pre-send recheck runs inside the send transaction under the
+# ScanSolo::ConversationExtension row lock: eligibility (flag, allowlist, no
+# active bot, published+enabled config), `ai_active`, no human reply after the
+# trigger, the trigger still being the latest incoming message, and the turn
+# still `pending` (the stale sweeper may have failed it). The same checks run
+# once before the model call so a turn that could never be sent costs no
+# model invocation.
 class ScanSolo::AiTurn::TurnOrchestrator
-  SUPPORTED_ACTIONS = %w[stage_transition].freeze
+  ELIGIBILITY_REASONS = %w[inbox_has_active_bot config_unavailable].freeze
 
-  def self.call(message:, llm_provider: nil, actions: [])
-    new(message: message, llm_provider: llm_provider, actions: actions).call
+  TURN_SCOPED_PARAMS = ScanSolo::AiTurn::PromptBuilder::TURN_SCOPED_PARAMS
+
+  def self.call(message:, llm_provider: nil)
+    new(message: message, llm_provider: llm_provider).call
   end
 
-  def initialize(message:, llm_provider: nil, actions: [])
+  def initialize(message:, llm_provider: nil)
     @message = message
+    @conversation = message.conversation
     @llm_provider = llm_provider
-    @actions = actions
   end
 
   def call
-    turn = create_turn
+    turn = resumable_turn
     return if turn.blank?
 
-    config = eligible_config(turn)
-    return if config.blank?
-
-    result = generate_validated_response(turn, config)
-    return if result.blank?
-
-    send_with_actions(turn: turn, config: config, result: result)
+    process(turn)
+    apply_reply_completeness(turn.reload)
   end
 
   private
 
-  attr_reader :message, :llm_provider, :actions
+  attr_reader :message, :conversation, :llm_provider
 
-  def create_turn
-    ScanSolo::AiTurn.create!(
-      message: message,
-      conversation: message.conversation,
-      correlation_id: SecureRandom.uuid,
-      invocation_status: :pending
-    )
-  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique
-    nil
+  def resumable_turn
+    turn = ScanSolo::AiTurn.find_by(message_id: message.id)
+    return ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid) if turn.blank?
+
+    turn if turn.pending? && turn.response_message_id.blank?
   end
 
-  def eligible_config(turn)
-    unless ScanSolo::AiTurn::EligibilityGuard.eligible?(conversation: message.conversation)
-      suppress!(turn, 'conversation is human-controlled or opted out')
-      return nil
-    end
+  def process(turn)
+    reason = ineligibility_reason(ScanSolo::ConversationExtension.resolve_for(conversation))
+    return suppress!(turn, reason) if reason
 
     config = ScanSolo::AiAgentConfig.published_for(message.account)
-    if config.blank? || !config.enabled?
-      suppress!(turn, 'no published/enabled AI agent config')
-      return nil
-    end
-
-    config
+    result = generate_validated_response(turn, config)
+    send_response(turn, config, result) if result.present?
+  rescue StandardError => e
+    record_exception!(turn, e)
   end
 
   def generate_validated_response(turn, config)
-    context = ScanSolo::AiTurn::ContextAssembler.call(message: message)
-    turn.update!(context_snapshot: context)
+    context = ScanSolo::AiTurn::ContextAssembler.call(message: message, config: config)
+    evidence = context[:knowledge_context][:chunks].map { |chunk| chunk.slice(:source_id, :source_title, :chunk_id, :similarity_score) }
+    turn.update!(context_snapshot: context, knowledge_evidence: evidence)
 
     guardrail_outcome = ScanSolo::AiTurn::InputGuardrail.call(config: config, content: message.content)
     turn.update!(guardrail_outcome: guardrail_outcome)
-    if guardrail_outcome[:blocked]
-      suppress!(turn, 'input guardrail blocked: forbidden subject')
-      return nil
-    end
+    return suppress!(turn, 'input guardrail blocked: forbidden subject') if guardrail_outcome[:blocked]
 
-    invoke_and_validate(turn, config, context)
+    payload = ScanSolo::AiTurn::PromptBuilder.call(config: config, context: context, offered_actions: guardrail_outcome[:allowed_actions])
+    invoke_and_validate(turn, config, payload)
   end
 
-  def invoke_and_validate(turn, config, context)
-    result = ScanSolo::AiTurn::ModelInvoker.call(config: config, prompt: build_prompt(context), llm_provider: llm_provider)
-    if result.failed?
-      fail!(turn, result.failure_reason)
-      return nil
-    end
+  def invoke_and_validate(turn, config, payload)
+    result = ScanSolo::AiTurn::ModelInvoker.call(config: config, payload: payload, llm_provider: llm_provider)
+    return fail!(turn, result.failure_reason) if result.failed?
 
-    validation = ScanSolo::AiTurn::OutputValidator.call(content: result.content)
-    if validation[:blocked]
-      fail!(turn, "output validation blocked: #{validation[:violation]}")
-      return nil
-    end
+    validation = ScanSolo::AiTurn::OutputValidator.call(content: result.content, restricted_information: config.restricted_information)
+    return fail!(turn, "output validation blocked: #{validation[:violation]}") if validation[:blocked]
 
     result
   end
 
+  def send_response(turn, config, result)
+    reason = nil
+    extension = ScanSolo::ConversationExtension.resolve_for(conversation)
+
+    extension.with_lock do
+      turn.lock!
+      next unless turn.pending?
+
+      reason = ineligibility_reason(extension)
+      next if reason
+
+      evidence = execute_actions(turn, result.actions)
+      ScanSolo::AiTurn::ResponseSender.call(message: message, config: config, result: result, turn: turn, action_evidence: evidence)
+    end
+
+    suppress!(turn, reason) if reason
+  end
+
+  def ineligibility_reason(extension)
+    eligibility = ScanSolo::Eligibility.for_message(message)
+    return ELIGIBILITY_REASONS.include?(eligibility.reason) ? eligibility.reason : 'not_eligible' unless eligibility.eligible?
+    return 'human_controlled' unless extension.ai_active?
+    return 'human_replied' if human_replied_after_trigger?
+    return 'superseded' unless conversation.messages.incoming.maximum(:id) == message.id
+
+    nil
+  end
+
+  def human_replied_after_trigger?
+    conversation.messages.outgoing
+                .where(private: false, sender_type: 'User')
+                .where('messages.id > ?', message.id)
+                .where("COALESCE(messages.additional_attributes ->> 'scansolo_origin', '') = ''")
+                .exists?
+  end
+
+  # RF-28: the customer's reply cancels/recalculates the cadence that was
+  # already running when the message arrived -- the enrollment created by
+  # this very message (bootstrap or stage entry) is left alone, and a burst
+  # applies the rule once, through its surviving (non-superseded) turn.
+  def apply_reply_completeness(turn)
+    return if turn.suppressed? && turn.failure_reason == 'superseded'
+
+    return if opportunity.blank?
+    return unless opportunity.cadence_enrollments.active.exists?(['created_at < ?', message.created_at])
+
+    ScanSolo::Cadence::ReplyCompletenessDetector.call(opportunity: opportunity)
+  end
+
   def suppress!(turn, reason)
     turn.update!(invocation_status: :suppressed, failure_reason: reason)
+    nil
   end
 
   def fail!(turn, reason)
     turn.update!(invocation_status: :failed, failure_reason: reason)
+    nil
   end
 
-  # RF-44: action execution and response persistence share one transaction —
-  # if the send fails, the action rolls back with it; if an action is
-  # invalid, nothing is sent.
-  def send_with_actions(turn:, config:, result:)
-    ActiveRecord::Base.transaction do
-      evidence = execute_actions(turn.correlation_id)
-      ScanSolo::AiTurn::ResponseSender.call(
-        message: message, config: config, result: result, turn: turn, action_evidence: evidence
+  def record_exception!(turn, error)
+    turn.reload.update!(invocation_status: :failed,
+                        failure_reason: "#{error.class}: #{ScanSolo::AiTurn::PromptRedactor.call(error.message)}")
+    ChatwootExceptionTracker.new(error, account: message.account, tags: { scansolo_correlation_id: turn.correlation_id }).capture_exception
+  end
+
+  def execute_actions(turn, requested_actions)
+    offered = turn.guardrail_outcome['allowed_actions']
+
+    requested_actions.each_with_index.map do |action, index|
+      action_id = action['action_id'].to_s
+      raise ScanSolo::Actions::Executor::UnregisteredActionError, action_id unless offered.include?(action_id)
+
+      outcome = ScanSolo::Actions::Registry.call(
+        action_id: action_id, params: action_params(action_id, action['params']), turn: turn,
+        correlation_id: turn.correlation_id, idempotency_key: "#{turn.correlation_id}:#{index}:#{action_id}"
       )
+      result = outcome.side_effect_result
+      { action_id: action_id, index: index, execution_id: outcome.execution.id, result: result.is_a?(Hash) ? result : result.class.name }
     end
   end
 
-  def execute_actions(correlation_id)
-    opportunity = ScanSolo::PipelineOpportunity.find_by(conversation_id: message.conversation_id)
+  def action_params(action_id, params)
+    scoped_ids = { 'conversation_id' => conversation.id, 'opportunity_id' => opportunity&.id }
+    declared = ScanSolo::Actions::Registry.handler_for(action_id)::SCHEMA['properties'].keys
 
-    actions.filter_map do |action|
-      next unless SUPPORTED_ACTIONS.include?(action[:type].to_s)
-      next if opportunity.blank?
-
-      execute_stage_transition(action, opportunity, correlation_id)
-    end
+    params.to_h.stringify_keys.except(*TURN_SCOPED_PARAMS).merge(scoped_ids.slice(*declared))
   end
 
-  def execute_stage_transition(action, opportunity, correlation_id)
-    params = action[:params] || {}
-
-    ScanSolo::Pipeline::StageTransitionService.new(
-      opportunity: opportunity,
-      target_stage: params[:target_stage],
-      actor: params[:actor],
-      authorized: params[:authorized] || false
-    ).call
-
-    {
-      type: 'stage_transition', target_stage: params[:target_stage], correlation_id: correlation_id,
-      executed_at: Time.current
-    }
-  end
-
-  # RF-88: the assembled prompt is redacted before it ever reaches
-  # ScanSolo::AiTurn::ModelInvoker, so a secret-shaped value accidentally
-  # present in stored context (e.g. copy-pasted into config instructions)
-  # never leaves the server boundary as part of a model prompt payload.
-  def build_prompt(context)
-    history = context[:conversation_history].map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n")
-    ScanSolo::AiTurn::PromptRedactor.call("Historico da conversa:\n#{history}")
+  def opportunity
+    @opportunity ||= ScanSolo::PipelineOpportunity.find_by(conversation_id: conversation.id)
   end
 end

@@ -6,8 +6,8 @@
 # already blocks any non-localhost HTTP call, so an accidental real send
 # fails the spec outright rather than silently succeeding.
 module ScanSoloTestMode
-  def scansolo_mock_llm_response(config:, prompt: 'test-mode-fixture', fixture_response: nil)
-    ScanSolo::TestMode::MockLlmProvider.call(config: config, prompt: prompt, fixture_response: fixture_response)
+  def scansolo_mock_llm_response(config:, payload: { messages: [] }, fixture_response: nil)
+    ScanSolo::TestMode::MockLlmProvider.call(config: config, payload: payload, fixture_response: fixture_response)
   end
 end
 

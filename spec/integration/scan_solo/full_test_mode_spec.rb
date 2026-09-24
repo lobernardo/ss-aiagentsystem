@@ -23,7 +23,7 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
 
   def publish_agent_config!(**attrs)
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!({ name: 'Agente ScanSolo', enabled: true }.merge(attrs))
+    draft.update!({ name: 'Agente ScanSolo', enabled: true, allowed_inbox_ids: [conversation.inbox_id] }.merge(attrs))
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
@@ -216,15 +216,16 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
     let!(:enrollment) { ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: cadence_definition) }
     let(:agent) { create(:user, account: account, role: :agent) }
 
-    it 'cancels a scheduled-but-unsent attempt and leaves an already-sent one untouched' do
+    it 'pauses a scheduled-but-unsent attempt and leaves an already-sent one untouched' do
       sent_attempt = enrollment.attempts.order(:scheduled_at).first
       ScanSolo::Cadence::AttemptEvidenceRecorder.record_sent!(sent_attempt)
       pending_attempt = enrollment.attempts.order(:scheduled_at).second
 
       ScanSolo::Handoff::TakeoverService.call(conversation: conversation, reason: 'cliente pediu humano', actor: agent)
 
+      expect(enrollment.reload).to be_paused
       expect(sent_attempt.reload).to be_sent
-      expect(pending_attempt.reload).to be_cancelled
+      expect(pending_attempt.reload).to be_scheduled
     end
   end
 
@@ -246,7 +247,7 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
     it 'creates the outbound message via conversation.messages.create!, never a parallel WhatsApp client' do
       result = perform_enqueued_jobs do
         ScanSolo::Messaging::NativeTemplateSender.call(
-          conversation: conversation, template_reference: 'scansolo_cadence_novo_lead_v1_step1',
+          conversation: conversation, template_reference: 'scansolo_cadence_novo_lead_v1_step1', origin: 'cadence',
           template_params: { category: 'UTILITY', language: 'pt_BR' }
         )
       end

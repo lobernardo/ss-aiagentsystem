@@ -5,7 +5,9 @@
 # RF-66: every successful transition stops/recalculates pending cadence
 # work through ScanSolo::Cadence::StopRecalculatePolicy (T53) -- ganho/
 # perdido map to their own dedicated triggers, any other stage change maps
-# to the generic `stage_changed` trigger.
+# to the generic `stage_changed` trigger. Once the previous cadence work is
+# stopped, the new stage's cadence is enrolled through
+# ScanSolo::Cadence::StageEntryEnroller (RF-24).
 class ScanSolo::Pipeline::StageTransitionService
   TERMINAL_STAGES = %w[ganho perdido].freeze
   GUARDED_STAGES = %w[negociacao].freeze
@@ -36,6 +38,7 @@ class ScanSolo::Pipeline::StageTransitionService
     end
 
     ScanSolo::Cadence::StopRecalculatePolicy.call(opportunity: opportunity, trigger: cadence_trigger)
+    ScanSolo::Cadence::StageEntryEnroller.call(opportunity: opportunity)
 
     opportunity
   end

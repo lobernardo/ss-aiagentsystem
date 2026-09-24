@@ -82,3 +82,9 @@ scan_solo_cadence_due_attempt_job:
   cron: '*/5 * * * *'
   class: 'ScanSolo::CadenceDueAttemptJob'
   queue: scheduled_jobs
+
+# RF-08/RNF-02: fails AI turns left pending past ScanSolo::AI_TURN_STALE_THRESHOLD
+scan_solo_stale_turn_sweeper_job:
+  cron: '*/5 * * * *'
+  class: 'ScanSolo::StaleTurnSweeperJob'
+  queue: scheduled_jobs

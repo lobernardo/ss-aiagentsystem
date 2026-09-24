@@ -2,13 +2,15 @@
 # One library to capture_exception and send to the specific service.
 # # e as exception, u for user and a for account (user and account are optional)
 # Usage: ChatwootExceptionTracker(e, user: u, account: a).capture_exception
+# `tags` (optional) are attached to the Sentry scope, e.g. a correlation id.
 ############
 
 class ChatwootExceptionTracker
-  def initialize(exception, user: nil, account: nil)
+  def initialize(exception, user: nil, account: nil, tags: {})
     @exception = exception
     @user = user
     @account = account
+    @tags = tags
   end
 
   def capture_exception
@@ -25,6 +27,7 @@ class ChatwootExceptionTracker
         scope.set_tags(account_id: @account.id)
       end
 
+      scope.set_tags(@tags) if @tags.present?
       scope.set_user(id: @user.id, email: @user.email) if @user.is_a?(User)
       Sentry.capture_exception(@exception)
     end

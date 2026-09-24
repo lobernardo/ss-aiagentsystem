@@ -4,7 +4,9 @@
 # proposal.approve/proposal.send always stay outside the per-turn allowlist
 # here; only the confirmation flow (a later phase) can grant them, so the
 # returned list is always a strict subset of the full registered-action
-# vocabulary, never "all registered actions" (RF-38 AC).
+# vocabulary, never "all registered actions" (RF-38 AC). `proposal_generate`
+# is offered only while the proposal integration is configured (RF-12,
+# RF-36).
 class ScanSolo::AiTurn::InputGuardrail
   ALL_ACTIONS = %w[
     qualification_field stage_transition private_note proposal_generate
@@ -41,6 +43,7 @@ class ScanSolo::AiTurn::InputGuardrail
   end
 
   def allowed_actions
-    ALL_ACTIONS - CONFIRMATION_ONLY_ACTIONS
+    actions = ALL_ACTIONS - CONFIRMATION_ONLY_ACTIONS
+    ScanSolo::Proposal::Integration.configured? ? actions : actions - ['proposal_generate']
   end
 end

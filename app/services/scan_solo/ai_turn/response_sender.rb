@@ -6,7 +6,9 @@
 # never diverge (RF-43's "persisted content is identical to what was sent").
 # Called from inside ScanSolo::AiTurn::TurnOrchestrator's own transaction, so
 # action_evidence (already executed by the time this runs, RF-44) commits or
-# rolls back atomically with the send.
+# rolls back atomically with the send. The message is tagged
+# `scansolo_origin: 'ai'` so the listener never treats it as a human reply
+# (RF-18).
 class ScanSolo::AiTurn::ResponseSender
   def self.call(message:, config:, result:, turn:, action_evidence: [])
     new(message: message, config: config, result: result, turn: turn, action_evidence: action_evidence).call
@@ -40,7 +42,8 @@ class ScanSolo::AiTurn::ResponseSender
       inbox_id: conversation.inbox_id,
       message_type: :outgoing,
       content: result.content,
-      sender: agent_bot
+      sender: agent_bot,
+      additional_attributes: { 'scansolo_origin' => 'ai' }
     )
   end
 
@@ -51,6 +54,7 @@ class ScanSolo::AiTurn::ResponseSender
       model_reference: result.model,
       input_tokens: result.input_tokens,
       output_tokens: result.output_tokens,
+      latency_ms: result.latency_ms,
       action_evidence: action_evidence,
       response_message_id: outbound.id
     )

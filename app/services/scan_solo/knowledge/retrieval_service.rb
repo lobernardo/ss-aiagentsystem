@@ -12,7 +12,7 @@ class ScanSolo::Knowledge::RetrievalService
   DEFAULT_TOP_K = 5
   OUTAGE_ERRORS = [ActiveRecord::StatementInvalid, PG::Error, RubyLLM::Error, RubyLLM::ConfigurationError].freeze
 
-  Result = Struct.new(:chunk_id, :source_id, :source_type, :content_snippet, :similarity_score, keyword_init: true)
+  Result = Struct.new(:chunk_id, :source_id, :source_title, :source_type, :content_snippet, :similarity_score, keyword_init: true)
 
   def self.call(account:, query:, top_k: DEFAULT_TOP_K, embedding_provider: ScanSolo::Knowledge::EmbeddingService)
     new(account: account, embedding_provider: embedding_provider).call(query: query, top_k: top_k)
@@ -45,6 +45,7 @@ class ScanSolo::Knowledge::RetrievalService
     Result.new(
       chunk_id: chunk.id,
       source_id: chunk.source_id,
+      source_title: chunk.source.title,
       source_type: chunk.source.source_type,
       content_snippet: chunk.content,
       similarity_score: (1 - chunk.neighbor_distance.to_f).clamp(0.0, 1.0)

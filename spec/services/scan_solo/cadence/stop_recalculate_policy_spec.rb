@@ -24,11 +24,13 @@ RSpec.describe ScanSolo::Cadence::StopRecalculatePolicy do
       end
     end
 
-    it "pauses (reversibly) rather than cancels for the 'manual_pause' trigger" do
-      described_class.call(opportunity: opportunity, trigger: 'manual_pause')
+    %w[manual_pause handoff].each do |trigger|
+      it "pauses (reversibly) rather than cancels for the '#{trigger}' trigger" do
+        described_class.call(opportunity: opportunity, trigger: trigger)
 
-      expect(enrollment.reload).to be_paused
-      expect(enrollment.attempts.pluck(:result).uniq).to eq(['scheduled'])
+        expect(enrollment.reload).to be_paused
+        expect(enrollment.attempts.pluck(:result).uniq).to eq(['scheduled'])
+      end
     end
 
     it 'raises for an unknown trigger' do
@@ -50,18 +52,19 @@ RSpec.describe ScanSolo::Cadence::StopRecalculatePolicy do
     end
   end
 
-  describe 'integration: human takeover (RF-56)' do
+  describe 'integration: human takeover (RF-19, superseding the prior RF-56 cancel)' do
     let(:user) { create(:user, account: account) }
 
-    it 'pauses/cancels a scheduled-but-unsent step within the same processing window, leaving an already-sent step untouched' do
+    it 'pauses the enrollment, keeps unsent attempts scheduled and leaves an already-sent step untouched' do
       sent_attempt = enrollment.attempts.order(:scheduled_at).first
       ScanSolo::Cadence::AttemptEvidenceRecorder.record_sent!(sent_attempt)
       pending_attempt = enrollment.attempts.order(:scheduled_at).second
 
       ScanSolo::Handoff::TakeoverService.call(conversation: conversation, reason: 'cliente pediu humano', actor: user)
 
+      expect(enrollment.reload).to be_paused
       expect(sent_attempt.reload).to be_sent
-      expect(pending_attempt.reload).to be_cancelled
+      expect(pending_attempt.reload).to be_scheduled
     end
   end
 end

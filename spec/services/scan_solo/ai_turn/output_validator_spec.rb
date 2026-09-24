@@ -38,4 +38,16 @@ RSpec.describe ScanSolo::AiTurn::OutputValidator do
       expect(result[:violation]).to be_nil
     end
   end
+
+  describe 'RF-06: restricted_information' do
+    it 'blocks output containing a configured restricted entry, case-insensitively' do
+      result = described_class.call(content: 'Nossa MARGEM INTERNA é de 40%.', restricted_information: ['margem interna'])
+
+      expect(result).to eq(blocked: true, violation: :restricted_information)
+    end
+
+    it 'ignores blank restricted entries' do
+      expect(described_class.call(content: 'Olá!', restricted_information: ['', nil])[:blocked]).to be false
+    end
+  end
 end

@@ -275,7 +275,6 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
       scenario_url = 'https://hook.make.example/scenario-webhook'
       inbound_secret = 'make-inbound-secret'
       correlation_id = SecureRandom.uuid
-      idempotency_key = SecureRandom.uuid
 
       allow(Rails.application.credentials).to receive(:dig).and_call_original
       allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :scenario_url).and_return(scenario_url)
@@ -283,17 +282,15 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
       allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :inbound_signing_secret).and_return(inbound_secret)
       stub_request(:post, scenario_url).to_return(status: 200, body: '{}')
 
-      make_request = ScanSolo::Make::OutboundRequestService.call(
-        account: account, action: 'proposal.generate', payload: { opportunity_id: opportunity.id },
-        correlation_id: correlation_id, idempotency_key: idempotency_key
-      )
+      version = ScanSolo::Proposal.create!(opportunity: opportunity).versions.create!(generate_correlation_id: correlation_id)
+      make_request = ScanSolo::Proposal::MakeProvider.request_generation(proposal_version: version, correlation_id: correlation_id)
       expect(make_request).to be_sent
       expect(a_request(:post, scenario_url)).to have_been_made.once
 
       callback_body = {
-        correlation_id: correlation_id, idempotency_key: idempotency_key, action: 'proposal.generate', status: 'success',
-        result: { proposal_version_id: 1, artifact_url: 'https://mock-proposals.scansolo.test/1.pdf',
-                  total_value: 1500.0, currency: 'BRL', valid_until: 1.week.from_now.iso8601 }
+        correlation_id: correlation_id, idempotency_key: correlation_id, action: 'proposal.generate', status: 'success',
+        result: { proposal_version_id: version.id, artifact_url: 'https://make.example/1.pdf',
+                  total_value: 1800.0, currency: 'BRL', valid_until: 1.week.from_now.iso8601 }
       }.to_json
       signature = OpenSSL::HMAC.hexdigest('SHA256', inbound_secret, callback_body)
 
@@ -302,6 +299,7 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
 
       expect(response).to have_http_status(:ok)
       expect(make_request.reload).to be_completed
+      expect(version.reload).to have_attributes(status: 'generated', value: BigDecimal(1800))
     end
   end
 
@@ -392,14 +390,16 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
     it 'Make callback: replaying the same signed payload does not reapply the side effect' do
       inbound_secret = 'make-inbound-secret'
       correlation_id = SecureRandom.uuid
+      opportunity = ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
+      version = ScanSolo::Proposal.create!(opportunity: opportunity).versions.create!(generate_correlation_id: correlation_id)
       make_request = ScanSolo::MakeRequest.create!(
         account: account, correlation_id: correlation_id, idempotency_key: SecureRandom.uuid,
-        action: 'proposal.generate', payload: {}, status: :sent
+        action: 'proposal.generate', payload: { proposal_version_id: version.id }, status: :sent
       )
       body = { correlation_id: correlation_id, idempotency_key: make_request.idempotency_key, action: 'proposal.generate',
                status: 'success',
-               result: { proposal_version_id: 1, artifact_url: 'https://mock-proposals.scansolo.test/1.pdf',
-                         total_value: 1500.0, currency: 'BRL', valid_until: 1.week.from_now.iso8601 } }.to_json
+               result: { proposal_version_id: version.id, artifact_url: 'https://make.example/1.pdf',
+                         total_value: 1800.0, currency: 'BRL', valid_until: 1.week.from_now.iso8601 } }.to_json
 
       allow(Rails.application.credentials).to receive(:dig).and_call_original
       allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :inbound_signing_secret).and_return(inbound_secret)
@@ -411,8 +411,9 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
 
       expect do
         post '/webhooks/scan_solo/make', params: body, headers: headers
-      end.not_to change(ScanSolo::MakeCallback, :count)
+      end.not_to(change { version.reload.attributes })
       expect(response).to have_http_status(:ok)
+      expect(ScanSolo::MakeCallback.where(correlation_id: correlation_id).count).to eq(1)
       expect(make_request.reload).to be_completed
     end
   end

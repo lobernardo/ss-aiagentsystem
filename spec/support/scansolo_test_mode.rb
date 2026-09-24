@@ -13,4 +13,11 @@ end
 
 RSpec.configure do |config|
   config.include ScanSoloTestMode
+
+  # Keeps the proposal integration state independent of a developer's local
+  # config/master.key: Make credentials are absent unless a spec stubs them.
+  config.before do
+    allow(Rails.application.credentials).to receive(:dig).and_call_original
+    allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, anything).and_return(nil)
+  end
 end

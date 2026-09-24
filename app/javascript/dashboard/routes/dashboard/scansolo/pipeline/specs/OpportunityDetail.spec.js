@@ -1,4 +1,6 @@
-import { mount, flushPromises } from '@vue/test-utils';
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
+import { createStore } from 'vuex';
+import { withFullI18n } from 'test-i18n';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
 import OpportunityDetail from '../OpportunityDetail.vue';
 
@@ -16,9 +18,10 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push }),
 }));
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: key => key }),
-}));
+withFullI18n();
+enableAutoUnmount(afterEach);
+
+const ISO_PATTERN = /\d{4}-\d{2}-\d{2}T/;
 
 const seededOpportunity = {
   id: 7,
@@ -50,49 +53,62 @@ const seededOpportunity = {
   ],
 };
 
+const mountDetail = ({ role = 'administrator' } = {}) =>
+  mount(OpportunityDetail, {
+    global: {
+      plugins: [
+        createStore({
+          getters: {
+            getCurrentRole: () => role,
+            getCurrentUser: () => ({ id: 1 }),
+          },
+        }),
+      ],
+    },
+  });
+
 describe('OpportunityDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    ScanSoloPipelineOpportunitiesAPI.show.mockResolvedValue({
+      data: seededOpportunity,
+    });
   });
 
   it('shows a chronological stage-history list matching the seeded PipelineStageEvent records', async () => {
-    ScanSoloPipelineOpportunitiesAPI.show.mockResolvedValue({
-      data: seededOpportunity,
-    });
-
-    const wrapper = mount(OpportunityDetail);
+    const wrapper = mountDetail();
     await flushPromises();
 
     expect(ScanSoloPipelineOpportunitiesAPI.show).toHaveBeenCalledWith(7);
-
     const items = wrapper.findAll('[data-testid="opportunity-history-item"]');
     expect(items).toHaveLength(2);
-
     expect(items[0].find('[data-testid="history-from-stage"]').text()).toBe(
-      'novo_lead'
+      'Novo Lead'
     );
     expect(items[0].find('[data-testid="history-to-stage"]').text()).toBe(
-      'em_contato'
+      'Em Contato'
     );
     expect(items[1].find('[data-testid="history-from-stage"]').text()).toBe(
-      'em_contato'
+      'Em Contato'
     );
     expect(items[1].find('[data-testid="history-to-stage"]').text()).toBe(
-      'em_qualificacao'
+      'Em Qualificação'
     );
+    expect(
+      items[0].find('[data-testid="history-created-at"]').attributes('title')
+    ).toBe('01/01/2026 08:00');
   });
 
   it('shows the related contact and navigates to the related conversation', async () => {
-    ScanSoloPipelineOpportunitiesAPI.show.mockResolvedValue({
-      data: seededOpportunity,
-    });
-
-    const wrapper = mount(OpportunityDetail);
+    const wrapper = mountDetail();
     await flushPromises();
 
     expect(
       wrapper.find('[data-testid="opportunity-contact-name"]').text()
     ).toBe('Ada Lovelace');
+    expect(wrapper.find('[data-testid="opportunity-stage"]').text()).toContain(
+      'Em Qualificação'
+    );
 
     await wrapper
       .find('[data-testid="opportunity-conversation-link"]')
@@ -109,7 +125,7 @@ describe('OpportunityDetail', () => {
       data: { ...seededOpportunity, stage_history: [] },
     });
 
-    const wrapper = mount(OpportunityDetail);
+    const wrapper = mountDetail();
     await flushPromises();
 
     expect(
@@ -118,5 +134,39 @@ describe('OpportunityDetail', () => {
     expect(
       wrapper.find('[data-testid="opportunity-history-list"]').exists()
     ).toBe(false);
+  });
+
+  it('hides owner id and ISO timestamps from agents and shows them to admins collapsed', async () => {
+    const agentView = mountDetail({ role: 'agent' });
+    await flushPromises();
+    expect(agentView.html()).not.toMatch(ISO_PATTERN);
+    expect(agentView.find('[data-testid="technical-details"]').exists()).toBe(
+      false
+    );
+
+    const adminView = mountDetail();
+    await flushPromises();
+    const details = adminView.find('[data-testid="technical-details"]');
+    expect(details.attributes('open')).toBeUndefined();
+    expect(details.text()).toContain('42');
+    expect(details.text()).toMatch(ISO_PATTERN);
+  });
+
+  it('renders the loading and error states (UI-09)', async () => {
+    ScanSoloPipelineOpportunitiesAPI.show.mockReturnValueOnce(
+      new Promise(() => {})
+    );
+    const loading = mountDetail();
+    await flushPromises();
+    expect(loading.find('[data-testid="list-state-loading"]').exists()).toBe(
+      true
+    );
+
+    ScanSoloPipelineOpportunitiesAPI.show.mockRejectedValueOnce(
+      new Error('boom')
+    );
+    const failed = mountDetail();
+    await flushPromises();
+    expect(failed.find('[data-testid="list-state-error"]').exists()).toBe(true);
   });
 });

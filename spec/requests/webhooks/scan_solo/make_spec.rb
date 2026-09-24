@@ -2,16 +2,24 @@
 
 require 'rails_helper'
 
-RSpec.describe Webhooks::ScanSolo::MakeController, type: :request do
+RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:inbound_secret) { 'make-inbound-secret' }
   let(:correlation_id) { SecureRandom.uuid }
   let(:idempotency_key) { SecureRandom.uuid }
 
+  let(:contact) { create(:contact, account: account) }
+  let(:conversation) { create(:conversation, account: account, contact: contact) }
+  let(:opportunity) do
+    ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
+  end
+  let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
+  let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id) }
+
   let(:make_request) do
     ScanSolo::MakeRequest.create!(
       account: account, correlation_id: correlation_id, idempotency_key: idempotency_key,
-      action: 'proposal.generate', payload: { opportunity_id: 1 }, status: :sent
+      action: 'proposal.generate', payload: { opportunity_id: opportunity.id, proposal_version_id: version.id }, status: :sent
     )
   end
 
@@ -23,8 +31,8 @@ RSpec.describe Webhooks::ScanSolo::MakeController, type: :request do
       status: 'success',
       result: {
         proposal_version_id: 7,
-        artifact_url: 'https://mock-proposals.scansolo.test/7.pdf',
-        total_value: 1500.0,
+        artifact_url: 'https://make.example/proposals/7.pdf',
+        total_value: 4321.5,
         currency: 'BRL',
         valid_until: 1.week.from_now.iso8601
       }
@@ -57,6 +65,7 @@ RSpec.describe Webhooks::ScanSolo::MakeController, type: :request do
 
       expect(response).to have_http_status(:unauthorized)
       expect(make_request.reload.status).to eq('sent')
+      expect(version.reload).to have_attributes(status: 'generating', value: nil)
     end
 
     it 'rejects a callback with a missing signature header' do
@@ -136,6 +145,17 @@ RSpec.describe Webhooks::ScanSolo::MakeController, type: :request do
       expect(make_request.reload.status).to eq('completed')
     end
 
+    it 'RF-38: applies the generate result to the ProposalVersion with the callback value' do
+      make_request
+
+      post_callback(success_payload.to_json)
+
+      expect(response).to have_http_status(:ok)
+      expect(version.reload).to have_attributes(
+        status: 'generated', value: BigDecimal('4321.5'), currency: 'BRL', artifact_url: 'https://make.example/proposals/7.pdf'
+      )
+    end
+
     it 'marks the originating make request failed when the callback reports failure' do
       make_request
       failure_payload = {
@@ -155,6 +175,66 @@ RSpec.describe Webhooks::ScanSolo::MakeController, type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(make_request.reload.status).to eq('failed')
+      expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'provider_unavailable')
+    end
+  end
+
+  describe 'RF-39: a rejected callback does not block a later valid one' do
+    it 'applies a valid callback after a schema-invalid one with the same correlation id' do
+      make_request
+
+      post_callback({ correlation_id: correlation_id, action: 'proposal.generate' }.to_json)
+      expect(response).to have_http_status(:unprocessable_entity)
+
+      post_callback(success_payload.to_json)
+
+      expect(response).to have_http_status(:ok)
+      expect(ScanSolo::MakeCallback.where(correlation_id: correlation_id).pluck(:applied)).to contain_exactly(false, true)
+      expect(version.reload).to be_generated
+    end
+  end
+
+  describe 'RF-38: send callback' do
+    let(:send_correlation_id) { SecureRandom.uuid }
+    let(:admin) { create(:user, account: account, role: :administrator) }
+    let(:version) do
+      proposal.versions.create!(status: :approved, value: 1000, currency: 'BRL', artifact_url: 'https://make.example/a.pdf',
+                                generate_correlation_id: correlation_id, send_correlation_id: send_correlation_id)
+    end
+    let(:send_payload) do
+      {
+        correlation_id: send_correlation_id, idempotency_key: send_correlation_id, action: 'proposal.send', status: 'success',
+        result: { proposal_version_id: version.id, sent_at: Time.current.iso8601, transport_message_id: 'make-1' }
+      }
+    end
+
+    before do
+      ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168])
+      ScanSolo::MakeRequest.create!(
+        account: account, correlation_id: send_correlation_id, idempotency_key: send_correlation_id, action: 'proposal.send',
+        payload: { proposal_version_id: version.id, requested_by_user_id: admin.id }, status: :sent
+      )
+    end
+
+    it 'creates exactly one native template message and moves the stage once delivery is accepted' do
+      expect do
+        perform_enqueued_jobs(only: EventDispatcherJob) { post_callback(send_payload.to_json) }
+      end.to change(conversation.messages.outgoing, :count).by(1)
+
+      expect(response).to have_http_status(:ok)
+      message = version.reload.sent_message
+      expect(message.additional_attributes).to include('scansolo_origin' => 'proposal')
+      expect(message.additional_attributes['template_params']).to include('name' => 'scansolo_proposal_send')
+      expect(version).to be_sent
+      expect(opportunity.reload).to be_proposta_enviada
+      expect(ScanSolo::MakeRequest.find_by(correlation_id: send_correlation_id)).to be_completed
+    end
+
+    it 'does not send a second message on redelivery' do
+      post_callback(send_payload.to_json)
+
+      expect { post_callback(send_payload.to_json) }.not_to change(Message, :count)
+      expect(response).to have_http_status(:ok)
     end
   end
 
@@ -208,6 +288,17 @@ RSpec.describe Webhooks::ScanSolo::MakeController, type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(make_request.reload.status).to eq('completed')
+      expect(version.reload.value).to eq(BigDecimal('4321.5'))
+    end
+
+    it 'changes nothing on a duplicate delivery' do
+      make_request
+      post_callback(success_payload.to_json)
+      applied_at = version.reload.generate_callback_applied_at
+
+      expect { post_callback(success_payload.to_json) }.not_to(change { version.reload.attributes })
+      expect(response).to have_http_status(:ok)
+      expect(version.generate_callback_applied_at).to eq(applied_at)
     end
   end
 end

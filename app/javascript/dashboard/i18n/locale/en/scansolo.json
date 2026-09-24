@@ -57,8 +57,16 @@
         "CONTACT_LABEL": "Contato",
         "CONVERSATION_LINK": "Ver conversa",
         "HISTORY_TITLE": "Histórico de estágios",
-        "HISTORY_EMPTY": "Nenhum histórico de estágio registrado ainda."
-      }
+        "HISTORY_EMPTY": "Nenhum histórico de estágio registrado ainda.",
+        "STAGE_LABEL": "Estágio atual",
+        "OWNER_LABEL": "Responsável",
+        "LAST_INTERACTION_LABEL": "Última interação",
+        "FROM_TO": "{from} → {to}",
+        "INITIAL_STAGE": "Início"
+      },
+      "EMPTY_STATE": "Nenhuma oportunidade no pipeline ainda.",
+      "EMPTY_COLUMN": "Nenhuma oportunidade",
+      "ASSIGNED_OWNER": "Responsável atribuído"
     },
     "AGENT_CENTER": {
       "TITLE": "Agente de IA",
@@ -89,7 +97,8 @@
         "RESPONSE_LIMITS": "Limites de resposta",
         "SERVICE_HOURS": "Horário de atendimento",
         "REQUIRE_PROPOSAL_APPROVAL": "Exigir aprovação de um administrador antes de enviar propostas",
-        "ALLOWED_INBOX_IDS": "Caixas de entrada atendidas pela IA"
+        "ALLOWED_INBOX_IDS": "Caixas de entrada atendidas pela IA",
+        "OPT_OUT_KEYWORDS": "Palavras-chave de opt-out"
       },
       "SECTIONS": {
         "IDENTITY": "Identidade",
@@ -105,7 +114,21 @@
       "CHANNELS": {
         "PLACEHOLDER": "Selecione as caixas de entrada",
         "EMPTY_HELP": "Sem nenhuma caixa de entrada selecionada, a IA não responde em nenhum canal."
-      }
+      },
+      "OPT_OUT_KEYWORDS_HELP": "Uma mensagem igual a uma destas palavras (sem diferenciar maiúsculas, acentos e pontuação) marca o contato como opt-out e cancela os follow-ups.",
+      "OPT_OUT_KEYWORD_PLACEHOLDER": "Nova palavra-chave",
+      "ADD_KEYWORD": "Adicionar",
+      "REMOVE_KEYWORD": "Remover {keyword}",
+      "MODEL_PROVIDER_PLACEHOLDER": "Selecione o provedor",
+      "MODEL_SELECTION_PLACEHOLDER": "Selecione o modelo",
+      "SAVE_SUCCESS": "Rascunho salvo.",
+      "SAVE_ERROR": "Não foi possível salvar o rascunho.",
+      "PUBLISH_SUCCESS": "Configuração publicada.",
+      "PUBLISH_ERROR": "Não foi possível publicar a configuração.",
+      "UNSAVED_CHANGES_MESSAGE": "Há alterações não salvas no rascunho. Deseja sair mesmo assim?",
+      "LEAVE": "Sair sem salvar",
+      "STAY": "Continuar editando",
+      "READ_ONLY_NOTICE": "Somente administradores podem editar a configuração do agente."
     },
     "KNOWLEDGE_CENTER": {
       "TITLE": "Conhecimento",
@@ -132,7 +155,21 @@
       "RETRIEVAL_SIMULATOR_TITLE": "Simulador de busca",
       "RUN_RETRIEVAL_TEST": "Testar busca",
       "SOURCE_ID_LABEL": "Fonte",
-      "SIMILARITY_LABEL": "Similaridade"
+      "SIMILARITY_LABEL": "Similaridade",
+      "EMPTY_STATE": "Nenhuma fonte cadastrada ainda.",
+      "INDEX_STATUS_LABEL": "Indexação",
+      "CHUNK_COUNT_LABEL": "Trechos",
+      "INDEXED_AT_LABEL": "Indexada",
+      "NOT_INDEXED": "Ainda não indexada",
+      "INDEX_ERROR_LABEL": "Último erro",
+      "DELETE_CONFIRM_MESSAGE": "Excluir a fonte “{title}” remove esse conteúdo das respostas da IA. Deseja confirmar?",
+      "DELETE_CONFIRM": "Excluir fonte",
+      "CREATE_SUCCESS": "Fonte adicionada. A indexação começou.",
+      "UPDATE_SUCCESS": "Fonte atualizada.",
+      "REINDEX_SUCCESS": "Reindexação solicitada.",
+      "DELETE_SUCCESS": "Fonte excluída.",
+      "READ_ONLY_NOTICE": "Somente administradores podem alterar a base de conhecimento.",
+      "RETRIEVAL_EMPTY": "Nenhum trecho encontrado para essa pergunta."
     },
     "HANDOFF_BANNER": {
       "STATES": {
@@ -164,7 +201,40 @@
       },
       "PAUSE": "Pausar",
       "RESUME": "Retomar",
-      "CANCEL": "Cancelar"
+      "CANCEL": "Cancelar",
+      "CANCEL_CONFIRM_MESSAGE": "Cancelar o follow-up de {name} interrompe todas as tentativas agendadas. Deseja confirmar?",
+      "CANCEL_CONFIRM": "Cancelar follow-up",
+      "KEEP": "Manter",
+      "PAUSE_SUCCESS": "Follow-up pausado.",
+      "RESUME_SUCCESS": "Follow-up retomado.",
+      "CANCEL_SUCCESS": "Follow-up cancelado.",
+      "TEMPLATES": {
+        "TITLE": "Modelos de mensagem do WhatsApp",
+        "DESCRIPTION": "Modelo usado em cada tentativa de follow-up e no envio de proposta, com a situação atual na Meta.",
+        "STAGE_LABEL": "Estágio",
+        "STEP_LABEL": "Tentativa {step}",
+        "PROPOSAL_SEND": "Envio de proposta",
+        "NAME_LABEL": "Modelo",
+        "LANGUAGE_LABEL": "Idioma",
+        "PARAMS_LABEL": "Parâmetros",
+        "NO_PARAMS": "Sem parâmetros",
+        "AVAILABILITY_LABEL": "Disponibilidade",
+        "META_STATUS_LABEL": "Status na Meta",
+        "BLOCK_REASON_LABEL": "Motivo do bloqueio",
+        "LAST_SYNC_LABEL": "Última sincronização",
+        "NEVER_SYNCED": "Nunca sincronizado",
+        "CONVENTION": "Nome padrão (sem mapeamento)",
+        "EDIT": "Editar",
+        "SAVE": "Salvar",
+        "CANCEL": "Cancelar",
+        "ADD_PARAM": "Adicionar parâmetro",
+        "REMOVE_PARAM": "Remover parâmetro",
+        "PARAM_SOURCE_LABEL": "Origem do parâmetro",
+        "PARAM_VALUE_PLACEHOLDER": "Texto fixo",
+        "SAVE_SUCCESS": "Modelo atualizado.",
+        "SAVE_ERROR": "Não foi possível salvar o modelo.",
+        "EMPTY_STATE": "Nenhuma cadência ativa para mapear."
+      }
     },
     "PROPOSALS": {
       "TITLE": "Propostas",
@@ -182,7 +252,21 @@
         "APPROVED": "Aprovada",
         "SENT": "Enviada",
         "FAILED": "Falhou"
-      }
+      },
+      "RETRY": "Tentar novamente",
+      "REPROCESS": "Reprocessar",
+      "INTEGRATION_BLOCKED": "A integração de propostas com o Make ainda não está configurada. Gerar, enviar e tentar novamente ficam indisponíveis até um administrador concluir a configuração.",
+      "FAILURE_REASON_LABEL": "Motivo da falha",
+      "VALUE_LABEL": "Valor",
+      "DEAD_LETTER": "Dead-letter",
+      "SEND_CONFIRM_MESSAGE": "Enviar esta proposta ao cliente pelo WhatsApp? O envio não pode ser desfeito.",
+      "SEND_CONFIRM": "Enviar proposta",
+      "REPROCESS_CONFIRM_MESSAGE": "Esta operação já foi tentada {count} vezes e está em dead-letter. Reprocessar cria uma nova requisição ao Make. Deseja confirmar?",
+      "REPROCESS_CONFIRM": "Reprocessar",
+      "GENERATE_SUCCESS": "Geração de proposta solicitada.",
+      "APPROVE_SUCCESS": "Proposta aprovada.",
+      "SEND_SUCCESS": "Envio de proposta solicitado.",
+      "RETRY_SUCCESS": "Nova tentativa solicitada."
     },
     "EXECUTIONS": {
       "TITLE": "Execuções e auditoria",
@@ -207,7 +291,25 @@
       "EVENT_TYPE_LABEL": "Tipo de evento",
       "SUBJECT_LABEL": "Registro relacionado",
       "ACTOR_LABEL": "Ator",
-      "CREATED_AT_LABEL": "Registrado em"
+      "CREATED_AT_LABEL": "Registrado em",
+      "BLOCK_REASON_LABEL": "Motivo do bloqueio",
+      "LAST_CHECKED_LABEL": "Última verificação",
+      "DELIVERY_EVIDENCE_LABEL": "Entrega",
+      "MESSAGE_CREATED": "Mensagem registrada na conversa",
+      "EXTERNAL_ERROR_LABEL": "Erro do WhatsApp",
+      "TEMPLATE_AVAILABILITY_TITLE": "Disponibilidade dos modelos",
+      "TEMPLATE_AVAILABILITY_EMPTY_STATE": "Nenhum modelo mapeado.",
+      "HANDOFF_EVENTS_TITLE": "Transferências entre IA e humano",
+      "HANDOFF_EVENTS_EMPTY_STATE": "Nenhuma transferência registrada.",
+      "TRIGGER_LABEL": "Origem",
+      "RECENT_ERRORS_TITLE": "Erros recentes",
+      "RECENT_ERRORS_EMPTY_STATE": "Nenhum erro recente.",
+      "KIND_LABEL": "Tipo",
+      "REASON_LABEL": "Motivo",
+      "REPROCESS": "Reprocessar",
+      "REPROCESS_CONFIRM_MESSAGE": "Reprocessar cria uma nova requisição ao Make para esta operação em dead-letter. Deseja confirmar?",
+      "REPROCESS_CONFIRM": "Reprocessar",
+      "REPROCESS_SUCCESS": "Reprocessamento solicitado."
     },
     "TURN_EVIDENCE_VIEWER": {
       "TITLE": "Telemetria e evidências por turno",
@@ -222,8 +324,162 @@
         "INVOCATION_STATUS": "Status da execução",
         "MODEL": "Modelo",
         "TOKENS": "Tokens (entrada / saída)",
-        "FAILURE_REASON": "Motivo de falha"
+        "FAILURE_REASON": "Motivo de falha",
+        "LATENCY": "Latência do modelo",
+        "DELIVERY_STATUS": "Entrega da resposta",
+        "CREATED_AT": "Criado"
+      },
+      "LATENCY_VALUE": "{ms} ms",
+      "NOT_DELIVERED": "Nenhuma resposta enviada",
+      "NO_KNOWLEDGE_EVIDENCE": "Nenhum trecho da base de conhecimento foi usado neste turno.",
+      "SCORE_LABEL": "Similaridade",
+      "NO_ACTION_EVIDENCE": "Nenhuma ação executada neste turno.",
+      "EMPTY_STATE": "Nenhum turno registrado ainda.",
+      "UNTITLED_SOURCE": "Fonte sem título"
+    },
+    "COMMON": {
+      "LOADING": "Carregando…",
+      "LOAD_ERROR": "Não foi possível carregar os dados.",
+      "RETRY": "Tentar novamente",
+      "EMPTY": "Nada por aqui ainda.",
+      "CONFIRM": "Confirmar",
+      "CANCEL": "Cancelar",
+      "ACTION_ERROR": "Não foi possível concluir a ação.",
+      "NOT_AVAILABLE": "—"
+    },
+    "TECHNICAL_DETAILS": {
+      "TITLE": "Detalhes técnicos",
+      "ID": "ID",
+      "CORRELATION_ID": "Correlation id",
+      "IDEMPOTENCY_KEY": "Chave de idempotência",
+      "OWNER_ID": "ID do responsável",
+      "SOURCE_ID": "ID da fonte",
+      "CHUNK_ID": "ID do trecho",
+      "CONTACT_ID": "ID do contato",
+      "CONVERSATION_ID": "ID da conversa",
+      "MESSAGE_ID": "ID da mensagem",
+      "PROPOSAL_VERSION_ID": "ID da versão da proposta",
+      "ACTOR": "Ator",
+      "SUBJECT": "Registro relacionado",
+      "TIMESTAMP": "Data/hora (ISO 8601)",
+      "RAW_CONTEXT": "Contexto enviado ao modelo (JSON)",
+      "RAW_GUARDRAIL": "Resultado do guardrail (JSON)",
+      "RAW_ACTIONS": "Evidência de ação (JSON)",
+      "RAW_PAYLOAD": "Payload (JSON)"
+    },
+    "LABELS": {
+      "TURN_STATUSES": {
+        "PENDING": "Em processamento",
+        "SUPPRESSED": "Suprimido",
+        "SUCCEEDED": "Concluído",
+        "FAILED": "Falhou"
+      },
+      "DELIVERY_STATUSES": {
+        "SENT": "Enviada",
+        "DELIVERED": "Entregue",
+        "READ": "Lida",
+        "FAILED": "Falhou",
+        "PROGRESS": "Enviando"
+      },
+      "INDEX_STATUSES": {
+        "PENDING": "Na fila",
+        "INDEXING": "Indexando",
+        "INDEXED": "Indexada",
+        "FAILED": "Falhou"
+      },
+      "ATTEMPT_RESULTS": {
+        "SCHEDULED": "Agendada",
+        "DISPATCHED": "Enviada ao WhatsApp",
+        "SENT": "Aceita pelo WhatsApp",
+        "SKIPPED": "Ignorada",
+        "FAILED": "Falhou",
+        "CANCELLED": "Cancelada"
+      },
+      "REASONS": {
+        "TEMPLATE_MISSING": "Modelo não encontrado na Meta",
+        "TEMPLATE_REJECTED": "Modelo rejeitado pela Meta",
+        "TEMPLATE_PAUSED": "Modelo pausado pela Meta",
+        "TEMPLATE_PENDING": "Modelo aguardando aprovação da Meta",
+        "TEMPLATE_DISABLED": "Modelo desativado pela Meta",
+        "LANGUAGE_UNAVAILABLE": "Idioma do modelo indisponível",
+        "PARAMS_MISMATCH": "Quantidade de parâmetros diferente do modelo",
+        "SCANSOLO_DISABLED": "ScanSolo desativado na conta",
+        "CONFIG_UNAVAILABLE": "Agente não publicado ou desativado",
+        "INBOX_NOT_ALLOWLISTED": "Caixa de entrada fora da lista da IA",
+        "INBOX_HAS_ACTIVE_BOT": "Caixa de entrada com outro bot ativo",
+        "HUMAN_CONTROLLED": "Conversa em atendimento humano",
+        "OPT_OUT": "Contato pediu opt-out",
+        "CONVERSATION_RESOLVED": "Conversa resolvida",
+        "TIMEOUT": "Tempo de resposta do Make esgotado",
+        "NETWORK_ERROR": "Falha de rede ao chamar o Make",
+        "PROVIDER_UNAVAILABLE": "Make indisponível",
+        "PROVIDER_REJECTED": "Make recusou a requisição",
+        "STALE_PENDING": "Turno expirou sem resposta"
+      },
+      "META_STATUSES": {
+        "APPROVED": "Aprovado",
+        "REJECTED": "Rejeitado",
+        "PAUSED": "Pausado",
+        "PENDING": "Em análise",
+        "DISABLED": "Desativado"
+      },
+      "AVAILABILITY": {
+        "AVAILABLE": "Disponível",
+        "BLOCKED": "Bloqueado"
+      },
+      "HANDOFF_TRIGGERS": {
+        "EXPLICIT": "Manual",
+        "IMPLICIT": "Resposta humana",
+        "AI_ACTION": "Solicitado pela IA"
+      },
+      "HANDOFF_EVENTS": {
+        "TAKEOVER": "Humano assumiu",
+        "RETURN_TO_AI": "Devolvido à IA",
+        "AI_HANDOFF": "IA transferiu para humano"
+      },
+      "ERROR_KINDS": {
+        "AI_TURN": "Turno de IA",
+        "CADENCE_ATTEMPT": "Tentativa de follow-up",
+        "MAKE_CALLBACK": "Callback do Make"
+      },
+      "MAKE_ACTIONS": {
+        "PROPOSAL_GENERATE": "Gerar proposta",
+        "PROPOSAL_SEND": "Enviar proposta"
+      },
+      "CALLBACK_REJECTIONS": {
+        "MALFORMED_JSON": "JSON inválido",
+        "SCHEMA_INVALID": "Formato fora do contrato",
+        "UNMATCHED_REQUEST": "Sem requisição correspondente"
+      },
+      "PARAM_SOURCES": {
+        "CONTACT_NAME": "Nome do contato",
+        "CONTACT_FIRST_NAME": "Primeiro nome do contato",
+        "AGENT_NAME": "Nome do agente",
+        "STAGE_LABEL": "Estágio da oportunidade",
+        "STATIC": "Texto fixo"
+      },
+      "PROVIDERS": {
+        "OPENAI": "OpenAI"
+      },
+      "AI_ACTIONS": {
+        "QUALIFICATION_FIELD": "Campo de qualificação registrado",
+        "STAGE_TRANSITION": "Mudança de estágio",
+        "PRIVATE_NOTE": "Nota privada",
+        "CADENCE_SIGNAL": "Sinal de follow-up",
+        "HUMAN_HANDOFF": "Transferência para humano",
+        "PROPOSAL_GENERATE": "Geração de proposta"
       }
+    },
+    "CONTACT_OPT_OUT": {
+      "TITLE": "Opt-out de follow-ups",
+      "OPTED_OUT": "Este contato pediu para não receber mensagens automáticas. Nenhum follow-up é enviado.",
+      "NOT_OPTED_OUT": "Este contato recebe follow-ups normalmente.",
+      "REMOVE": "Remover opt-out",
+      "CONFIRM_MESSAGE": "Remover o opt-out volta a permitir follow-ups automáticos para este contato. Faça isso apenas se o contato pediu. Deseja continuar?",
+      "CONFIRM": "Remover opt-out",
+      "CANCEL": "Cancelar",
+      "SUCCESS": "Opt-out removido.",
+      "ERROR": "Não foi possível remover o opt-out."
     }
   }
 }

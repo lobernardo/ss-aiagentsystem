@@ -24,6 +24,7 @@ import ShopifyOrdersList from 'dashboard/components/widgets/conversation/Shopify
 import SidebarActionsHeader from 'dashboard/components-next/SidebarActionsHeader.vue';
 import LinearIssuesList from 'dashboard/components/widgets/conversation/linear/IssuesList.vue';
 import LinearSetupCTA from 'dashboard/components/widgets/conversation/linear/LinearSetupCTA.vue';
+import ContactOptOutCard from 'dashboard/routes/dashboard/scansolo/components/ContactOptOutCard.vue';
 
 const props = defineProps({
   conversationId: {
@@ -56,7 +57,12 @@ const isShopifyFeatureEnabled = computed(
   () => shopifyIntegration.value.enabled
 );
 
-const { isCloudFeatureEnabled } = useAccount();
+const { isCloudFeatureEnabled, currentAccount } = useAccount();
+
+// UI-15: ScanSolo opt-out state, only for ScanSolo-enabled accounts.
+const isScanSoloEnabled = computed(
+  () => !!currentAccount.value?.scansolo_enabled
+);
 
 const isLinearFeatureEnabled = computed(() =>
   isCloudFeatureEnabled(FEATURE_FLAGS.LINEAR)
@@ -147,6 +153,10 @@ onMounted(() => {
       @close="closeContactPanel"
     />
     <ContactInfo :contact="contact" :channel-type="channelType" />
+    <ContactOptOutCard
+      v-if="isScanSoloEnabled && contactId"
+      :contact-id="contactId"
+    />
     <div class="px-2 pb-8 list-group">
       <Draggable
         :list="conversationSidebarItems"

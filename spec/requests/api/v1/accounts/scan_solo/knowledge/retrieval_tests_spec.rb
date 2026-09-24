@@ -30,6 +30,27 @@ RSpec.describe 'ScanSolo Knowledge Retrieval Tests API (CT-03)', type: :request 
       expect(body['results'].first['source_id']).to eq(source.id)
     end
 
+    it 'rejects top_k above 20 with a 422 (RNF-06)' do
+      expect(ScanSolo::Knowledge::RetrievalService).not_to receive(:call)
+
+      post base_path, params: { query: 'garantia', top_k: 21 }, headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body['errors']).to include('top_k must be an integer between 1 and 20')
+    end
+
+    it 'accepts top_k of 20' do
+      post base_path, params: { query: 'garantia', top_k: 20 }, headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:success)
+    end
+
+    it 'rejects a non-integer top_k with a 422' do
+      post base_path, params: { query: 'garantia', top_k: '5' }, headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+    end
+
     it 'rejects a blank query with a 422' do
       post base_path, params: { query: '' }, headers: agent.create_new_auth_token, as: :json
 

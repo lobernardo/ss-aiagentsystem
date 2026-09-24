@@ -35,6 +35,20 @@ RSpec.describe ScanSolo::Make::DeadLetterQuery do
       expect(described_class.call(account: account)).not_to include(recovered_request)
     end
 
+    it 'excludes a dead letter superseded by a later retry of the same operation' do
+      threshold = ScanSolo::MakeRequest::DEAD_LETTER_RETRY_THRESHOLD
+      superseded = ScanSolo::MakeRequest.create!(
+        account: account, correlation_id: SecureRandom.uuid, idempotency_key: SecureRandom.uuid, action: 'proposal.generate',
+        payload: { proposal_version_id: 9 }, status: :failed, retry_count: threshold
+      )
+      ScanSolo::MakeRequest.create!(
+        account: account, correlation_id: SecureRandom.uuid, idempotency_key: SecureRandom.uuid, action: 'proposal.generate',
+        payload: { proposal_version_id: 9 }, status: :sent, retry_count: threshold + 1
+      )
+
+      expect(described_class.call(account: account)).not_to include(superseded)
+    end
+
     it 'scopes results to the given account only' do
       other_accounts_dead_letter = make_request(account: other_account, status: :failed,
                                                 retry_count: ScanSolo::MakeRequest::DEAD_LETTER_RETRY_THRESHOLD)

@@ -63,7 +63,7 @@ RSpec.describe 'ScanSolo attachment upload path reuse audit' do
     end
 
     expect(attach_call_sites.keys.map { |file| relative_to_root(file) })
-      .to eq(['app/controllers/api/v1/accounts/scan_solo/knowledge/sources_controller.rb'])
+      .to eq(['app/services/scan_solo/knowledge/source_write_service.rb'])
   end
 end
 # rubocop:enable RSpec/DescribeClass

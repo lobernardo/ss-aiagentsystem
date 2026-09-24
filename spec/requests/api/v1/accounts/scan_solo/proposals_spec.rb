@@ -58,7 +58,9 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
            headers: agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:success)
-      expect(response.parsed_body['status']).to eq('sent')
+      # RF-41: the native proposal message exists; `sent` waits for delivery acceptance.
+      expect(version.reload.sent_message).to be_present
+      expect(response.parsed_body['status']).to eq('generated')
     end
 
     it 'rejects sending a stale version (RF-77)' do
@@ -100,6 +102,64 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
     end
   end
 
+  describe 'RF-40/RF-42: retry through Make, dead letter and reprocess' do
+    let!(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
+    let(:correlation_id) { SecureRandom.uuid }
+    let!(:version) do
+      proposal.versions.create!(status: :failed, failure_reason: 'timeout', generate_correlation_id: correlation_id)
+    end
+    let(:scenario_url) { 'https://hook.make.example/scenario-webhook' }
+
+    before do
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :scenario_url).and_return(scenario_url)
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :secret).and_return('make-secret')
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :inbound_signing_secret).and_return('make-inbound')
+      stub_request(:post, scenario_url).to_return(status: 502)
+      ScanSolo::MakeRequest.create!(account: account, correlation_id: correlation_id, idempotency_key: correlation_id,
+                                    action: 'proposal.generate', payload: { proposal_version_id: version.id }, status: :failed)
+    end
+
+    def retry_proposal(confirm_reprocess: false)
+      post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}/retry",
+           params: { proposal_version_id: version.id, confirm_reprocess: confirm_reprocess }, headers: admin.create_new_auth_token, as: :json
+    end
+
+    it 'lists the operation in the executions dead letters after 3 failed retries and rejects a 4th plain retry' do
+      3.times do
+        retry_proposal
+        expect(response).to have_http_status(:success)
+      end
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/executions", headers: admin.create_new_auth_token, as: :json
+      dead_letters = response.parsed_body.dig('make_errors', 'dead_letters')
+      expect(dead_letters.pluck('correlation_id')).to eq([version.reload.generate_correlation_id])
+
+      expect { retry_proposal }.not_to change(ScanSolo::MakeRequest, :count)
+      expect(response).to have_http_status(:unprocessable_entity)
+    end
+
+    it 'reprocesses a dead letter with confirmation through a new MakeRequest' do
+      3.times { retry_proposal }
+
+      expect { retry_proposal(confirm_reprocess: true) }.to change(ScanSolo::MakeRequest, :count).by(1)
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['retry_count']).to eq(4)
+    end
+
+    it 'exposes failure_reason, correlation_id, retry_count and dead_letter on the failed version' do
+      retry_proposal
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}", headers: agent.create_new_auth_token, as: :json
+
+      body = response.parsed_body
+      expect(body).to include('integration_state' => 'configured', 'owner_id' => agent.id)
+      expect(body['versions'].first).to include(
+        'status' => 'failed', 'failure_reason' => 'provider_unavailable', 'correlation_id' => version.reload.generate_correlation_id,
+        'retry_count' => 1, 'dead_letter' => false
+      )
+    end
+  end
+
   describe 'authorization and production integration gates' do
     let!(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
     let!(:version) { proposal.versions.create!(status: :failed, failure_reason: 'timeout') }
@@ -122,6 +182,23 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
                             headers: admin.create_new_auth_token, as: :json
       expect(response).to have_http_status(:success)
       expect(version.reload).to be_generated
+    end
+
+    it 'rejects a retry without a boolean confirm_reprocess (CT-04 boundary)' do
+      post "#{path}/retry", params: { proposal_version_id: version.id, confirm_reprocess: 'yes' },
+                            headers: admin.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(version.reload).to be_failed
+    end
+
+    it 'returns 422 for a non-retryable failure reason' do
+      version.update!(failure_reason: 'template_missing')
+
+      post "#{path}/retry", params: { proposal_version_id: version.id, confirm_reprocess: false },
+                            headers: admin.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
     end
 
     it 'blocks generate, send and retry in production without writing proposal or request rows' do

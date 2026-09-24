@@ -232,7 +232,7 @@ Requests (`spec/requests/api/v1/accounts/scan_solo/knowledge/*_spec.rb`):
 - Responses: invalid/missing signature -> 401, nothing stored; malformed JSON / schema invalid / unmatched request -> 422 + `MakeCallback(applied: false, rejection_reason)`; duplicate `correlation_id` -> 200, no reapply; valid -> 200, `MakeCallback(applied: true)`, `MakeRequest` -> `completed` (success) or `failed`.
 - Rate limit: Rack::Attack `webhooks/scan_solo/make`, `RATE_LIMIT_SCANSOLO_MAKE_CALLBACK` (default 60/min/IP).
 
-Payload (`spec/requests/webhooks/scan_solo/make_controller_spec.rb`):
+Payload (`spec/requests/webhooks/scan_solo/make_spec.rb`):
 
 ```json
 {

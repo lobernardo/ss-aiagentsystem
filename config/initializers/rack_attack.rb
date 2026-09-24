@@ -342,14 +342,35 @@ class Rack::Attack
     "#{user_identifier}:#{match_data[:account_id]}" if user_identifier.present?
   end
 
+  ## ScanSolo limits are read per request so an ENV change applies without a
+  ## code change; an empty variable (as shipped in .env.example) falls back to
+  ## the default. AI-turn invocation and manual cadence-enrollment frequency
+  ## are intentionally left unthrottled.
+  scansolo_limit = ->(name, default) { ->(_req) { (ENV[name].presence || default).to_i } }
+
   ## Prevent abuse of the ScanSolo Make inbound-callback endpoint (RNF-05).
-  ## This is the sole unauthenticated-caller-reachable ScanSolo endpoint, so
-  ## it is the only one throttled here -- AI-turn invocation and manual
-  ## cadence-enrollment frequency are intentionally left unthrottled by this
-  ## SPEC.
-  throttle('webhooks/scan_solo/make',
-           limit: ENV.fetch('RATE_LIMIT_SCANSOLO_MAKE_CALLBACK', '60').to_i, period: 1.minute) do |req|
+  throttle('webhooks/scan_solo/make', limit: scansolo_limit.call('RATE_LIMIT_SCANSOLO_MAKE_CALLBACK', 60), period: 1.minute) do |req|
     req.ip if req.path_without_extensions == '/webhooks/scan_solo/make' && req.post?
+  end
+
+  ## ScanSolo administrative writes, per account (RF-49, RNF-06).
+  scansolo_account = lambda do |req, pattern, methods|
+    match_data = %r{\A/api/v1/accounts/(?<account_id>\d+)/scan_solo/#{pattern}\z}.match(req.path_without_extensions)
+    match_data[:account_id] if match_data.present? && methods.include?(req.request_method)
+  end
+
+  throttle('scan_solo/knowledge_writes', limit: scansolo_limit.call('RATE_LIMIT_SCANSOLO_KNOWLEDGE_WRITES', 20), period: 1.minute) do |req|
+    scansolo_account.call(req, 'knowledge/sources', %w[POST]) ||
+      scansolo_account.call(req, 'knowledge/sources/\d+', %w[PATCH PUT]) ||
+      scansolo_account.call(req, 'knowledge/sources/\d+/reindex', %w[POST])
+  end
+
+  throttle('scan_solo/retrieval_tests', limit: scansolo_limit.call('RATE_LIMIT_SCANSOLO_RETRIEVAL_TESTS', 30), period: 1.minute) do |req|
+    scansolo_account.call(req, 'knowledge/retrieval_tests', %w[POST])
+  end
+
+  throttle('scan_solo/publish', limit: scansolo_limit.call('RATE_LIMIT_SCANSOLO_PUBLISH', 10), period: 1.minute) do |req|
+    scansolo_account.call(req, 'ai_agent_config/publish', %w[POST])
   end
 
   ## ----------------------------------------------- ##

@@ -76,6 +76,33 @@ RSpec.describe 'ScanSolo Executions API', type: :request do
       expect(response.parsed_body['audit_events'].pluck('id')).to include(audit_event.id)
     end
 
+    it 'exposes every CT-10 feed kind with its listed fields (RF-61)' do
+      enrollment = ScanSolo::CadenceEnrollment.create!(opportunity: opportunity, cadence_definition: cadence_definition, status: :active,
+                                                       current_step: 1)
+      ScanSolo::CadenceAttempt.create!(enrollment: enrollment, step: 1, cadence_version: 1, template_reference: 't1', scheduled_at: 1.hour.ago,
+                                       result: :failed, external_error: 'meta rejected', last_block_reason: 'template_paused',
+                                       last_checked_at: 2.hours.ago)
+      extension = ScanSolo::ConversationExtension.resolve_for(conversation)
+      ScanSolo::AuditLogger.record!(subject: extension, event_type: 'handoff.takeover', actor: agent, correlation_id: SecureRandom.uuid,
+                                    payload: { conversation_id: conversation.id, trigger: 'human_reply' })
+      message = create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact)
+      ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid, invocation_status: :failed,
+                               failure_reason: 'StandardError: boom')
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/executions", headers: agent.create_new_auth_token, as: :json
+
+      body = response.parsed_body
+      expect(body.keys).to include('cadence_evidence', 'template_availability', 'make_errors', 'handoff_events', 'recent_errors', 'audit_events')
+      expect(body['cadence_evidence'].first['attempts'].first).to include(
+        'message_id' => nil, 'last_block_reason' => 'template_paused', 'external_error' => 'meta rejected'
+      )
+      expect(body['cadence_evidence'].first['attempts'].first['last_checked_at']).to be_present
+      expect(body['template_availability'].first).to include('stage' => 'em_qualificacao', 'step' => 1, 'availability' => 'available')
+      expect(body['handoff_events'].first).to include('conversation_id' => conversation.id, 'trigger' => 'implicit', 'actor_id' => agent.id)
+      expect(body['recent_errors'].pluck('kind')).to contain_exactly('ai_turn', 'cadence_attempt')
+      expect(body['recent_errors'].length).to be <= 100
+    end
+
     it "does not leak another account's cadence evidence" do
       other_account = create(:account, scansolo_enabled: true)
       other_contact = create(:contact, account: other_account)

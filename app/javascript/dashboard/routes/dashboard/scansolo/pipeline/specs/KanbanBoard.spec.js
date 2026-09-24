@@ -1,5 +1,7 @@
-import { mount, flushPromises } from '@vue/test-utils';
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import { createStore } from 'vuex';
+import { withFullI18n } from 'test-i18n';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
 import KanbanBoard from '../KanbanBoard.vue';
 
@@ -10,14 +12,16 @@ vi.mock('dashboard/api/scansoloPipelineOpportunities', () => ({
   },
 }));
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: key => key }),
-}));
+withFullI18n();
+enableAutoUnmount(afterEach);
+
+const ISO_PATTERN = /\d{4}-\d{2}-\d{2}T/;
 
 const seededOpportunity = {
   id: 1,
   account_id: 1,
   contact_id: 1,
+  contact_name: 'Maria Silva',
   conversation_id: 1,
   owner_id: 42,
   stage: 'novo_lead',
@@ -26,6 +30,24 @@ const seededOpportunity = {
   created_at: '2026-01-01T09:00:00Z',
   updated_at: '2026-01-01T09:00:00Z',
 };
+
+const getAgentsAction = vi.fn();
+
+const mountBoard = ({ role = 'administrator' } = {}) =>
+  mount(KanbanBoard, {
+    global: {
+      plugins: [
+        createStore({
+          getters: {
+            getCurrentRole: () => role,
+            getCurrentUser: () => ({ id: 1 }),
+            'agents/getAgents': () => [{ id: 42, name: 'Carla Vendas' }],
+          },
+          actions: { 'agents/get': getAgentsAction },
+        }),
+      ],
+    },
+  });
 
 const cardFor = (wrapper, opportunityId) =>
   wrapper.find(
@@ -44,25 +66,53 @@ describe('KanbanBoard', () => {
   });
 
   it('renders all five required data points for a seeded opportunity', async () => {
-    const wrapper = mount(KanbanBoard);
+    const wrapper = mountBoard();
     await flushPromises();
 
     const card = cardFor(wrapper, seededOpportunity.id);
     expect(card.exists()).toBe(true);
-    expect(card.find('[data-testid="card-stage"]').text()).toContain(
-      'SCANSOLO.PIPELINE_BOARD.STAGES.NOVO_LEAD'
+    expect(card.find('[data-testid="card-stage"]').text()).toBe('Novo Lead');
+    expect(card.find('[data-testid="card-owner"]').text()).toBe(
+      'Responsável: Carla Vendas'
     );
-    expect(card.find('[data-testid="card-owner"]').text()).toBe('42');
-    expect(card.find('[data-testid="card-last-interaction"]').text()).toContain(
-      '2026-01-01'
-    );
-    expect(card.find('[data-testid="card-next-follow-up"]').text()).toContain(
-      '2026-01-03'
-    );
+    expect(
+      card.find('[data-testid="card-last-interaction"]').attributes('title')
+    ).toBe('01/01/2026 10:00');
+    expect(
+      card.find('[data-testid="card-next-follow-up"]').attributes('title')
+    ).toBe('03/01/2026 10:00');
     // The stale <p> always renders (even if empty) so its presence is the
     // fifth data point, independent of whether this particular fixture is
     // stale.
     expect(card.find('[data-testid="card-stale"]').exists()).toBe(true);
+    expect(getAgentsAction).toHaveBeenCalled();
+  });
+
+  it('shows agents 0 technical ids or ISO strings', async () => {
+    const wrapper = mountBoard({ role: 'agent' });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="technical-details"]').exists()).toBe(
+      false
+    );
+    expect(wrapper.html()).not.toMatch(ISO_PATTERN);
+    expect(
+      cardFor(wrapper, seededOpportunity.id)
+        .find('[data-testid="card-owner"]')
+        .text()
+    ).not.toContain('42');
+  });
+
+  it('shows administrators the ids and raw timestamp inside the collapsed block', async () => {
+    const wrapper = mountBoard();
+    await flushPromises();
+
+    const details = cardFor(wrapper, seededOpportunity.id).find(
+      '[data-testid="technical-details"]'
+    );
+    expect(details.attributes('open')).toBeUndefined();
+    expect(details.text()).toContain('42');
+    expect(details.text()).toMatch(ISO_PATTERN);
   });
 
   it('only moves the card to the target column after server confirmation (200)', async () => {
@@ -70,7 +120,7 @@ describe('KanbanBoard', () => {
       data: { ...seededOpportunity, stage: 'em_contato' },
     });
 
-    const wrapper = mount(KanbanBoard);
+    const wrapper = mountBoard();
     await flushPromises();
 
     expect(
@@ -96,7 +146,7 @@ describe('KanbanBoard', () => {
       response: { status: 422 },
     });
 
-    const wrapper = mount(KanbanBoard);
+    const wrapper = mountBoard();
     await flushPromises();
 
     wrapper.vm.onDragStart(seededOpportunity.id);
@@ -113,5 +163,30 @@ describe('KanbanBoard', () => {
         .find(`[data-opportunity-id="${seededOpportunity.id}"]`)
         .exists()
     ).toBe(false);
+  });
+
+  it('renders the loading, empty and error states (UI-09)', async () => {
+    ScanSoloPipelineOpportunitiesAPI.get.mockReturnValueOnce(
+      new Promise(() => {})
+    );
+    const loading = mountBoard();
+    await flushPromises();
+    expect(loading.find('[data-testid="list-state-loading"]').exists()).toBe(
+      true
+    );
+
+    ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValueOnce({ data: [] });
+    const empty = mountBoard();
+    await flushPromises();
+    expect(empty.find('[data-testid="list-state-empty"]').text()).toBe(
+      'Nenhuma oportunidade no pipeline ainda.'
+    );
+
+    ScanSoloPipelineOpportunitiesAPI.get.mockRejectedValueOnce(
+      new Error('boom')
+    );
+    const failed = mountBoard();
+    await flushPromises();
+    expect(failed.find('[data-testid="list-state-error"]').exists()).toBe(true);
   });
 });

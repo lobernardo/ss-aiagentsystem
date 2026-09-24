@@ -26,6 +26,14 @@ class ScanSoloProposalsAPI extends ApiClient {
       correlation_id: correlationId,
     });
   }
+
+  // CT-04: `confirm_reprocess: true` is required for a dead-lettered operation.
+  retry(proposalId, proposalVersionId, confirmReprocess) {
+    return axios.post(`${this.url}/${proposalId}/retry`, {
+      proposal_version_id: proposalVersionId,
+      confirm_reprocess: confirmReprocess,
+    });
+  }
 }
 
 export default new ScanSoloProposalsAPI();

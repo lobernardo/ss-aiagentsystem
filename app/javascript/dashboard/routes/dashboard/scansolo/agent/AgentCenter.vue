@@ -1,23 +1,44 @@
 <script setup>
 import ScanSoloPageLayout from 'dashboard/routes/dashboard/scansolo/components/ScanSoloPageLayout.vue';
-import { computed, onMounted, reactive, ref } from 'vue';
+import ScanSoloListState from 'dashboard/routes/dashboard/scansolo/components/ScanSoloListState.vue';
+import ScanSoloConfirmDialog from 'dashboard/routes/dashboard/scansolo/components/ScanSoloConfirmDialog.vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { onBeforeRouteLeave } from 'vue-router';
+import { useAlert } from 'dashboard/composables';
 import { useScansoloAiAgentConfigStore } from 'dashboard/store/scansolo/aiAgentConfig';
 import { useMapGetter } from 'dashboard/composables/store.js';
 import TagMultiSelectComboBox from 'dashboard/components-next/combobox/TagMultiSelectComboBox.vue';
+import Spinner from 'dashboard/components-next/spinner/Spinner.vue';
+import { useScanSoloRole } from '../composables/useScanSoloRole';
+import { PROVIDER_LABELS } from '../scansoloLabels';
+import { serverErrorMessage } from '../scansoloErrors';
 import {
   AGENT_CENTER_FIELD_LABELS,
   AGENT_CENTER_SECTIONS,
+  DEFAULT_OPT_OUT_KEYWORDS,
   FIELD_TYPES,
+  SELECT_OPTIONS,
 } from './agentCenterFields';
 
 const { t } = useI18n();
 const store = useScansoloAiAgentConfigStore();
 const inboxes = useMapGetter('inboxes/getInboxes');
+const { isAdministrator } = useScanSoloRole();
 
 const inboxOptions = computed(() =>
   inboxes.value.map(inbox => ({ value: inbox.id, label: inbox.name }))
 );
+
+const selectOptions = computed(() => ({
+  [SELECT_OPTIONS.PROVIDERS]: Object.entries(PROVIDER_LABELS).map(
+    ([value, labelKey]) => ({ value, label: t(labelKey) })
+  ),
+  [SELECT_OPTIONS.MODELS]: store.availableModels.map(model => ({
+    value: model,
+    label: model,
+  })),
+}));
 
 const emptyForm = () => ({
   name: '',
@@ -39,20 +60,65 @@ const emptyForm = () => ({
   serviceHours: '',
   requireProposalApproval: true,
   allowedInboxIds: [],
+  optOutKeywords: [...DEFAULT_OPT_OUT_KEYWORDS],
 });
 
 const form = reactive(emptyForm());
+const savedSnapshot = ref(JSON.stringify(form));
+const loadError = ref(false);
 const showPublishConfirm = ref(false);
+const newKeyword = ref('');
+const pendingLeave = ref(null);
+
+const isDirty = computed(() => JSON.stringify(form) !== savedSnapshot.value);
+const isBusy = computed(
+  () => store.uiFlags.updatingDraft || store.uiFlags.publishing
+);
 
 const applyDraftToForm = draft => {
   if (!draft) return;
   Object.assign(form, emptyForm(), draft);
+  savedSnapshot.value = JSON.stringify(form);
 };
 
-onMounted(async () => {
-  await store.fetch();
-  applyDraftToForm(store.draft);
+const loadConfig = async () => {
+  loadError.value = false;
+  try {
+    await store.fetch();
+    applyDraftToForm(store.draft);
+  } catch (error) {
+    loadError.value = true;
+  }
+};
+
+// UI-06: closing the tab with unsaved draft changes asks the browser to confirm.
+const onBeforeUnload = event => {
+  if (!isDirty.value) return;
+  event.preventDefault();
+  event.returnValue = '';
+};
+
+onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload);
+  loadConfig();
 });
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload);
+});
+
+// UI-06: leaving the route with unsaved draft changes waits for the user.
+onBeforeRouteLeave(() => {
+  if (!isDirty.value) return true;
+  return new Promise(resolve => {
+    pendingLeave.value = resolve;
+  });
+});
+
+const resolveLeave = leave => {
+  pendingLeave.value?.(leave);
+  pendingLeave.value = null;
+};
 
 const hasPublishedVersion = computed(() => !!store.published);
 
@@ -64,29 +130,49 @@ const onArrayFieldInput = (field, value) => {
     .filter(Boolean);
 };
 
+// UI-14: opt-out keyword list editing.
+const addKeyword = () => {
+  const keyword = newKeyword.value.trim();
+  if (!keyword) return;
+  if (!form.optOutKeywords.includes(keyword)) form.optOutKeywords.push(keyword);
+  newKeyword.value = '';
+};
+
+const removeKeyword = keyword => {
+  form.optOutKeywords = form.optOutKeywords.filter(entry => entry !== keyword);
+};
+
+const draftPayload = () => ({
+  name: form.name,
+  enabled: form.enabled,
+  model_provider: form.modelProvider,
+  model_selection: form.modelSelection,
+  role: form.role,
+  objective: form.objective,
+  persona: form.persona,
+  tone: form.tone,
+  instructions: form.instructions,
+  service_rules: form.serviceRules,
+  qualification_playbook: form.qualificationPlaybook,
+  required_qualification_fields: form.requiredQualificationFields,
+  restricted_information: form.restrictedInformation,
+  forbidden_subjects: form.forbiddenSubjects,
+  transfer_criteria: form.transferCriteria,
+  response_limits: form.responseLimits,
+  service_hours: form.serviceHours,
+  require_proposal_approval: form.requireProposalApproval,
+  allowed_inbox_ids: form.allowedInboxIds,
+  opt_out_keywords: form.optOutKeywords,
+});
+
 const saveDraft = async () => {
-  const draft = await store.updateDraft({
-    name: form.name,
-    enabled: form.enabled,
-    model_provider: form.modelProvider,
-    model_selection: form.modelSelection,
-    role: form.role,
-    objective: form.objective,
-    persona: form.persona,
-    tone: form.tone,
-    instructions: form.instructions,
-    service_rules: form.serviceRules,
-    qualification_playbook: form.qualificationPlaybook,
-    required_qualification_fields: form.requiredQualificationFields,
-    restricted_information: form.restrictedInformation,
-    forbidden_subjects: form.forbiddenSubjects,
-    transfer_criteria: form.transferCriteria,
-    response_limits: form.responseLimits,
-    service_hours: form.serviceHours,
-    require_proposal_approval: form.requireProposalApproval,
-    allowed_inbox_ids: form.allowedInboxIds,
-  });
-  applyDraftToForm(draft);
+  try {
+    const draft = await store.updateDraft(draftPayload());
+    applyDraftToForm(draft);
+    useAlert(t('SCANSOLO.AGENT_CENTER.SAVE_SUCCESS'));
+  } catch (error) {
+    useAlert(serverErrorMessage(error, t('SCANSOLO.AGENT_CENTER.SAVE_ERROR')));
+  }
 };
 
 const requestPublish = () => {
@@ -101,8 +187,15 @@ const cancelPublish = () => {
 // directly from the "Publicar" button click, so an accidental click on the
 // main action never publishes an unreviewed draft.
 const confirmPublish = async () => {
-  await store.publish();
   showPublishConfirm.value = false;
+  try {
+    await store.publish();
+    useAlert(t('SCANSOLO.AGENT_CENTER.PUBLISH_SUCCESS'));
+  } catch (error) {
+    useAlert(
+      serverErrorMessage(error, t('SCANSOLO.AGENT_CENTER.PUBLISH_ERROR'))
+    );
+  }
 };
 
 defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
@@ -132,95 +225,193 @@ defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
         </span>
       </div>
 
-      <p
-        v-if="hasPublishedVersion"
-        data-testid="agent-draft-indicator"
-        class="text-sm text-n-slate-11 mb-6"
+      <ScanSoloListState
+        :loading="store.uiFlags.fetching"
+        :error="loadError"
+        @retry="loadConfig"
       >
-        {{ t('SCANSOLO.AGENT_CENTER.DRAFT_UNPUBLISHED_NOTICE') }}
-      </p>
-
-      <form class="space-y-6" @submit.prevent="saveDraft">
-        <section
-          v-for="section in AGENT_CENTER_SECTIONS"
-          :key="section.key"
-          :data-testid="`section-${section.key}`"
-          class="space-y-4"
+        <p
+          v-if="hasPublishedVersion"
+          data-testid="agent-draft-indicator"
+          class="text-sm text-n-slate-11 mb-6"
         >
-          <h2 class="text-base font-medium text-n-slate-12">
-            {{ t(section.title) }}
-          </h2>
-          <div v-for="field in section.fields" :key="field.name">
-            <label
-              v-if="field.type === FIELD_TYPES.CHECKBOX"
-              class="flex items-center gap-2 text-sm text-n-slate-12"
-            >
-              <input
-                v-model="form[field.name]"
-                type="checkbox"
-                :data-testid="`field-${field.name}`"
-              />
-              {{ t(AGENT_CENTER_FIELD_LABELS[field.name]) }}
-            </label>
-            <template v-else>
-              <label class="block text-sm text-n-slate-11 mb-1">
-                {{ t(AGENT_CENTER_FIELD_LABELS[field.name]) }}
-              </label>
-              <input
-                v-if="field.type === FIELD_TYPES.TEXT"
-                v-model="form[field.name]"
-                type="text"
-                :data-testid="`field-${field.name}`"
-                class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
-              />
-              <textarea
-                v-else-if="field.type === FIELD_TYPES.TEXTAREA"
-                v-model="form[field.name]"
-                rows="3"
-                :data-testid="`field-${field.name}`"
-                class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
-              />
-              <textarea
-                v-else-if="field.type === FIELD_TYPES.LIST"
-                :value="arrayFieldText(field.name)"
-                rows="3"
-                :data-testid="`field-${field.name}`"
-                class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
-                @input="onArrayFieldInput(field.name, $event.target.value)"
-              />
-              <div
-                v-else-if="field.type === FIELD_TYPES.INBOXES"
-                :data-testid="`field-${field.name}`"
-              >
-                <TagMultiSelectComboBox
-                  v-model="form[field.name]"
-                  :options="inboxOptions"
-                  :placeholder="t('SCANSOLO.AGENT_CENTER.CHANNELS.PLACEHOLDER')"
-                  :message="t('SCANSOLO.AGENT_CENTER.CHANNELS.EMPTY_HELP')"
-                />
-              </div>
-            </template>
-          </div>
-        </section>
+          {{ t('SCANSOLO.AGENT_CENTER.DRAFT_UNPUBLISHED_NOTICE') }}
+        </p>
+        <p
+          v-if="!isAdministrator"
+          data-testid="agent-read-only-notice"
+          class="text-sm text-n-slate-11 mb-6"
+        >
+          {{ t('SCANSOLO.AGENT_CENTER.READ_ONLY_NOTICE') }}
+        </p>
 
-        <div class="flex gap-2 pt-2">
-          <button
-            type="submit"
-            data-testid="save-draft-button"
-            class="rounded-lg bg-n-slate-12 text-n-slate-1 px-4 py-2 text-sm"
-          >
-            {{ t('SCANSOLO.AGENT_CENTER.SAVE_DRAFT') }}
-          </button>
-          <button
-            type="button"
-            data-testid="publish-button"
-            class="rounded-lg border border-n-weak px-4 py-2 text-sm"
-            @click="requestPublish"
-          >
-            {{ t('SCANSOLO.AGENT_CENTER.PUBLISH') }}
-          </button>
-        </div>
-      </form>
+        <form class="space-y-6" @submit.prevent="saveDraft">
+          <fieldset :disabled="!isAdministrator" class="space-y-6">
+            <section
+              v-for="section in AGENT_CENTER_SECTIONS"
+              :key="section.key"
+              :data-testid="`section-${section.key}`"
+              class="space-y-4"
+            >
+              <h2 class="text-base font-medium text-n-slate-12">
+                {{ t(section.title) }}
+              </h2>
+              <div v-for="field in section.fields" :key="field.name">
+                <label
+                  v-if="field.type === FIELD_TYPES.CHECKBOX"
+                  class="flex items-center gap-2 text-sm text-n-slate-12"
+                >
+                  <input
+                    v-model="form[field.name]"
+                    type="checkbox"
+                    :data-testid="`field-${field.name}`"
+                  />
+                  {{ t(AGENT_CENTER_FIELD_LABELS[field.name]) }}
+                </label>
+                <template v-else>
+                  <label class="block text-sm text-n-slate-11 mb-1">
+                    {{ t(AGENT_CENTER_FIELD_LABELS[field.name]) }}
+                  </label>
+                  <input
+                    v-if="field.type === FIELD_TYPES.TEXT"
+                    v-model="form[field.name]"
+                    type="text"
+                    :data-testid="`field-${field.name}`"
+                    class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
+                  />
+                  <select
+                    v-else-if="field.type === FIELD_TYPES.SELECT"
+                    v-model="form[field.name]"
+                    :data-testid="`field-${field.name}`"
+                    class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
+                  >
+                    <option value="" disabled>
+                      {{
+                        field.options === SELECT_OPTIONS.PROVIDERS
+                          ? t(
+                              'SCANSOLO.AGENT_CENTER.MODEL_PROVIDER_PLACEHOLDER'
+                            )
+                          : t(
+                              'SCANSOLO.AGENT_CENTER.MODEL_SELECTION_PLACEHOLDER'
+                            )
+                      }}
+                    </option>
+                    <option
+                      v-for="option in selectOptions[field.options]"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                  <textarea
+                    v-else-if="field.type === FIELD_TYPES.TEXTAREA"
+                    v-model="form[field.name]"
+                    rows="3"
+                    :data-testid="`field-${field.name}`"
+                    class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
+                  />
+                  <textarea
+                    v-else-if="field.type === FIELD_TYPES.LIST"
+                    :value="arrayFieldText(field.name)"
+                    rows="3"
+                    :data-testid="`field-${field.name}`"
+                    class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
+                    @input="onArrayFieldInput(field.name, $event.target.value)"
+                  />
+                  <div
+                    v-else-if="field.type === FIELD_TYPES.KEYWORDS"
+                    :data-testid="`field-${field.name}`"
+                  >
+                    <p class="text-xs text-n-slate-10 mb-2">
+                      {{ t('SCANSOLO.AGENT_CENTER.OPT_OUT_KEYWORDS_HELP') }}
+                    </p>
+                    <ul class="flex flex-wrap gap-2 mb-2">
+                      <li
+                        v-for="keyword in form.optOutKeywords"
+                        :key="keyword"
+                        data-testid="opt-out-keyword"
+                        class="flex items-center gap-1 rounded-full bg-n-alpha-2 px-2 py-0.5 text-xs text-n-slate-12"
+                      >
+                        {{ keyword }}
+                        <button
+                          v-if="isAdministrator"
+                          type="button"
+                          data-testid="remove-opt-out-keyword"
+                          :aria-label="
+                            t('SCANSOLO.AGENT_CENTER.REMOVE_KEYWORD', {
+                              keyword,
+                            })
+                          "
+                          class="text-n-slate-10"
+                          @click="removeKeyword(keyword)"
+                        >
+                          <span class="i-lucide-x size-3" aria-hidden="true" />
+                        </button>
+                      </li>
+                    </ul>
+                    <div v-if="isAdministrator" class="flex gap-2">
+                      <input
+                        v-model="newKeyword"
+                        type="text"
+                        data-testid="new-opt-out-keyword"
+                        :placeholder="
+                          t('SCANSOLO.AGENT_CENTER.OPT_OUT_KEYWORD_PLACEHOLDER')
+                        "
+                        class="flex-1 rounded-lg border border-n-weak px-3 py-2 text-sm"
+                        @keydown.enter.prevent="addKeyword"
+                      />
+                      <button
+                        type="button"
+                        data-testid="add-opt-out-keyword"
+                        class="rounded-lg border border-n-weak px-3 py-2 text-sm"
+                        @click="addKeyword"
+                      >
+                        {{ t('SCANSOLO.AGENT_CENTER.ADD_KEYWORD') }}
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    v-else-if="field.type === FIELD_TYPES.INBOXES"
+                    :data-testid="`field-${field.name}`"
+                  >
+                    <TagMultiSelectComboBox
+                      v-model="form[field.name]"
+                      :options="inboxOptions"
+                      :placeholder="
+                        t('SCANSOLO.AGENT_CENTER.CHANNELS.PLACEHOLDER')
+                      "
+                      :message="t('SCANSOLO.AGENT_CENTER.CHANNELS.EMPTY_HELP')"
+                    />
+                  </div>
+                </template>
+              </div>
+            </section>
+          </fieldset>
+
+          <div v-if="isAdministrator" class="flex items-center gap-2 pt-2">
+            <button
+              type="submit"
+              data-testid="save-draft-button"
+              :disabled="isBusy"
+              class="flex items-center gap-2 rounded-lg bg-n-slate-12 text-n-slate-1 px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Spinner v-if="store.uiFlags.updatingDraft" :size="14" />
+              {{ t('SCANSOLO.AGENT_CENTER.SAVE_DRAFT') }}
+            </button>
+            <button
+              type="button"
+              data-testid="publish-button"
+              :disabled="isBusy"
+              class="flex items-center gap-2 rounded-lg border border-n-weak px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              @click="requestPublish"
+            >
+              <Spinner v-if="store.uiFlags.publishing" :size="14" />
+              {{ t('SCANSOLO.AGENT_CENTER.PUBLISH') }}
+            </button>
+          </div>
+        </form>
+      </ScanSoloListState>
 
       <div
         v-if="showPublishConfirm"
@@ -251,6 +442,16 @@ defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
           </div>
         </div>
       </div>
+
+      <ScanSoloConfirmDialog
+        data-testid="unsaved-changes-dialog"
+        :show="!!pendingLeave"
+        :message="t('SCANSOLO.AGENT_CENTER.UNSAVED_CHANGES_MESSAGE')"
+        :confirm-label="t('SCANSOLO.AGENT_CENTER.LEAVE')"
+        :cancel-label="t('SCANSOLO.AGENT_CENTER.STAY')"
+        @confirm="resolveLeave(true)"
+        @cancel="resolveLeave(false)"
+      />
     </div>
   </ScanSoloPageLayout>
 </template>

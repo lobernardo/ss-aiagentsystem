@@ -16,28 +16,28 @@ class Api::V1::Accounts::ScanSolo::Knowledge::SourcesController < Api::V1::Accou
   def create
     authorize(::ScanSolo::KnowledgeSource)
 
-    @source = ::ScanSolo::KnowledgeSource.new(source_params.merge(account: Current.account, added_by: Current.user))
-    @source.file.attach(params[:file]) if params[:file].present?
-    @source.save!
+    @source = ::ScanSolo::Knowledge::SourceWriteService.create!(
+      account: Current.account, actor: Current.user, attributes: source_params, file: params[:file]
+    )
 
     render :show
   end
 
   def update
     authorize(@source)
-    @source.update!(update_params)
+    ::ScanSolo::Knowledge::SourceWriteService.update!(source: @source, actor: Current.user, attributes: update_params)
     render :show
   end
 
   def destroy
     authorize(@source)
-    @source.destroy!
+    ::ScanSolo::Knowledge::SourceWriteService.destroy!(source: @source, actor: Current.user)
     head :no_content
   end
 
   def reindex
     authorize(@source, :reindex?)
-    ::ScanSolo::Knowledge::ReindexService.call(source: @source)
+    ::ScanSolo::Knowledge::ReindexService.call(source: @source, actor: Current.user)
     render :show
   end
 

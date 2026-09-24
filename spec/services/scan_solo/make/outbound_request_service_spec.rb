@@ -50,13 +50,41 @@ RSpec.describe ScanSolo::Make::OutboundRequestService do
       expect(request.payload.to_s).not_to include(scenario_secret)
     end
 
-    it 'marks the request failed and increments retry_count on a non-success response' do
-      stub_request(:post, scenario_url).to_return(status: 500, body: 'boom')
+    it 'starts the operation retry count from the caller-provided value' do
+      request = described_class.call(account: account, action: 'proposal.generate', payload: payload,
+                                     correlation_id: correlation_id, idempotency_key: idempotency_key, retry_count: 2)
 
-      request = call
+      expect(request.retry_count).to eq(2)
+    end
 
-      expect(request).to be_failed
-      expect(request.retry_count).to eq(1)
+    {
+      'timeout' => ->(stub) { stub.to_timeout },
+      'network_error' => ->(stub) { stub.to_raise(Errno::ECONNREFUSED) },
+      'provider_unavailable' => ->(stub) { stub.to_return(status: 500, body: 'boom') },
+      'provider_rejected' => ->(stub) { stub.to_return(status: 422, body: 'bad') }
+    }.each do |reason, configure|
+      it "persists the request before the HTTP call and raises DeliveryError(#{reason}) on failure" do
+        configure.call(stub_request(:post, scenario_url))
+
+        expect { call }.to raise_error(ScanSolo::Make::OutboundRequestService::DeliveryError) { |error|
+          expect(error.reason).to eq(reason)
+          expect(error.make_request).to be_failed
+          expect(error.make_request.correlation_id).to eq(correlation_id)
+        }
+        expect(ScanSolo::MakeRequest.find_by(correlation_id: correlation_id).retry_count).to eq(0)
+      end
+    end
+
+    it 'classifies Net::ReadTimeout as a timeout' do
+      stub_request(:post, scenario_url).to_raise(Net::ReadTimeout)
+
+      expect { call }.to raise_error(ScanSolo::Make::OutboundRequestService::DeliveryError) { |error| expect(error.reason).to eq('timeout') }
+    end
+
+    it 'classifies DNS resolution errors as network_error' do
+      stub_request(:post, scenario_url).to_raise(SocketError.new('getaddrinfo: Name or service not known'))
+
+      expect { call }.to raise_error(ScanSolo::Make::OutboundRequestService::DeliveryError) { |error| expect(error.reason).to eq('network_error') }
     end
   end
 

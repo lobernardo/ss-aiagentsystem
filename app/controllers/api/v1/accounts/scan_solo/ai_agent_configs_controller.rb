@@ -12,12 +12,12 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
   def draft
     authorize(@draft)
     validate_draft_params!
-    @draft.update!(draft_params)
+    ::ScanSolo::AiAgent::DraftUpdateService.call(draft: @draft, actor: Current.user, attributes: draft_params)
   end
 
   def publish
     authorize(@draft, :publish?)
-    @published = ::ScanSolo::AiAgent::PublishService.new(account: Current.account).call
+    @published = ::ScanSolo::AiAgent::PublishService.new(account: Current.account, actor: Current.user).call
   end
 
   private

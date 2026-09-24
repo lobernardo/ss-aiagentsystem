@@ -1,8 +1,9 @@
-# RF-84/RF-85/RNF-01: one row per outbound Make integration request (CT-08),
-# written only by ScanSolo::Make::OutboundRequestService (T67). `retry_count`
-# increments on every failed delivery attempt; the `dead_letter` scope
-# (T70) surfaces requests that have kept failing past the retry threshold
-# for the Execuções e auditoria dead-letter view (RF-86).
+# RF-37/RF-40: one row per outbound Make integration request (CT-05),
+# written only by ScanSolo::Make::OutboundRequestService. `retry_count` is the
+# number of retries of the proposal operation this request belongs to
+# (carried forward by ScanSolo::Proposal::RetryPolicy); the `dead_letter`
+# scope surfaces failed requests that reached the retry threshold for the
+# Execuções dead-letter view.
 # == Schema Information
 #
 # Table name: scan_solo_make_requests
@@ -41,4 +42,8 @@ class ScanSolo::MakeRequest < ApplicationRecord
   validates :action, presence: true
 
   scope :dead_letter, -> { failed.where('retry_count >= ?', DEAD_LETTER_RETRY_THRESHOLD) }
+
+  def dead_letter?
+    failed? && retry_count >= DEAD_LETTER_RETRY_THRESHOLD
+  end
 end

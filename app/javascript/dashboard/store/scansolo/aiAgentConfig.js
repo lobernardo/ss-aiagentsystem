@@ -14,6 +14,7 @@ export const useScansoloAiAgentConfigStore = defineStore(
     state: () => ({
       draft: null,
       published: null,
+      availableModels: [],
       uiFlags: {
         fetching: false,
         updatingDraft: false,
@@ -28,6 +29,7 @@ export const useScansoloAiAgentConfigStore = defineStore(
           const { data } = await ScanSoloAiAgentConfigAPI.get();
           this.draft = camelizeConfig(data.draft);
           this.published = camelizeConfig(data.published);
+          this.availableModels = data.available_models || [];
           return { draft: this.draft, published: this.published };
         } finally {
           this.uiFlags.fetching = false;

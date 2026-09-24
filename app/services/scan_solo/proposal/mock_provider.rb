@@ -16,7 +16,7 @@ class ScanSolo::Proposal::MockProvider
 
   # rubocop:disable Metrics/ParameterLists
   def self.request_generation(proposal_version:, correlation_id:, outcome: :success, value: DEFAULT_VALUE,
-                              currency: DEFAULT_CURRENCY, artifact_url: nil, failure_reason: 'mock_generation_failed')
+                              currency: DEFAULT_CURRENCY, artifact_url: nil, failure_reason: 'mock_generation_failed', **)
     # rubocop:enable Metrics/ParameterLists
     ScanSolo::Proposal::CallbackHandler.apply_generate_result!(
       proposal_version: proposal_version,
@@ -31,7 +31,7 @@ class ScanSolo::Proposal::MockProvider
 
   # rubocop:disable Metrics/ParameterLists
   def self.request_send(proposal_version:, correlation_id:, conversation:, actor: nil, outcome: :success,
-                        failure_reason: 'mock_send_failed')
+                        failure_reason: 'mock_send_failed', **)
     # rubocop:enable Metrics/ParameterLists
     ScanSolo::Proposal::CallbackHandler.apply_send_result!(
       proposal_version: proposal_version,

@@ -9,13 +9,14 @@
 # from a validated provider result, ever sets those fields (RF-76). Calling
 # this alone never sends anything to the customer (RF-73).
 class ScanSolo::Proposal::GenerateService
-  def self.call(opportunity:, correlation_id:, provider: nil)
-    new(opportunity: opportunity, correlation_id: correlation_id, provider: provider).call
+  def self.call(opportunity:, correlation_id:, actor: nil, provider: nil)
+    new(opportunity: opportunity, correlation_id: correlation_id, actor: actor, provider: provider).call
   end
 
-  def initialize(opportunity:, correlation_id:, provider: nil)
+  def initialize(opportunity:, correlation_id:, actor: nil, provider: nil)
     @opportunity = opportunity
     @correlation_id = correlation_id
+    @actor = actor
     @provider = provider || ScanSolo::Proposal::Integration.provider!
   end
 
@@ -27,14 +28,14 @@ class ScanSolo::Proposal::GenerateService
       proposal.versions.create!(generate_correlation_id: correlation_id, generate_requested_at: Time.current)
     end
 
-    provider.request_generation(proposal_version: version, correlation_id: correlation_id)
+    provider.request_generation(proposal_version: version, correlation_id: correlation_id, actor: actor)
 
     version.reload
   end
 
   private
 
-  attr_reader :opportunity, :correlation_id, :provider
+  attr_reader :opportunity, :correlation_id, :actor, :provider
 
   def reject_if_incomplete!
     missing = missing_required_fields

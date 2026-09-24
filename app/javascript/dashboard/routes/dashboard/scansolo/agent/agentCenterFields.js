@@ -22,6 +22,7 @@ export const AGENT_CENTER_FIELD_LABELS = {
   requireProposalApproval:
     'SCANSOLO.AGENT_CENTER.FIELDS.REQUIRE_PROPOSAL_APPROVAL',
   allowedInboxIds: 'SCANSOLO.AGENT_CENTER.FIELDS.ALLOWED_INBOX_IDS',
+  optOutKeywords: 'SCANSOLO.AGENT_CENTER.FIELDS.OPT_OUT_KEYWORDS',
 };
 
 export const FIELD_TYPES = {
@@ -30,7 +31,18 @@ export const FIELD_TYPES = {
   TEXTAREA: 'textarea',
   LIST: 'list',
   INBOXES: 'inboxes',
+  SELECT: 'select',
+  KEYWORDS: 'keywords',
 };
+
+// UI-08: sources of the Modelo section selects.
+export const SELECT_OPTIONS = {
+  PROVIDERS: 'providers',
+  MODELS: 'models',
+};
+
+// Mirrors the scan_solo_ai_agent_configs.opt_out_keywords column default.
+export const DEFAULT_OPT_OUT_KEYWORDS = ['PARAR', 'SAIR', 'STOP'];
 
 // UI-04: the Agent Center form, in section order.
 export const AGENT_CENTER_SECTIONS = [
@@ -48,8 +60,16 @@ export const AGENT_CENTER_SECTIONS = [
     key: 'model',
     title: 'SCANSOLO.AGENT_CENTER.SECTIONS.MODEL',
     fields: [
-      { name: 'modelProvider', type: FIELD_TYPES.TEXT },
-      { name: 'modelSelection', type: FIELD_TYPES.TEXT },
+      {
+        name: 'modelProvider',
+        type: FIELD_TYPES.SELECT,
+        options: SELECT_OPTIONS.PROVIDERS,
+      },
+      {
+        name: 'modelSelection',
+        type: FIELD_TYPES.SELECT,
+        options: SELECT_OPTIONS.MODELS,
+      },
     ],
   },
   {
@@ -77,6 +97,7 @@ export const AGENT_CENTER_SECTIONS = [
     fields: [
       { name: 'restrictedInformation', type: FIELD_TYPES.LIST },
       { name: 'forbiddenSubjects', type: FIELD_TYPES.LIST },
+      { name: 'optOutKeywords', type: FIELD_TYPES.KEYWORDS },
     ],
   },
   {

@@ -22,7 +22,9 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
     proposal = ::ScanSolo::Proposal.find_by(opportunity: @opportunity)
     authorize(proposal || ::ScanSolo::Proposal, :generate?)
 
-    @version = ::ScanSolo::Proposal::GenerateService.call(opportunity: @opportunity, correlation_id: params.require(:correlation_id))
+    @version = ::ScanSolo::Proposal::GenerateService.call(
+      opportunity: @opportunity, correlation_id: params.require(:correlation_id), actor: Current.user
+    )
 
     render :generate
   end
@@ -52,13 +54,18 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
 
   def retry
     authorize(@proposal, :retry?)
+    params.require(:proposal_version_id)
+    # CT-04: `confirm_reprocess` is a required boolean.
+    unless [true, false].include?(params[:confirm_reprocess])
+      return render json: { error: 'confirm_reprocess must be a boolean' }, status: :unprocessable_entity
+    end
 
     @version = ::ScanSolo::Proposal::RetryPolicy.retry!(
-      proposal_version: @proposal.versions.where(is_current: true).find(params.require(:proposal_version_id)),
-      conversation: @proposal.opportunity.conversation, actor: Current.user
+      proposal_version: @proposal.versions.where(is_current: true).find(params[:proposal_version_id]),
+      confirm_reprocess: params[:confirm_reprocess], conversation: @proposal.opportunity.conversation, actor: Current.user
     )
-    render :send_proposal
-  rescue ::ScanSolo::Proposal::RetryPolicy::UnsafeRetryError => e
+    render :retry
+  rescue ::ScanSolo::Proposal::RetryPolicy::UnsafeRetryError, ::ScanSolo::Proposal::RetryPolicy::ReprocessConfirmationRequiredError => e
     render json: { error: e.message }, status: :unprocessable_entity
   end
 

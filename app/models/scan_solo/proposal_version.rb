@@ -65,6 +65,18 @@ class ScanSolo::ProposalVersion < ApplicationRecord
 
   validates :version_number, presence: true, uniqueness: { scope: :proposal_id }
 
+  # CT-04 / RF-42: the correlation id of the version's latest operation --
+  # the send once one was requested, otherwise the generate.
+  def correlation_id
+    send_correlation_id.presence || generate_correlation_id
+  end
+
+  # RF-40: retry/dead-letter state of the latest operation, read from the
+  # MakeRequest issued under that correlation id (none for the mock provider).
+  def make_request
+    ScanSolo::MakeRequest.find_by(correlation_id: correlation_id) if correlation_id.present?
+  end
+
   def approval_required?
     config = ScanSolo::AiAgentConfig.published_for(proposal.opportunity.account)
     config.nil? || config.require_proposal_approval

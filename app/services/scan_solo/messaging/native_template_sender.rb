@@ -1,11 +1,13 @@
-# RF-70/RF-71/RF-72: the sole path cadence (T49) and proposal-send (a later
-# phase) steps use to deliver a WhatsApp template message -- always through
-# the native `conversation.messages.create!` path with `template_params`
-# (verified `app/models/message.rb:51`), never a parallel WhatsApp client.
-# A fake/test template reference works exactly the same way (RF-71): native
-# message creation doesn't require the template to be pre-approved, only
-# ScanSolo::Cadence::TemplateAvailabilityGuard enforces that for real
-# WhatsApp channels before this class is ever called.
+# RF-34: the sole path cadence and proposal-send steps use to deliver a
+# WhatsApp template message -- always through the native
+# `conversation.messages.create!` path with `template_params` (name,
+# language and the native `processed_params` resolved by
+# ScanSolo::Messaging::TemplateResolver), which native
+# Whatsapp::SendOnWhatsappService delivers. Never a parallel HTTP client to
+# Meta, never a third-party WhatsApp gateway. A fake/test template reference works exactly the
+# same way: native message creation doesn't require the template to be
+# pre-approved, only ScanSolo::Cadence::TemplateAvailabilityGuard enforces
+# that for real WhatsApp channels before this class is ever called.
 #
 # This class only creates the native message; it never asserts "sent" on
 # the caller's behalf. Native Chatwoot's own transport (the `SendReplyJob`

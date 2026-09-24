@@ -14,19 +14,43 @@ RSpec.describe 'ScanSolo Knowledge Sources API', type: :request do
   end
 
   describe 'POST .../knowledge/sources' do
-    it 'creates a FAQ entry, ingests it, and returns the persisted source' do
-      post base_path, params: {
-        source_type: 'faq',
-        title: 'Horário de atendimento',
-        content: 'Atendemos de segunda a sexta, das 9h às 20h.',
-        origin: 'manual'
-      }, headers: agent.create_new_auth_token, as: :json
+    it 'creates a FAQ entry as pending and indexes it asynchronously' do
+      expect do
+        post base_path, params: {
+          source_type: 'faq',
+          title: 'Horário de atendimento',
+          content: 'Atendemos de segunda a sexta, das 9h às 20h.',
+          origin: 'manual'
+        }, headers: agent.create_new_auth_token, as: :json
+      end.to have_enqueued_job(ScanSolo::KnowledgeIngestionJob)
 
       expect(response).to have_http_status(:success)
       body = response.parsed_body
-      expect(body['source_type']).to eq('faq')
-      expect(body['chunks_count']).to be_positive
+      expect(body).to include('source_type' => 'faq', 'index_status' => 'pending', 'chunk_count' => 0, 'index_error' => nil,
+                              'indexed_at' => nil)
       expect(ScanSolo::KnowledgeSource.find(body['id']).added_by).to eq(agent)
+
+      perform_enqueued_jobs(only: ScanSolo::KnowledgeIngestionJob)
+      get base_path, headers: agent.create_new_auth_token, as: :json
+
+      listed = response.parsed_body.first
+      expect(listed).to include('index_status' => 'indexed')
+      expect(listed['chunk_count']).to be_positive
+      expect(listed['indexed_at']).to be_present
+    end
+
+    it 'never reports an attachment-only source as indexed' do
+      file = fixture_file_upload(Rails.root.join('spec/assets/sample.pdf'), 'application/pdf')
+
+      perform_enqueued_jobs(only: ScanSolo::KnowledgeIngestionJob) do
+        post base_path, params: { source_type: 'document', title: 'Catálogo', origin: 'upload', file: file },
+                        headers: agent.create_new_auth_token
+      end
+
+      get base_path, headers: agent.create_new_auth_token, as: :json
+      listed = response.parsed_body.first
+      expect(listed).to include('index_status' => 'failed', 'chunk_count' => 0)
+      expect(listed['index_error']).to eq(ScanSolo::Knowledge::IngestionService::ATTACHMENT_ONLY_ERROR)
     end
 
     it 'attaches an uploaded document through the native ActiveStorage mechanism (RF-90)' do
@@ -56,14 +80,34 @@ RSpec.describe 'ScanSolo Knowledge Sources API', type: :request do
     end
   end
 
-  describe 'PATCH .../knowledge/sources/:id (enable/disable)' do
-    it 'toggles enabled without re-triggering ingestion' do
-      source = ScanSolo::KnowledgeSource.create!(account: account, added_by: agent, source_type: :faq, origin: 'manual', content: 'x')
+  describe 'PATCH .../knowledge/sources/:id' do
+    let!(:source) do
+      perform_enqueued_jobs(only: ScanSolo::KnowledgeIngestionJob) do
+        ScanSolo::KnowledgeSource.create!(account: account, added_by: agent, source_type: :faq, origin: 'manual',
+                                          content: 'Garantia de 90 dias.')
+      end
+    end
 
-      patch "#{base_path}/#{source.id}", params: { enabled: false }, headers: agent.create_new_auth_token, as: :json
+    it 'toggles enabled without re-triggering ingestion' do
+      expect do
+        patch "#{base_path}/#{source.id}", params: { enabled: false }, headers: agent.create_new_auth_token, as: :json
+      end.not_to have_enqueued_job(ScanSolo::KnowledgeIngestionJob)
 
       expect(response).to have_http_status(:success)
+      expect(response.parsed_body['index_status']).to eq('indexed')
       expect(source.reload.enabled).to be false
+    end
+
+    it 'reindexes a content change so the chunks carry the new text (RF-43)' do
+      patch "#{base_path}/#{source.id}", params: { content: 'Garantia de 60 dias.' }, headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['index_status']).to eq('pending')
+
+      perform_enqueued_jobs(only: ScanSolo::KnowledgeIngestionJob)
+
+      expect(source.reload).to be_indexed
+      expect(source.knowledge_chunks.pluck(:content)).to eq(['Garantia de 60 dias.'])
     end
   end
 
@@ -75,10 +119,13 @@ RSpec.describe 'ScanSolo Knowledge Sources API', type: :request do
       ScanSolo::Knowledge::IngestionService.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
       first_count = source.knowledge_chunks.count
 
-      post "#{base_path}/#{source.id}/reindex", headers: agent.create_new_auth_token, as: :json
-      post "#{base_path}/#{source.id}/reindex", headers: agent.create_new_auth_token, as: :json
+      perform_enqueued_jobs(only: ScanSolo::KnowledgeIngestionJob) do
+        post "#{base_path}/#{source.id}/reindex", headers: agent.create_new_auth_token, as: :json
+        post "#{base_path}/#{source.id}/reindex", headers: agent.create_new_auth_token, as: :json
+      end
 
       expect(response).to have_http_status(:success)
+      expect(response.parsed_body['index_status']).to eq('pending')
       expect(source.knowledge_chunks.reload.count).to eq(first_count)
     end
   end

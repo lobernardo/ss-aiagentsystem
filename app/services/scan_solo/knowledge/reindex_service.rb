@@ -1,10 +1,10 @@
-# Idempotent reindex/retry of a knowledge source (RF-31). Delegates to
-# IngestionService, whose ingest-then-replace transaction already makes a
-# second run leave the same chunk set rather than duplicating rows — this
-# class exists as the explicit, separately-named entry point the Knowledge
-# screen's "reindex" action (UI-05) and controller (T27) invoke.
+# Explicit reindex/retry of a knowledge source (RF-31, RF-44): marks it
+# `pending` and enqueues ScanSolo::KnowledgeIngestionJob -- the same path a
+# create or content change takes. IngestionService's embed-then-replace
+# keeps a second run from duplicating chunks.
 class ScanSolo::Knowledge::ReindexService
-  def self.call(source:, embedding_provider: ScanSolo::Knowledge::EmbeddingService)
-    ScanSolo::Knowledge::IngestionService.call(source: source, embedding_provider: embedding_provider)
+  def self.call(source:)
+    source.enqueue_ingestion!
+    source
   end
 end

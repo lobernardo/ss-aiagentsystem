@@ -31,7 +31,6 @@ class ScanSolo::Proposal::MockProvider
 
   # rubocop:disable Metrics/ParameterLists
   def self.request_send(proposal_version:, correlation_id:, conversation:, actor: nil, outcome: :success,
-                        template_reference: ScanSolo::Proposal::CallbackHandler::DEFAULT_SEND_TEMPLATE,
                         failure_reason: 'mock_send_failed')
     # rubocop:enable Metrics/ParameterLists
     ScanSolo::Proposal::CallbackHandler.apply_send_result!(
@@ -39,7 +38,6 @@ class ScanSolo::Proposal::MockProvider
       correlation_id: correlation_id,
       success: outcome == :success,
       conversation: conversation,
-      template_reference: template_reference,
       actor: actor,
       failure_reason: failure_reason
     )

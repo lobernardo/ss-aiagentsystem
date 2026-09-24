@@ -20,7 +20,7 @@ RSpec.describe 'ScanSolo Cadence Enrollments API', type: :request do
       post base_path, params: { opportunity_id: opportunity.id, cadence_definition_id: cadence_definition.id },
                        headers: agent.create_new_auth_token, as: :json
 
-      expect(response).to have_http_status(:unauthorized)
+      expect(response).to have_http_status(:forbidden)
       expect(ScanSolo::CadenceEnrollment.where(opportunity: opportunity)).to be_none
     end
 

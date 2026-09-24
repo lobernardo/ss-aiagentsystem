@@ -44,11 +44,30 @@ RSpec.describe ScanSolo::Cadence::AttemptEvidenceRecorder do
     end
   end
 
-  describe '.record_skipped!' do
-    it 'records a terminal skipped result' do
-      described_class.record_skipped!(first_attempt)
+  describe '.record_dispatched!' do
+    it 'records the native message id without marking the attempt sent, leaving it open for reconciliation (RF-27)' do
+      message = create(:message, account: account, conversation: conversation, message_type: :outgoing)
 
-      expect(first_attempt.reload).to be_skipped
+      described_class.record_dispatched!(first_attempt, message: message)
+
+      first_attempt.reload
+      expect(first_attempt).to be_dispatched
+      expect(first_attempt.message).to eq(message)
+      expect(first_attempt.sent_at).to be_nil
+      expect(first_attempt).not_to be_terminal
+      expect(enrollment.reload.current_step).to eq(1)
+    end
+  end
+
+  describe '.record_blocked!' do
+    it 'notes the reason and check time without consuming the attempt (RF-26)' do
+      described_class.record_blocked!(first_attempt, reason: 'template_paused')
+
+      first_attempt.reload
+      expect(first_attempt).to be_scheduled
+      expect(first_attempt.last_block_reason).to eq('template_paused')
+      expect(first_attempt.last_checked_at).to be_present
+      expect(enrollment.reload.current_step).to eq(0)
     end
   end
 

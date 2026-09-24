@@ -44,7 +44,7 @@ RSpec.describe 'ScanSolo Conversation Handoff API', type: :request do
       post "#{base_path}/handoff", params: { reason: 'Tentando assumir' },
                                     headers: other_agent.create_new_auth_token, as: :json
 
-      expect(response).to have_http_status(:unauthorized)
+      expect(response).to have_http_status(:forbidden)
       expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_ai_active
     end
 
@@ -72,7 +72,7 @@ RSpec.describe 'ScanSolo Conversation Handoff API', type: :request do
     it 'is rejected for a user who is neither the assigned agent nor an administrator' do
       post "#{base_path}/return_to_ai", headers: other_agent.create_new_auth_token, as: :json
 
-      expect(response).to have_http_status(:unauthorized)
+      expect(response).to have_http_status(:forbidden)
       expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_human_active
     end
 

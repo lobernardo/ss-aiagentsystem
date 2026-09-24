@@ -1,0 +1,9 @@
+json.git_sha @report.git_sha
+json.pending_migrations @report.pending_migrations
+json.cadence_definitions @report.cadence_definitions
+json.llm_key_configured @report.llm_key_configured
+json.agent @report.agent
+json.inbox_conflicts @report.inbox_conflicts
+json.cadence_cron_registered @report.cadence_cron_registered
+json.proposal_integration @report.proposal_integration
+json.templates_last_synced_at @report.templates_last_synced_at

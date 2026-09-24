@@ -20,7 +20,8 @@ RSpec.describe ScanSolo::Proposal::SendService do
   end
 
   def call(version)
-    described_class.call(proposal_version: version, correlation_id: correlation_id, conversation: conversation, actor: agent)
+    described_class.call(proposal_version: version, correlation_id: correlation_id, conversation: conversation, actor: agent,
+                         provider: ScanSolo::Proposal::MockProvider)
   end
 
   describe 'RF-73: requires a prior successful generate result' do
@@ -64,12 +65,12 @@ RSpec.describe ScanSolo::Proposal::SendService do
       expect(version.reload).not_to be_sent
     end
 
-    it 'sends directly when approval is not required' do
+    it 'sends directly when approval is not required, becoming sent once the native delivery is reconciled' do
       version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
 
-      result = call(version)
+      perform_enqueued_jobs(only: EventDispatcherJob) { call(version) }
 
-      expect(result).to be_sent
+      expect(version.reload).to be_sent
     end
   end
 
@@ -123,7 +124,7 @@ RSpec.describe ScanSolo::Proposal::SendService do
       ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168])
       version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
 
-      call(version)
+      perform_enqueued_jobs(only: EventDispatcherJob) { call(version) }
 
       expect(opportunity.reload).to be_proposta_enviada
       expect(opportunity.cadence_enrollments.active.count).to eq(1)

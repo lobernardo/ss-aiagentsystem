@@ -152,8 +152,8 @@ defineExpose({
               )
             }}
             ·
-            <span data-testid="source-chunks-count">{{
-              source.chunksCount
+            <span data-testid="source-chunk-count">{{
+              source.chunkCount
             }}</span>
           </p>
         </div>

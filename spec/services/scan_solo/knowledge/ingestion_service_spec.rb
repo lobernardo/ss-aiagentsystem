@@ -54,6 +54,50 @@ RSpec.describe ScanSolo::Knowledge::IngestionService do
     end
   end
 
+  describe 'RF-44/RF-45: indexing state' do
+    it 'marks the source indexed with indexed_at and chunk_count' do
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+
+      expect(source.reload).to have_attributes(index_status: 'indexed', chunk_count: 2, index_error: nil)
+      expect(source.indexed_at).to be_present
+    end
+
+    it 'marks the source failed with a pt-BR error and keeps the previous chunks on an embedding outage' do
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+      previous_ids = source.knowledge_chunks.pluck(:id)
+      failing_provider = Class.new do
+        def self.call(**)
+          raise Faraday::ConnectionFailed, 'embedding endpoint unreachable'
+        end
+      end
+
+      source.update_columns(content: 'Conteúdo novo que não chega a ser indexado.') # rubocop:disable Rails/SkipsModelValidations
+      described_class.call(source: source, embedding_provider: failing_provider)
+
+      expect(source.reload).to have_attributes(index_status: 'failed', chunk_count: 2)
+      expect(source.index_error).to eq('Não foi possível indexar a fonte (Faraday::ConnectionFailed). Tente reindexar mais tarde.')
+      expect(source.knowledge_chunks.pluck(:id)).to match_array(previous_ids)
+    end
+
+    it 'marks an attachment-only source failed with the reason, never indexed with 0 chunks' do
+      source.update_columns(content: nil) # rubocop:disable Rails/SkipsModelValidations
+      source.file.attach(io: StringIO.new('%PDF-1.4'), filename: 'catalogo.pdf', content_type: 'application/pdf')
+
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+
+      expect(source.reload).to have_attributes(index_status: 'failed', chunk_count: 0)
+      expect(source.index_error).to eq(described_class::ATTACHMENT_ONLY_ERROR)
+    end
+
+    it 'marks an empty source failed' do
+      source.update_columns(content: "  \n\n ") # rubocop:disable Rails/SkipsModelValidations
+
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+
+      expect(source.reload).to have_attributes(index_status: 'failed', index_error: described_class::EMPTY_CONTENT_ERROR)
+    end
+  end
+
   describe 'idempotent re-ingestion' do
     it 'replaces rather than duplicates chunks when called twice for unchanged content' do
       described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)

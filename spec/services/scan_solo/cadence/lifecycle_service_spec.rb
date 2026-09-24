@@ -13,7 +13,7 @@ RSpec.describe ScanSolo::Cadence::LifecycleService do
 
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente', enabled: true)
+    draft.update!(name: 'Agente', enabled: true, allowed_inbox_ids: [conversation.inbox_id])
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
@@ -40,7 +40,7 @@ RSpec.describe ScanSolo::Cadence::LifecycleService do
         opportunity: opportunity, cadence_definition: cadence_definition, authorized: true, test_mode: true
       )
 
-      expect(enrollment.attempts.pluck(:result).uniq).to eq(['sent'])
+      expect(enrollment.attempts.pluck(:result).uniq).to eq(['dispatched'])
       expect(enrollment).to be_completed
     end
   end

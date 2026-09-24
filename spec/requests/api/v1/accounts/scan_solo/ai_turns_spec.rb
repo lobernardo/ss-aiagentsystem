@@ -11,10 +11,16 @@ RSpec.describe 'ScanSolo AI Turns API', type: :request do
     create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact)
   end
 
+  let(:response_message) do
+    create(:message, account: account, conversation: conversation, message_type: :outgoing, status: :delivered)
+  end
+  let(:knowledge_evidence) { [{ 'source_id' => 3, 'source_title' => 'Garantia', 'chunk_id' => 9, 'similarity_score' => 0.87 }] }
   let!(:turn) do
     ScanSolo::AiTurn.create!(
-      message: message, conversation: conversation, correlation_id: SecureRandom.uuid,
-      invocation_status: :succeeded, guardrail_outcome: { blocked: false }, action_evidence: []
+      message: message, conversation: conversation, correlation_id: SecureRandom.uuid, response_message: response_message,
+      invocation_status: :succeeded, guardrail_outcome: { blocked: false }, action_evidence: [], knowledge_evidence: knowledge_evidence,
+      model_provider: 'openai', model_reference: 'gpt-4.1-mini', input_tokens: 812, output_tokens: 96, latency_ms: 1430,
+      context_snapshot: { 'knowledge_context' => [] }
     )
   end
 
@@ -24,6 +30,14 @@ RSpec.describe 'ScanSolo AI Turns API', type: :request do
 
       expect(response).to have_http_status(:success)
       expect(response.parsed_body.map { |t| t['id'] }).to include(turn.id)
+    end
+
+    it 'exposes provider, model, tokens and latency of a succeeded turn (RF-59)' do
+      get "/api/v1/accounts/#{account.id}/scan_solo/ai_turns", headers: agent.create_new_auth_token, as: :json
+
+      listed = response.parsed_body.find { |t| t['id'] == turn.id }
+      expect(listed).to include('model_provider' => 'openai', 'model_reference' => 'gpt-4.1-mini', 'input_tokens' => 812,
+                                'output_tokens' => 96, 'latency_ms' => 1430, 'failure_reason' => nil)
     end
   end
 
@@ -35,7 +49,18 @@ RSpec.describe 'ScanSolo AI Turns API', type: :request do
       expect(response).to have_http_status(:success)
       body = response.parsed_body
       expect(body['correlation_id']).to eq(turn.correlation_id)
-      expect(body).to include('guardrail_outcome', 'knowledge_evidence', 'action_evidence')
+      expect(body).to include('guardrail_outcome', 'action_evidence')
+      expect(body['knowledge_evidence']).to eq(knowledge_evidence)
+      expect(body['response_delivery_status']).to eq('delivered')
+    end
+
+    it 'returns a null delivery status for a turn without a response message' do
+      turn.update!(response_message: nil, invocation_status: :suppressed, failure_reason: 'human_controlled')
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/ai_turns/#{turn.correlation_id}",
+          headers: agent.create_new_auth_token, as: :json
+
+      expect(response.parsed_body).to include('response_delivery_status' => nil, 'failure_reason' => 'human_controlled')
     end
 
     it 'returns 404 for a correlation id belonging to another account' do

@@ -8,7 +8,19 @@ class Api::V1::Accounts::ScanSolo::BaseController < Api::V1::Accounts::BaseContr
     render json: { error: 'proposal_integration_not_configured' }, status: :unprocessable_entity
   end
 
+  rescue_from CustomExceptions::ScanSolo::Forbidden do
+    render json: { error: 'forbidden' }, status: :forbidden
+  end
+
   private
+
+  # RF-48: an authenticated account user denied by a ScanSolo policy gets 403,
+  # not the native 401 that RequestExceptionHandler renders for Pundit.
+  def authorize(...)
+    super
+  rescue Pundit::NotAuthorizedError
+    raise CustomExceptions::ScanSolo::Forbidden
+  end
 
   def ensure_scansolo_enabled
     raise ActiveRecord::RecordNotFound unless Account.find(params[:account_id]).scansolo_enabled?

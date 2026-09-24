@@ -498,12 +498,20 @@ Rails.application.routes.draw do
 
             resources :ai_turns, only: [:index, :show]
 
+            get 'cadence_templates', to: 'cadence_templates#index'
+            put 'cadence_templates', to: 'cadence_templates#update'
+
             resources :cadence_enrollments, only: [:index, :create] do
               member do
                 post :pause
                 post :resume
                 post :cancel
               end
+            end
+
+            namespace :contacts do
+              get ':contact_id/opt_out', to: 'opt_outs#show'
+              delete ':contact_id/opt_out', to: 'opt_outs#destroy'
             end
 
             namespace :conversations do
@@ -513,6 +521,8 @@ Rails.application.routes.draw do
             end
 
             resources :executions, only: [:index]
+
+            get 'status', to: 'status#show'
           end
         end
       end

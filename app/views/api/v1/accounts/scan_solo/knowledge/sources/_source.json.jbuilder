@@ -5,7 +5,10 @@ json.content resource.content
 json.origin resource.origin
 json.enabled resource.enabled
 json.added_by_id resource.added_by_id
-json.chunks_count resource.knowledge_chunks.size
+json.chunk_count resource.chunk_count
 json.file_attached resource.file.attached?
+json.index_status resource.index_status
+json.index_error resource.index_error
+json.indexed_at resource.indexed_at
 json.created_at resource.created_at
 json.updated_at resource.updated_at

@@ -37,9 +37,11 @@ RSpec.describe ScanSolo::Proposal::MockProvider do
     it 'applies a successful send result through the native template sender with no real transport' do
       version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', send_correlation_id: SecureRandom.uuid)
 
-      described_class.request_send(
-        proposal_version: version, correlation_id: version.send_correlation_id, conversation: conversation, actor: agent
-      )
+      perform_enqueued_jobs(only: EventDispatcherJob) do
+        described_class.request_send(
+          proposal_version: version, correlation_id: version.send_correlation_id, conversation: conversation, actor: agent
+        )
+      end
 
       expect(version.reload).to be_sent
       expect(version.sent_message).to be_persisted

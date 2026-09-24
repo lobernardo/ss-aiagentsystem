@@ -1,8 +1,10 @@
-# CT-03 companion contract: knowledge source CRUD plus reindex (RF-27,
-# RF-30, RF-31). Document uploads attach through the native ActiveStorage
-# mechanism already available on ScanSolo::KnowledgeSource (RF-90); deleting
-# a source cascades to its chunks (dependent: :destroy on the model),
-# removing its content from future retrieval (RF-33).
+# CT-02: knowledge source CRUD plus reindex (RF-27, RF-30, RF-31). Document
+# uploads attach through the native ActiveStorage mechanism already
+# available on ScanSolo::KnowledgeSource (RF-90); deleting a source cascades
+# to its chunks (dependent: :destroy on the model), removing its content
+# from future retrieval (RF-33). Indexing is asynchronous: create, a
+# `content` change and reindex answer with `index_status: pending` while
+# ScanSolo::KnowledgeIngestionJob rebuilds the chunks (RF-43, RF-44).
 class Api::V1::Accounts::ScanSolo::Knowledge::SourcesController < Api::V1::Accounts::ScanSolo::BaseController
   before_action :set_source, only: [:update, :destroy, :reindex]
 
@@ -17,8 +19,6 @@ class Api::V1::Accounts::ScanSolo::Knowledge::SourcesController < Api::V1::Accou
     @source = ::ScanSolo::KnowledgeSource.new(source_params.merge(account: Current.account, added_by: Current.user))
     @source.file.attach(params[:file]) if params[:file].present?
     @source.save!
-
-    ::ScanSolo::Knowledge::IngestionService.call(source: @source)
 
     render :show
   end

@@ -348,9 +348,12 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
     it 'transitions the opportunity and creates an active post-proposal cadence enrollment' do
       version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
 
-      ScanSolo::Proposal::SendService.call(
-        proposal_version: version, correlation_id: SecureRandom.uuid, conversation: conversation, actor: agent
-      )
+      perform_enqueued_jobs(only: EventDispatcherJob) do
+        ScanSolo::Proposal::SendService.call(
+          proposal_version: version, correlation_id: SecureRandom.uuid, conversation: conversation, actor: agent,
+          provider: ScanSolo::Proposal::MockProvider
+        )
+      end
 
       expect(opportunity.reload).to be_proposta_enviada
       expect(opportunity.cadence_enrollments.active.count).to eq(1)

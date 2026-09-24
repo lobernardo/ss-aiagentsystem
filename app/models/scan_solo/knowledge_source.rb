@@ -3,6 +3,10 @@
 # timestamp. Disabling a source excludes its chunks from retrieval without
 # deleting data (RF-30); document uploads go through the native ActiveStorage
 # attachment mechanism, never a parallel unvalidated upload path (RF-90).
+#
+# Indexing is asynchronous (RF-43/RF-44): creating a source or changing its
+# `content` marks it `pending` and enqueues ScanSolo::KnowledgeIngestionJob;
+# other edits (title, enabled, origin) leave the chunks untouched.
 # == Schema Information
 #
 # Table name: scan_solo_knowledge_sources
@@ -44,4 +48,11 @@ class ScanSolo::KnowledgeSource < ApplicationRecord
   enum index_status: { pending: 0, indexing: 1, indexed: 2, failed: 3 }
 
   validates :origin, presence: true
+
+  after_commit :enqueue_ingestion!, on: [:create, :update], if: -> { previously_new_record? || saved_change_to_content? }
+
+  def enqueue_ingestion!
+    update_columns(index_status: :pending, index_error: nil) # rubocop:disable Rails/SkipsModelValidations
+    ScanSolo::KnowledgeIngestionJob.perform_later(id)
+  end
 end

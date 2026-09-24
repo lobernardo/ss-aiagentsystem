@@ -12,7 +12,8 @@ json.cost_estimate resource.cost_estimate
 json.latency_ms resource.latency_ms
 json.failure_reason resource.failure_reason
 json.guardrail_outcome resource.guardrail_outcome
-json.knowledge_evidence resource.context_snapshot['knowledge_context']
+json.knowledge_evidence resource.knowledge_evidence
 json.action_evidence resource.action_evidence
+json.response_delivery_status resource.response_message&.status
 json.context_snapshot resource.context_snapshot
 json.created_at resource.created_at

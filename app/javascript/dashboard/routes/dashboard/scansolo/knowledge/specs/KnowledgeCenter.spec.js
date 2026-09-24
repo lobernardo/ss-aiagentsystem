@@ -32,7 +32,10 @@ const seededSource = {
   origin: 'manual',
   enabled: true,
   added_by_id: 1,
-  chunks_count: 2,
+  chunk_count: 2,
+  index_status: 'indexed',
+  index_error: null,
+  indexed_at: '2026-01-01T09:01:00Z',
   file_attached: false,
   created_at: '2026-01-01T09:00:00Z',
   updated_at: '2026-01-01T09:00:00Z',
@@ -57,7 +60,7 @@ describe('KnowledgeCenter', () => {
     expect(row.find('[data-testid="source-title"]').text()).toBe(
       seededSource.title
     );
-    expect(row.find('[data-testid="source-chunks-count"]').text()).toBe('2');
+    expect(row.find('[data-testid="source-chunk-count"]').text()).toBe('2');
     expect(row.find('[data-testid="source-enabled-indicator"]').text()).toBe(
       'SCANSOLO.KNOWLEDGE_CENTER.ENABLED'
     );
@@ -141,7 +144,7 @@ describe('KnowledgeCenter', () => {
 
   it('reindexes a source (RF-31)', async () => {
     ScanSoloKnowledgeSourcesAPI.reindex.mockResolvedValue({
-      data: { ...seededSource, chunks_count: 5 },
+      data: { ...seededSource, chunk_count: 5 },
     });
 
     const wrapper = mount(KnowledgeCenter);
@@ -157,7 +160,7 @@ describe('KnowledgeCenter', () => {
     );
     expect(
       sourceRow(wrapper, seededSource.id)
-        .find('[data-testid="source-chunks-count"]')
+        .find('[data-testid="source-chunk-count"]')
         .text()
     ).toBe('5');
   });

@@ -47,7 +47,10 @@ RSpec.describe 'ScanSolo Pundit fail-closed coverage audit' do
     'Api::V1::Accounts::ScanSolo::Conversations::HandoffController' => ScanSolo::HandoffPolicy,
     'Api::V1::Accounts::ScanSolo::Knowledge::SourcesController' => ScanSolo::KnowledgeSourcePolicy,
     'Api::V1::Accounts::ScanSolo::Knowledge::RetrievalTestsController' => ScanSolo::KnowledgeSourcePolicy,
-    'Api::V1::Accounts::ScanSolo::ExecutionsController' => ScanSolo::ExecutionPolicy
+    'Api::V1::Accounts::ScanSolo::ExecutionsController' => ScanSolo::ExecutionPolicy,
+    'Api::V1::Accounts::ScanSolo::CadenceTemplatesController' => ScanSolo::TemplateMappingPolicy,
+    'Api::V1::Accounts::ScanSolo::Contacts::OptOutsController' => ScanSolo::ContactOptOutPolicy,
+    'Api::V1::Accounts::ScanSolo::StatusController' => ScanSolo::StatusPolicy
   }
 
   # The Make callback controller is the sole unauthenticated-caller-reachable

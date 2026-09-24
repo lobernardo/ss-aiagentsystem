@@ -31,9 +31,11 @@ class ScanSolo::CadenceAttempt < ApplicationRecord
 
   TERMINAL_RESULTS = %w[sent skipped failed cancelled].freeze
 
-  belongs_to :enrollment, class_name: 'ScanSolo::CadenceEnrollment', foreign_key: :enrollment_id, inverse_of: :attempts
+  belongs_to :enrollment, class_name: 'ScanSolo::CadenceEnrollment', inverse_of: :attempts
 
-  enum result: { scheduled: 0, sent: 1, skipped: 2, failed: 3, cancelled: 4 }
+  belongs_to :message, optional: true
+
+  enum result: { scheduled: 0, sent: 1, skipped: 2, failed: 3, cancelled: 4, dispatched: 5 }
 
   validates :step, presence: true, uniqueness: { scope: :enrollment_id }
 

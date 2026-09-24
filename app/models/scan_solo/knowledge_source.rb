@@ -37,5 +37,7 @@ class ScanSolo::KnowledgeSource < ApplicationRecord
 
   enum source_type: { document: 0, faq: 1, company_info: 2 }
 
+  enum index_status: { pending: 0, indexing: 1, indexed: 2, failed: 3 }
+
   validates :origin, presence: true
 end

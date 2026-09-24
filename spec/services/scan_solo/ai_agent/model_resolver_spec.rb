@@ -26,12 +26,10 @@ RSpec.describe ScanSolo::AiAgent::ModelResolver do
       expect(result).to include(model: 'gpt-4.1', provider: 'openai', source: :agent_config)
     end
 
-    it 'falls back to the FeatureRouter default when model_selection is not a valid model for the feature' do
+    it 'fails loudly when a stored model is not available for the feature' do
       config.update!(model_selection: 'not-a-real-model')
 
-      result = described_class.resolve(config: config)
-
-      expect(result).to include(model: Llm::Models.default_model_for('scansolo_agent_response'))
+      expect { described_class.resolve(config: config) }.to raise_error(ArgumentError, /Unknown ScanSolo model/)
     end
 
     it 'respects an account-level override, same as any other Llm::FeatureRouter-resolved feature' do

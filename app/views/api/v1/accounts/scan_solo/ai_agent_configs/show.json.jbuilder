@@ -8,3 +8,4 @@ json.published do
     json.null!
   end
 end
+json.available_models ::ScanSolo::AiAgent::ModelResolver.available_models

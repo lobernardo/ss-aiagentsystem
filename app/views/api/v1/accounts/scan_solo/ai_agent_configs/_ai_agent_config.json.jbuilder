@@ -19,3 +19,5 @@ json.response_limits resource.response_limits
 json.service_hours resource.service_hours
 json.require_proposal_approval resource.require_proposal_approval
 json.updated_at resource.updated_at
+json.allowed_inbox_ids resource.allowed_inbox_ids
+json.opt_out_keywords resource.opt_out_keywords

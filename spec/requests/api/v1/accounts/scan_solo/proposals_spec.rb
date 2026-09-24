@@ -5,10 +5,11 @@ require 'rails_helper'
 RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:agent) { create(:user, account: account, role: :agent) }
+  let(:admin) { create(:user, account: account, role: :administrator) }
   let(:contact) { create(:contact, account: account, custom_attributes: { 'budget' => '5000' }) }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let!(:opportunity) do
-    ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
+    ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado, owner: agent)
   end
 
   before do
@@ -45,7 +46,7 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
     it 'approves the current version' do
       post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}/approve",
            params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
-           headers: agent.create_new_auth_token, as: :json
+           headers: admin.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:success)
       expect(response.parsed_body['status']).to eq('approved')
@@ -96,6 +97,52 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       expect(body.first['id']).to eq(proposal.id)
       expect(body.first['versions'].first['id']).to eq(version.id)
       expect(body.first['contact_name']).to eq(contact.name)
+    end
+  end
+
+  describe 'authorization and production integration gates' do
+    let!(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
+    let!(:version) { proposal.versions.create!(status: :failed, failure_reason: 'timeout') }
+    let(:path) { "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}" }
+
+    it 'rejects agent approve and retry, and send by a non-owner' do
+      %w[approve retry].each do |action|
+        post "#{path}/#{action}", params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
+                                  headers: agent.create_new_auth_token, as: :json
+        expect(response).to have_http_status(:forbidden)
+      end
+      opportunity.update!(owner: nil)
+      post "#{path}/send", params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
+                           headers: agent.create_new_auth_token, as: :json
+      expect(response).to have_http_status(:forbidden)
+    end
+
+    it 'allows an administrator to retry a safely failed generation' do
+      post "#{path}/retry", params: { proposal_version_id: version.id, confirm_reprocess: false },
+                            headers: admin.create_new_auth_token, as: :json
+      expect(response).to have_http_status(:success)
+      expect(version.reload).to be_generated
+    end
+
+    it 'blocks generate, send and retry in production without writing proposal or request rows' do
+      allow(Rails.env).to receive(:production?).and_return(true)
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, anything).and_return(nil)
+      expect(ScanSolo::Proposal::MockProvider).not_to receive(:request_generation)
+      expect(ScanSolo::Proposal::MockProvider).not_to receive(:request_send)
+      paths = [
+        "/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities/#{opportunity.id}/proposals/generate",
+        "#{path}/send", "#{path}/retry"
+      ]
+      original_attributes = version.attributes
+      paths.each do |endpoint|
+        expect do
+          post endpoint, params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid, confirm_reprocess: false },
+                         headers: admin.create_new_auth_token, as: :json
+        end.not_to(change { [ScanSolo::ProposalVersion.count, ScanSolo::MakeRequest.count] })
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(response.parsed_body).to eq('error' => 'proposal_integration_not_configured')
+        expect(version.reload.attributes).to eq(original_attributes)
+      end
     end
   end
 end

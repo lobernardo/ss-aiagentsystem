@@ -5,7 +5,7 @@
 # UI-08's Propostas screen -- they are not part of CT-07 itself.
 class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::ScanSolo::BaseController
   before_action :set_opportunity, only: [:generate]
-  before_action :set_proposal, only: [:show, :approve, :send_proposal]
+  before_action :set_proposal, only: [:show, :approve, :send_proposal, :retry]
 
   def index
     authorize(::ScanSolo::Proposal)
@@ -48,6 +48,18 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
     )
 
     render :send_proposal
+  end
+
+  def retry
+    authorize(@proposal, :retry?)
+
+    @version = ::ScanSolo::Proposal::RetryPolicy.retry!(
+      proposal_version: @proposal.versions.where(is_current: true).find(params.require(:proposal_version_id)),
+      conversation: @proposal.opportunity.conversation, actor: Current.user
+    )
+    render :send_proposal
+  rescue ::ScanSolo::Proposal::RetryPolicy::UnsafeRetryError => e
+    render json: { error: e.message }, status: :unprocessable_entity
   end
 
   private

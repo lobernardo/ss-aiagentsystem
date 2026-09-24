@@ -50,4 +50,16 @@ RSpec.describe ScanSolo::AiAgent::PublishService do
       expect { described_class.new(account: account).call }.to change(ScanSolo::AiAgentConfig, :count).by(1)
     end
   end
+
+  it 'copies the inbox allowlist and opt-out keywords into an immutable snapshot' do
+    inbox = create(:inbox, account: account)
+    draft = ScanSolo::AiAgentConfig.draft_for!(account)
+    draft.update!(allowed_inbox_ids: [inbox.id], opt_out_keywords: ['BASTA'])
+
+    published = described_class.new(account: account).call
+    draft.update!(allowed_inbox_ids: [], opt_out_keywords: [])
+
+    expect(published.reload.allowed_inbox_ids).to eq([inbox.id])
+    expect(published.opt_out_keywords).to eq(['BASTA'])
+  end
 end

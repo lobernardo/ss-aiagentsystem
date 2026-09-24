@@ -1,8 +1,12 @@
 # Resolves the model/provider for a ScanSolo AI Agent Center turn exclusively
 # through the existing Llm::FeatureRouter (RF-21) — no second hand-rolled
-# provider HTTP client, and no dependency on enterprise/ Captain code (RF-26).
+# provider HTTP client, and no dependency on Enterprise code (RF-26).
 class ScanSolo::AiAgent::ModelResolver
   FEATURE_KEY = 'scansolo_agent_response'.freeze
+
+  def self.available_models
+    Llm::Models.features.fetch(FEATURE_KEY).fetch('models')
+  end
 
   def self.resolve(config:)
     new(config: config).resolve
@@ -28,6 +32,9 @@ class ScanSolo::AiAgent::ModelResolver
   attr_reader :config
 
   def configured_model_override?
-    config.model_selection.present? && Llm::Models.valid_model_for?(FEATURE_KEY, config.model_selection)
+    return false if config.model_selection.nil?
+    raise ArgumentError, "Unknown ScanSolo model: #{config.model_selection}" unless self.class.available_models.include?(config.model_selection)
+
+    true
   end
 end

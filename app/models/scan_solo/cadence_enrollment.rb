@@ -1,8 +1,4 @@
-# RF-59: an opportunity's enrollment in one versioned cadence definition.
-# Uniqueness on (opportunity_id, cadence_definition_id) is enforced by the
-# DB index from the migration; this model-level validation gives a
-# friendlier ActiveRecord::RecordInvalid instead of a raw RecordNotUnique
-# for the common (non-racing) duplicate-enrollment path.
+# Only active/paused enrollments reserve an opportunity and cadence definition pair.
 # == Schema Information
 #
 # Table name: scan_solo_cadence_enrollments
@@ -31,12 +27,18 @@
 class ScanSolo::CadenceEnrollment < ApplicationRecord
   self.table_name = 'scan_solo_cadence_enrollments'
 
-  belongs_to :opportunity, class_name: 'ScanSolo::PipelineOpportunity', foreign_key: :opportunity_id, inverse_of: :cadence_enrollments
-  belongs_to :cadence_definition, class_name: 'ScanSolo::CadenceDefinition', foreign_key: :cadence_definition_id,
-                                   inverse_of: :enrollments
+  belongs_to :opportunity, class_name: 'ScanSolo::PipelineOpportunity', inverse_of: :cadence_enrollments
+  belongs_to :cadence_definition, class_name: 'ScanSolo::CadenceDefinition',
+                                  inverse_of: :enrollments
   has_many :attempts, class_name: 'ScanSolo::CadenceAttempt', foreign_key: :enrollment_id, inverse_of: :enrollment, dependent: :destroy
 
   enum status: { active: 0, paused: 1, cancelled: 2, completed: 3 }
 
-  validates :opportunity_id, uniqueness: { scope: :cadence_definition_id }
+  scope :open_for, lambda { |opportunity, cadence_definition|
+    where(opportunity: opportunity, cadence_definition: cadence_definition, status: %i[active paused])
+  }
+
+  validates :opportunity_id, uniqueness: {
+    scope: :cadence_definition_id, conditions: -> { where(status: %i[active paused]) }
+  }, if: -> { active? || paused? }
 end

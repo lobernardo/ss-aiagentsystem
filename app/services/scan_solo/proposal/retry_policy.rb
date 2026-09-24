@@ -14,13 +14,13 @@ class ScanSolo::Proposal::RetryPolicy
     proposal_version.failed? && SAFE_RETRYABLE_REASONS.include?(proposal_version.failure_reason)
   end
 
-  def self.retry!(proposal_version:, provider: ScanSolo::Proposal::MockProvider, conversation: nil, actor: nil)
+  def self.retry!(proposal_version:, provider: nil, conversation: nil, actor: nil)
     new(proposal_version: proposal_version, provider: provider, conversation: conversation, actor: actor).retry!
   end
 
-  def initialize(proposal_version:, provider:, conversation: nil, actor: nil)
+  def initialize(proposal_version:, provider: nil, conversation: nil, actor: nil)
     @proposal_version = proposal_version
-    @provider = provider
+    @provider = provider || ScanSolo::Proposal::Integration.provider!
     @conversation = conversation
     @actor = actor
   end

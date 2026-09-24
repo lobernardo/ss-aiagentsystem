@@ -4,10 +4,10 @@ class ScanSolo::AiAgentConfigPolicy < ScanSolo::ApplicationPolicy
   end
 
   def draft?
-    true
+    administrator?
   end
 
   def publish?
-    true
+    administrator?
   end
 end

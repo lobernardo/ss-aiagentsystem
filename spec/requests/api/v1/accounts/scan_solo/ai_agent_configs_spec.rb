@@ -4,7 +4,7 @@ require 'rails_helper'
 
 RSpec.describe 'ScanSolo AI Agent Config API', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
-  let(:agent) { create(:user, account: account, role: :agent) }
+  let(:agent) { create(:user, account: account, role: :administrator) }
   let(:base_path) { "/api/v1/accounts/#{account.id}/scan_solo/ai_agent_config" }
 
   describe 'GET .../ai_agent_config' do
@@ -95,6 +95,48 @@ RSpec.describe 'ScanSolo AI Agent Config API', type: :request do
       get "/api/v1/accounts/#{disabled_account.id}/scan_solo/ai_agent_config", headers: disabled_agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:not_found)
+    end
+  end
+
+  describe 'production configuration contract' do
+    it 'exposes the allowed models and default safety configuration' do
+      get base_path, headers: agent.create_new_auth_token, as: :json
+      expect(response.parsed_body['available_models']).to eq(%w[gpt-4.1-mini gpt-4.1 gpt-5.1 gpt-5.2])
+      expect(response.parsed_body['draft']).to include('allowed_inbox_ids' => [], 'opt_out_keywords' => %w[PARAR SAIR STOP])
+    end
+
+    it 'rejects foreign inboxes, invalid model names and malformed arrays before persistence' do
+      foreign_inbox = create(:inbox)
+      [
+        { allowed_inbox_ids: [foreign_inbox.id] }, { model_selection: 'foo' },
+        { allowed_inbox_ids: ['1'] }, { allowed_inbox_ids: '1' },
+        { opt_out_keywords: 'STOP' }, { opt_out_keywords: [1] }
+      ].each do |payload|
+        put "#{base_path}/draft", params: payload, headers: agent.create_new_auth_token, as: :json
+        expect(response).to have_http_status(:unprocessable_entity)
+      end
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).allowed_inbox_ids).to eq([])
+    end
+
+    it 'round-trips and publishes the new fields' do
+      inbox = create(:inbox, account: account)
+      payload = { allowed_inbox_ids: [inbox.id], opt_out_keywords: ['BASTA'] }
+      put "#{base_path}/draft", params: payload, headers: agent.create_new_auth_token, as: :json
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body).to include(payload.stringify_keys)
+      post "#{base_path}/publish", headers: agent.create_new_auth_token, as: :json
+      expect(response.parsed_body).to include(payload.stringify_keys)
+    end
+
+    it 'allows agent reads but rejects draft and publish writes' do
+      reader = create(:user, account: account, role: :agent)
+      headers = reader.create_new_auth_token
+      get base_path, headers: headers, as: :json
+      expect(response).to have_http_status(:success)
+      put "#{base_path}/draft", params: { name: 'Unauthorized' }, headers: headers, as: :json
+      expect(response).to have_http_status(:forbidden)
+      post "#{base_path}/publish", headers: headers, as: :json
+      expect(response).to have_http_status(:forbidden)
     end
   end
 end

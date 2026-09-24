@@ -7,18 +7,18 @@
 # ScanSolo::Proposal::CallbackHandler (via the registered provider) --
 # this service never itself marks the version `sent` (RF-79).
 class ScanSolo::Proposal::SendService
-  def self.call(proposal_version:, correlation_id:, conversation:, actor: nil, provider: ScanSolo::Proposal::MockProvider)
+  def self.call(proposal_version:, correlation_id:, conversation:, actor: nil, provider: nil)
     new(
       proposal_version: proposal_version, correlation_id: correlation_id, conversation: conversation, actor: actor, provider: provider
     ).call
   end
 
-  def initialize(proposal_version:, correlation_id:, conversation:, actor: nil, provider: ScanSolo::Proposal::MockProvider)
+  def initialize(proposal_version:, correlation_id:, conversation:, actor: nil, provider: nil)
     @proposal_version = proposal_version
     @correlation_id = correlation_id
     @conversation = conversation
     @actor = actor
-    @provider = provider
+    @provider = provider || ScanSolo::Proposal::Integration.provider!
   end
 
   def call

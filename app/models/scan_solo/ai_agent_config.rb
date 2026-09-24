@@ -48,7 +48,7 @@ class ScanSolo::AiAgentConfig < ApplicationRecord
     name enabled model_provider model_selection role objective persona tone
     instructions service_rules qualification_playbook required_qualification_fields
     restricted_information forbidden_subjects transfer_criteria response_limits service_hours
-    require_proposal_approval
+    require_proposal_approval allowed_inbox_ids opt_out_keywords
   ].freeze
 
   belongs_to :account
@@ -63,6 +63,6 @@ class ScanSolo::AiAgentConfig < ApplicationRecord
   end
 
   def self.published_for(account)
-    draft_for!(account).published_version
+    find_by(account: account, status: :draft)&.published_version
   end
 end

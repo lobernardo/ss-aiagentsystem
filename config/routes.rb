@@ -476,6 +476,7 @@ Rails.application.routes.draw do
               member do
                 post :approve
                 post 'send', to: 'proposals#send_proposal'
+                post :retry
               end
             end
 

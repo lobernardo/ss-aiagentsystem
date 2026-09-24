@@ -50,7 +50,7 @@ RSpec.describe 'ScanSolo migrations' do
     # check) must also cover this migration, since it is the one ScanSolo migration
     # that touches a pre-existing Community table (accounts) rather than creating a
     # new scan_solo_* table -- RF-95/RNF-04 apply to it exactly the same way.
-    expect(scansolo_migration_files.length).to eq(21)
+    expect(scansolo_migration_files.length).to eq(28)
   end
 
   it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do
@@ -349,7 +349,7 @@ RSpec.describe 'ScanSolo migrations' do
     expect(correlation_index.unique).to be true
   end
 
-  it 'creates the scan_solo_make_callbacks table additively with a permanent unique index on correlation_id (RNF-06)' do
+  it 'creates the scan_solo_make_callbacks table additively with a partial unique index on applied correlation_id (RF-39)' do
     connection = ActiveRecord::Base.connection
 
     expect(connection.table_exists?(:scan_solo_make_callbacks)).to be true
@@ -361,10 +361,37 @@ RSpec.describe 'ScanSolo migrations' do
     correlation_index = connection.indexes(:scan_solo_make_callbacks).find { |index| index.columns == ['correlation_id'] }
     expect(correlation_index).to be_present
     expect(correlation_index.unique).to be true
-    # RNF-06: the uniqueness constraint itself is the entire replay-protection mechanism --
-    # there is no `where`/partial clause and no companion expiry column, so it is permanent.
-    expect(correlation_index.where).to be_nil
+    expect(correlation_index.where).to eq('(applied = true)')
     expect(connection.column_exists?(:scan_solo_make_callbacks, :expires_at)).to be false
+  end
+
+  it 'limits index replacements to the two reversible production migrations' do
+    replacements = scansolo_migration_files.select { |path| File.read(path).match?(/\bremove_index\b/) }
+    expect(replacements.map { |path| File.basename(path) }).to contain_exactly(
+      '20260923000006_replace_scan_solo_cadence_enrollment_unique_index.rb',
+      '20260923000007_replace_scan_solo_make_callbacks_correlation_index.rb'
+    )
+    replacements.each do |path|
+      expect(File.read(path)).to include('def up', 'def down', 'add_index', 'where:')
+    end
+    scansolo_migration_files.each do |path|
+      expect(File.read(path)).not_to match(/\b(?:delete|destroy)\b/i)
+    end
+  end
+
+  it 'records the production columns, defaults and partial predicates in the schema' do
+    schema = Rails.root.join('db/schema.rb').read
+    expect(schema).to include('t.jsonb "allowed_inbox_ids", default: [], null: false')
+    expect(schema).to include('t.jsonb "opt_out_keywords", default: ["PARAR", "SAIR", "STOP"], null: false')
+    expect(schema).to include('create_table "scan_solo_contact_extensions"', 'create_table "scan_solo_template_mappings"')
+    expect(schema).to include('nulls_not_distinct: true', 'where: "(applied = true)"')
+    expect(schema).to match(/idx_scansolo_cadence_enrollments_on_opportunity_and_definition.*where:.*status.*0.*1/)
+    %w[message_id last_block_reason last_checked_at external_error].each do |column|
+      expect(ActiveRecord::Base.connection.column_exists?(:scan_solo_cadence_attempts, column)).to be true
+    end
+    %w[index_status index_error indexed_at chunk_count].each do |column|
+      expect(ActiveRecord::Base.connection.column_exists?(:scan_solo_knowledge_sources, column)).to be true
+    end
   end
 end
 # rubocop:enable RSpec/DescribeClass

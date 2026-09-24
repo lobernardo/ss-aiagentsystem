@@ -4,7 +4,7 @@ require 'rails_helper'
 
 RSpec.describe 'ScanSolo Knowledge Sources API', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
-  let(:agent) { create(:user, account: account, role: :agent) }
+  let(:agent) { create(:user, account: account, role: :administrator) }
   let(:base_path) { "/api/v1/accounts/#{account.id}/scan_solo/knowledge/sources" }
 
   before do
@@ -112,5 +112,24 @@ RSpec.describe 'ScanSolo Knowledge Sources API', type: :request do
 
       expect(response).to have_http_status(:not_found)
     end
+  end
+
+  it 'allows agent reads but forbids all knowledge mutations' do
+    reader = create(:user, account: account, role: :agent)
+    headers = reader.create_new_auth_token
+    source = ScanSolo::KnowledgeSource.create!(account: account, added_by: agent, source_type: :faq, origin: 'manual', content: 'x')
+    get base_path, headers: headers, as: :json
+    expect(response).to have_http_status(:success)
+    post base_path, params: { source_type: 'faq', origin: 'manual', content: 'x' }, headers: headers, as: :json
+    expect(response).to have_http_status(:forbidden)
+    patch "#{base_path}/#{source.id}", params: { enabled: false }, headers: headers, as: :json
+    expect(response).to have_http_status(:forbidden)
+    post "#{base_path}/#{source.id}/reindex", headers: headers, as: :json
+    expect(response).to have_http_status(:forbidden)
+    delete "#{base_path}/#{source.id}", headers: headers, as: :json
+    expect(response).to have_http_status(:forbidden)
+    post "/api/v1/accounts/#{account.id}/scan_solo/knowledge/retrieval_tests", params: { query: 'x' }, headers: headers, as: :json
+    expect(response).to have_http_status(:forbidden)
+    expect(source.reload).to be_enabled
   end
 end

@@ -9,6 +9,10 @@ class ScanSolo::ApplicationPolicy
     @record = record
   end
 
+  def administrator?
+    account_user&.administrator? == true
+  end
+
   def index?
     false
   end

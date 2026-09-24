@@ -25,6 +25,7 @@ module ScanSolo::Actions::ProposalActions
     SCHEMA = ScanSolo::Actions::ProposalActions::BASE_SCHEMA
 
     def self.call(params:, **)
+      ScanSolo::Proposal::Integration.provider!
       opportunity = ScanSolo::PipelineOpportunity.find(params[:opportunity_id])
 
       { status: 'requested', action: 'proposal.generate', opportunity_id: opportunity.id }
@@ -47,6 +48,7 @@ module ScanSolo::Actions::ProposalActions
     SCHEMA = ScanSolo::Actions::ProposalActions::BASE_SCHEMA
 
     def self.call(params:, **)
+      ScanSolo::Proposal::Integration.provider!
       opportunity = ScanSolo::PipelineOpportunity.find(params[:opportunity_id])
 
       { status: 'requested', action: 'proposal.send', opportunity_id: opportunity.id }

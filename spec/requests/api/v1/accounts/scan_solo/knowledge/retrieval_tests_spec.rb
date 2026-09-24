@@ -4,7 +4,7 @@ require 'rails_helper'
 
 RSpec.describe 'ScanSolo Knowledge Retrieval Tests API (CT-03)', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
-  let(:agent) { create(:user, account: account, role: :agent) }
+  let(:agent) { create(:user, account: account, role: :administrator) }
   let(:base_path) { "/api/v1/accounts/#{account.id}/scan_solo/knowledge/retrieval_tests" }
 
   before do

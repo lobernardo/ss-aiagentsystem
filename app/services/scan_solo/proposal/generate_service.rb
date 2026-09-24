@@ -9,14 +9,14 @@
 # from a validated provider result, ever sets those fields (RF-76). Calling
 # this alone never sends anything to the customer (RF-73).
 class ScanSolo::Proposal::GenerateService
-  def self.call(opportunity:, correlation_id:, provider: ScanSolo::Proposal::MockProvider)
+  def self.call(opportunity:, correlation_id:, provider: nil)
     new(opportunity: opportunity, correlation_id: correlation_id, provider: provider).call
   end
 
-  def initialize(opportunity:, correlation_id:, provider: ScanSolo::Proposal::MockProvider)
+  def initialize(opportunity:, correlation_id:, provider: nil)
     @opportunity = opportunity
     @correlation_id = correlation_id
-    @provider = provider
+    @provider = provider || ScanSolo::Proposal::Integration.provider!
   end
 
   def call

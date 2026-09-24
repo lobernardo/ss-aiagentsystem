@@ -9,6 +9,8 @@
 class ScanSolo::AiTurn::PromptRedactor
   REDACTED = '[REDACTED]'.freeze
 
+  UUID_PATTERN = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+
   SECRET_PATTERN = %r{
     (?:sk|pk|rk|ak)[-_](?:live|test)[-_][A-Za-z0-9]{8,}  # vendor-style live-or-test keys (e.g. Stripe)
     | (?:sk|pk|rk|api)[-_][A-Za-z0-9]{16,}                # generic prefixed API keys
@@ -23,7 +25,7 @@ class ScanSolo::AiTurn::PromptRedactor
   def call(value)
     case value
     when String
-      value.gsub(SECRET_PATTERN, REDACTED)
+      value.gsub(SECRET_PATTERN) { |token| UUID_PATTERN.match?(token) ? token : REDACTED }
     when Hash
       value.transform_values { |v| call(v) }
     when Array

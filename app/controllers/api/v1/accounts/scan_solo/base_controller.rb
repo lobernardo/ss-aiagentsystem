@@ -4,6 +4,10 @@ class Api::V1::Accounts::ScanSolo::BaseController < Api::V1::Accounts::BaseContr
   # that a ScanSolo endpoint exists behind auth.
   prepend_before_action :ensure_scansolo_enabled
 
+  rescue_from CustomExceptions::ScanSolo::ProposalIntegrationNotConfigured do
+    render json: { error: 'proposal_integration_not_configured' }, status: :unprocessable_entity
+  end
+
   private
 
   def ensure_scansolo_enabled

@@ -8,15 +8,15 @@ class ScanSolo::KnowledgeSourcePolicy < ScanSolo::ApplicationPolicy
   end
 
   def create?
-    true
+    administrator?
   end
 
   def update?
-    true
+    administrator?
   end
 
   def destroy?
-    true
+    administrator?
   end
 
   def reindex?
@@ -24,6 +24,6 @@ class ScanSolo::KnowledgeSourcePolicy < ScanSolo::ApplicationPolicy
   end
 
   def retrieval_tests?
-    index?
+    administrator?
   end
 end

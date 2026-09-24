@@ -8,14 +8,18 @@ class ScanSolo::ProposalPolicy < ScanSolo::ApplicationPolicy
   end
 
   def generate?
-    true
+    account_user.present?
   end
 
   def approve?
-    true
+    administrator?
+  end
+
+  def retry?
+    administrator?
   end
 
   def send?
-    true
+    administrator? || record.opportunity.owner_id == user.id
   end
 end

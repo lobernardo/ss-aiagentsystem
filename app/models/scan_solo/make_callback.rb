@@ -1,11 +1,4 @@
-# RNF-06 / RF-85 / RF-86: one immutable row per inbound Make callback
-# attempt (accepted or rejected), written only by
-# Webhooks::ScanSolo::MakeController (T68). The permanent unique index on
-# `correlation_id` (no TTL/expiry) is the entire replay-protection
-# mechanism -- a repeated correlation id can never be inserted a second
-# time, so a replayed callback is rejected indefinitely. `correlation_id`
-# is nullable because a malformed (non-JSON) callback body has none to
-# extract, yet RF-86 still requires it be recorded as an error row.
+# Applied callbacks permanently reserve their correlation id; rejected attempts do not.
 # == Schema Information
 #
 # Table name: scan_solo_make_callbacks
@@ -26,7 +19,9 @@
 class ScanSolo::MakeCallback < ApplicationRecord
   self.table_name = 'scan_solo_make_callbacks'
 
-  validates :correlation_id, uniqueness: true, allow_nil: true
+  scope :applied, -> { where(applied: true) }
+
+  validates :correlation_id, uniqueness: { conditions: -> { applied } }, allow_nil: true, if: :applied?
 
   def readonly?
     persisted?

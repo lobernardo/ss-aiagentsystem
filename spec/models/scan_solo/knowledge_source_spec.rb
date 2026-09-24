@@ -55,4 +55,9 @@ RSpec.describe ScanSolo::KnowledgeSource do
       expect(ScanSolo::KnowledgeChunk.where(id: chunk.id)).not_to exist
     end
   end
+
+  it 'exposes the four indexing states with a pending default' do
+    expect(described_class.index_statuses).to eq('pending' => 0, 'indexing' => 1, 'indexed' => 2, 'failed' => 3)
+    expect(described_class.new).to be_pending
+  end
 end

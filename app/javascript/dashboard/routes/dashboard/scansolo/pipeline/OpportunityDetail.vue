@@ -1,4 +1,5 @@
 <script setup>
+import ScanSoloPageLayout from 'dashboard/routes/dashboard/scansolo/components/ScanSoloPageLayout.vue';
 import { onMounted, ref } from 'vue';
 import camelcaseKeys from 'camelcase-keys';
 import { useI18n } from 'vue-i18n';
@@ -39,50 +40,52 @@ defineExpose({ fetchOpportunity, goToConversation });
 </script>
 
 <template>
-  <div v-if="opportunity" class="p-4">
-    <h2 class="text-n-slate-12 text-lg font-medium mb-4">
-      {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.TITLE') }}
-    </h2>
+  <ScanSoloPageLayout>
+    <div v-if="opportunity" class="p-4">
+      <h2 class="text-n-slate-12 text-lg font-medium mb-4">
+        {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.TITLE') }}
+      </h2>
 
-    <section data-testid="opportunity-contact" class="mb-4">
-      <h3 class="text-n-slate-11 text-sm font-medium">
-        {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.CONTACT_LABEL') }}
-      </h3>
-      <p data-testid="opportunity-contact-name">
-        {{ opportunity.contactName }}
-      </p>
-    </section>
+      <section data-testid="opportunity-contact" class="mb-4">
+        <h3 class="text-n-slate-11 text-sm font-medium">
+          {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.CONTACT_LABEL') }}
+        </h3>
+        <p data-testid="opportunity-contact-name">
+          {{ opportunity.contactName }}
+        </p>
+      </section>
 
-    <button
-      type="button"
-      data-testid="opportunity-conversation-link"
-      class="mb-4 text-n-blue-text underline"
-      @click="goToConversation"
-    >
-      {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.CONVERSATION_LINK') }}
-    </button>
-
-    <section>
-      <h3 class="text-n-slate-11 text-sm font-medium mb-2">
-        {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.HISTORY_TITLE') }}
-      </h3>
-      <p
-        v-if="!opportunity.stageHistory.length"
-        data-testid="opportunity-history-empty"
+      <button
+        type="button"
+        data-testid="opportunity-conversation-link"
+        class="mb-4 text-n-blue-text underline"
+        @click="goToConversation"
       >
-        {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.HISTORY_EMPTY') }}
-      </p>
-      <ul v-else data-testid="opportunity-history-list">
-        <li
-          v-for="event in opportunity.stageHistory"
-          :key="event.id"
-          data-testid="opportunity-history-item"
+        {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.CONVERSATION_LINK') }}
+      </button>
+
+      <section>
+        <h3 class="text-n-slate-11 text-sm font-medium mb-2">
+          {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.HISTORY_TITLE') }}
+        </h3>
+        <p
+          v-if="!opportunity.stageHistory.length"
+          data-testid="opportunity-history-empty"
         >
-          <span data-testid="history-from-stage">{{ event.fromStage }}</span>
-          <span data-testid="history-to-stage">{{ event.toStage }}</span>
-          <span data-testid="history-created-at">{{ event.createdAt }}</span>
-        </li>
-      </ul>
-    </section>
-  </div>
+          {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.HISTORY_EMPTY') }}
+        </p>
+        <ul v-else data-testid="opportunity-history-list">
+          <li
+            v-for="event in opportunity.stageHistory"
+            :key="event.id"
+            data-testid="opportunity-history-item"
+          >
+            <span data-testid="history-from-stage">{{ event.fromStage }}</span>
+            <span data-testid="history-to-stage">{{ event.toStage }}</span>
+            <span data-testid="history-created-at">{{ event.createdAt }}</span>
+          </li>
+        </ul>
+      </section>
+    </div>
+  </ScanSoloPageLayout>
 </template>

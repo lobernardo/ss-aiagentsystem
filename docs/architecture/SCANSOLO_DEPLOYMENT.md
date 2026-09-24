@@ -1,200 +1,165 @@
 # ScanSolo Deployment (Docker Compose)
 
-This document describes the deployment topology for the ScanSolo Chatwoot
-platform and the operational procedures around it: process topology,
-storage, reverse proxy/TLS, health checks, volumes, migrations, restart
-policy, backup/restore, environment variables, log rotation, and rollback.
+This document is the production deploy runbook for the ScanSolo Chatwoot
+platform: topology, the ordered deploy procedure with rollback, OpenAI key
+rotation and the pre-cutover setup rule.
 
-It is documentation only. No task in this phase performs an actual
-production deploy, DNS cutover, or provider activation (RF-94) — those
-remain behind the human-approval gates in `PLAN.md` Phase 18 (T82–T90).
+Production is always, and only:
+
+```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml
+```
+
+The dev compose file is never part of a production command. TLS, certificates,
+the public domain and the host reverse proxy are managed outside this
+repository; no step here touches them. The `reverse-proxy` and
+`self-hosted-storage` overlay profiles are never activated.
 
 Related documents:
-- `docs/architecture/ADR-001-chatwoot-scansolo-platform.md` — architecture
-  decision and target topology diagram.
-- `docs/architecture/SCANSOLO_UPSTREAM_RISK.md` — high-merge-conflict-risk
-  customizations against `chatwoot/chatwoot` upstream.
-- `.env.example` — full list of supported environment variables.
+- `docs/runbooks/PRODUCTION_CUTOVER.md` — cutover checklist (webhook owner, kill switch).
+- `docs/runbooks/SCANSOLO_GO_LIVE_TEST.md` — controlled go-live test.
+- `.env.example` — every variable the production compose and ScanSolo read.
 
 ## Topology
 
 | Component | Compose service | Image / build | Notes |
 |---|---|---|---|
-| Web (Rails) | `rails` | `docker/dockerfiles/rails.Dockerfile` (dev) / `chatwoot/chatwoot:latest` (prod) | Serves the API and dashboard on port 3000. |
-| Background jobs | `sidekiq` | same image as `rails` | Runs `bundle exec sidekiq -C config/sidekiq.yml`; owns all ScanSolo async jobs (cadence, AI turns, Make callbacks). |
-| Database | `postgres` | `pgvector/pgvector:pg16` | PostgreSQL with the `pgvector` extension, required by the ScanSolo knowledge/RAG tables (RF-28). |
-| Cache / queue | `redis` | `redis:alpine` | Sidekiq queue backend and Rails cache. |
-| Object storage | `minio` (self-hosted) or an external S3-compatible provider | `minio/minio:latest` | See "Object storage" below. |
-| Reverse proxy / TLS | `reverse-proxy` | `caddy:2-alpine` | Terminates TLS in front of `rails`; automatic Let's Encrypt via `SCANSOLO_DOMAIN`. |
-| Backup | `backup` (one-off) | `postgres:16-alpine` | Never started by `up`; run explicitly (see "Backup / restore"). |
+| Web (Rails) | `rails` | `scansolo-chatwoot:${SCANSOLO_IMAGE_TAG}` built from `docker/Dockerfile` | API and dashboard on `127.0.0.1:3000`. |
+| Background jobs | `sidekiq` | same image as `rails` | Owns every ScanSolo async job (AI turns, cadences, Make callbacks). |
+| Database | `postgres` | `pgvector/pgvector:0.8.1-pg16` | PostgreSQL with `pgvector` (knowledge/RAG tables). |
+| Cache / queue | `redis` | `redis:8.2.1-alpine` | Sidekiq backend and Rails cache, password from `REDIS_PASSWORD`. |
+| Backup | `backup` (profile `backup`) | `postgres:16.10-alpine` | One-off `pg_dump`; never started by `up`. |
 
-The additive service definitions, health checks, restart policies, and log
-rotation described here live in `docker-compose.scansolo.yaml`. It never
-replaces the existing `docker-compose.yaml` (local dev) or
-`docker-compose.production.yaml` (single-node production baseline) — it
-layers on top of either.
+Image tags must equal what the VPS runs; step 1 checks it (HG-08). Every port
+is published on `127.0.0.1` only. Health checks, `restart: always` and
+`json-file` log rotation (`10m` × 5) come from `docker-compose.scansolo.yaml`.
 
-Staging/production usage:
+Persistent volumes: `postgres_data` (database), `redis_data` (Redis),
+`storage_data` (Active Storage local files), `scansolo_backups` (`pg_dump`
+archives — ship them off-host).
 
-```sh
-docker compose -f docker-compose.yaml -f docker-compose.production.yaml \
-  -f docker-compose.scansolo.yaml up -d
-```
+## Deploy procedure
 
-Config lint only (used by this phase's test, never a real deploy):
+Run every step from the deploy directory on the VPS, in order, in the same
+shell. Stop at the first failing step and go to step 9.
+
+### Step 1 — Diff the VPS compose and .env names against Git
 
 ```sh
-docker compose -f docker-compose.yaml -f docker-compose.scansolo.yaml config
+git fetch origin
+git diff HEAD origin/main -- docker-compose.production.yaml docker-compose.scansolo.yaml
+git status --short docker-compose.production.yaml docker-compose.scansolo.yaml
+diff <(grep -oE '^[A-Z0-9_]+=' .env | sort -u) <(grep -oE '^[A-Z0-9_]+=' .env.example | sort -u)
+docker ps --format '{{.Names}} {{.Image}}'
+export PREVIOUS_SCANSOLO_IMAGE_TAG=$(docker inspect --format '{{.Config.Image}}' "$(docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml ps -q rails)" | cut -d: -f2)
+echo "$PREVIOUS_SCANSOLO_IMAGE_TAG"
 ```
 
-## Object storage (S3-compatible)
+Passes when there is no local edit to the compose files, every name missing
+from `.env` is understood (and filled if required), the running `postgres` and
+`redis` images equal the tags in `docker-compose.production.yaml`, and the
+previous image tag is recorded for rollback.
 
-Chatwoot's Active Storage already ships an `s3_compatible` service definition
-(`config/storage.yml`) driven by `STORAGE_ACCESS_KEY_ID`,
-`STORAGE_SECRET_ACCESS_KEY`, `STORAGE_REGION`, `STORAGE_BUCKET_NAME`,
-`STORAGE_ENDPOINT`, and `STORAGE_FORCE_PATH_STYLE`. Two supported options:
-
-1. **Managed S3-compatible provider** (e.g. AWS S3, DigitalOcean Spaces):
-   set `ACTIVE_STORAGE_SERVICE=s3_compatible` and the `STORAGE_*` variables
-   above to the provider's credentials/endpoint. No additional compose
-   service is required.
-2. **Self-hosted MinIO**: start the `minio` service (profile
-   `self-hosted-storage`) from `docker-compose.scansolo.yaml`, and point the
-   same `STORAGE_*` variables at it (`STORAGE_ENDPOINT=http://minio:9000`,
-   `STORAGE_FORCE_PATH_STYLE=true`).
-
-Provider account creation/activation is out of scope for this phase — see
-gate T88 (RF-100).
-
-## Reverse proxy / TLS
-
-The `reverse-proxy` service (profile `reverse-proxy`) runs Caddy in front of
-`rails`, terminating TLS and issuing/renewing Let's Encrypt certificates
-automatically for the hostname in `SCANSOLO_DOMAIN`. Certificate state
-persists in the `scansolo_caddy_data`/`scansolo_caddy_config` volumes so
-renewals survive container restarts.
-
-DNS cutover for the production hostname (`scansolo.com.br`) is a separate,
-gated action — see T85 (RF-100). Nothing in this phase points a real domain
-at any host.
-
-## Health checks
-
-`docker-compose.scansolo.yaml` adds a `healthcheck` to every long-running
-service:
-
-- `rails`: HTTP spider check against `http://localhost:3000`.
-- `sidekiq`: `sidekiqmon processes` returns at least one running process.
-- `postgres`: `pg_isready`.
-- `redis`: `redis-cli ping` (authenticated with `REDIS_PASSWORD`).
-- `minio`: MinIO's own `/minio/health/live` endpoint.
-- `reverse-proxy`: HTTP spider check on port 80.
-
-## Persistent volumes
-
-| Volume | Owner service | Contents |
-|---|---|---|
-| `postgres_data` / `postgres` | `postgres` | Database files. |
-| `redis_data` / `redis` | `redis` | Redis persistence (AOF/RDB). |
-| `storage_data` | `rails` | Local Active Storage fallback (dev/local only). |
-| `scansolo_storage` | `minio` | Self-hosted object storage data (only when the `minio` profile is used). |
-| `scansolo_caddy_data` / `scansolo_caddy_config` | `reverse-proxy` | TLS certificates and Caddy state. |
-| `scansolo_backups` | `backup` | Local landing zone for `pg_dump` archives before they are shipped off-host. |
-
-## Migrations
-
-Migrations run as a one-off command against the `rails` image, before
-bringing up (or as part of rolling) the new `rails`/`sidekiq` containers:
+### Step 2 — Back up the database and check the dump size
 
 ```sh
-docker compose -f docker-compose.yaml -f docker-compose.production.yaml \
-  -f docker-compose.scansolo.yaml run --rm rails bundle exec rails db:migrate
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
+  --profile backup run --rm backup
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
+  --profile backup run --rm --no-deps --entrypoint sh backup -c 'ls -lh /backups | tail -n 3'
 ```
 
-Every ScanSolo migration is additive-only (`create_table` / additive
-`add_column`, never `remove_column`/`change_column` on a pre-existing
-Community table — enforced by `spec/db/scansolo_migrations_spec.rb`, T79),
-so a migration run is always forward-compatible with the previous release
-still running during a rolling deploy. Actually executing `db:migrate`
-against a production database is gated separately — see T84 (RF-100).
+Passes when the newest `chatwoot-<timestamp>.sql.gz` exists, is not empty and
+its size is in line with the previous dump. Record its file name for step 9.
 
-## Restart policy
-
-`rails`, `sidekiq`, `postgres`, `redis`, `minio`, and `reverse-proxy` all use
-`restart: always`, so the Docker daemon restarts them on crash or host
-reboot. The `backup` service uses `restart: "no"` — it is a one-off job, never
-a long-running process.
-
-## Backup / restore
-
-Backups are triggered manually (or from an external host cron job), never
-automatically, using the `backup` profile:
+### Step 3 — Build the image with GIT_SHA and a new SCANSOLO_IMAGE_TAG
 
 ```sh
-docker compose -f docker-compose.yaml -f docker-compose.production.yaml \
-  -f docker-compose.scansolo.yaml --profile backup run --rm backup
+git checkout origin/main
+export GIT_SHA=$(git rev-parse HEAD)
+export SCANSOLO_IMAGE_TAG=$(date +%Y%m%d%H%M)-$(git rev-parse --short HEAD)
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml build rails
 ```
 
-This produces a gzip-compressed `pg_dump` archive under the
-`scansolo_backups` volume, named `chatwoot-<timestamp>.sql.gz`. Ship these
-archives off-host (e.g. to the same S3-compatible bucket configured for
-object storage) on a schedule appropriate to the deployment's RPO.
+The build fails when `GIT_SHA` is empty. Never reuse a previous tag.
 
-Restore procedure (run against a stopped or freshly-provisioned `postgres`
-volume):
+### Step 4 — Run migrations
 
 ```sh
-gunzip -c chatwoot-<timestamp>.sql.gz | \
-  docker compose -f docker-compose.yaml -f docker-compose.production.yaml \
-    -f docker-compose.scansolo.yaml exec -T postgres psql -U postgres -d chatwoot
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
+  run --rm rails bundle exec rails db:migrate
 ```
 
-Object storage (`minio` volume, or the external S3-compatible bucket) is
-restored independently, per the provider's own backup/versioning tooling.
+### Step 5 — Load the cadence definitions
 
-## Environment variables
+```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
+  run --rm rails bundle exec rails scansolo:load_cadence_definitions
+```
 
-All environment variables are documented in `.env.example`, loaded via
-`env_file: .env` on every service in `docker-compose.yaml` /
-`docker-compose.production.yaml`. ScanSolo introduces no new
-deployment-specific variables beyond the existing `STORAGE_*` set
-(already documented in `.env.example` and `config/storage.yml`) and the two
-additive ones used by `docker-compose.scansolo.yaml`:
+Passes when the 4 active definitions are printed. The task is idempotent.
 
-- `SCANSOLO_DOMAIN` — hostname the `reverse-proxy` service issues a TLS
-  certificate for (defaults to `localhost` when unset, which yields a
-  self-signed/local-only certificate — never used for a real deploy).
-- `STORAGE_ACCESS_KEY_ID` / `STORAGE_SECRET_ACCESS_KEY` — reused, when the
-  `minio` self-hosted storage profile is active, as the MinIO root
-  credentials so a single credential pair configures both the storage
-  service and the Rails client pointed at it.
+### Step 6 — Restart Rails
 
-## Log rotation / observability
+```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml up -d --no-deps rails
+```
 
-`docker-compose.scansolo.yaml` applies Docker's `json-file` log driver with
-`max-size: 10m` and `max-file: 5` to every service, bounding on-disk log
-growth without an external log shipper. Existing Rails-level log
-configuration (`RAILS_LOG_TO_STDOUT`, `LOG_LEVEL`, `LOG_SIZE` in
-`.env.example`) is unaffected and continues to write to stdout, which Docker
-captures under this same rotation policy.
+### Step 7 — Restart Sidekiq
 
-## Rollback
+```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml up -d --no-deps sidekiq
+```
 
-Because every ScanSolo migration is additive-only, rolling back application
-code does not require a down-migration:
+### Step 8 — Run the smoke check
 
-1. Stop the current `rails`/`sidekiq` containers.
-2. Re-deploy the previous image tag/commit for `rails` and `sidekiq`
-   (`docker compose ... up -d --no-deps rails sidekiq` with the prior image
-   reference).
-3. Leave the database schema as-is — additive columns/tables unused by the
-   rolled-back code are simply ignored by it.
-4. If a specific ScanSolo feature must be disabled without a code rollback,
-   toggle the per-account `scansolo_enabled` flag instead of rolling back the
-   whole deploy.
-5. If the incident involves data corruption rather than a bad deploy,
-   restore from the most recent backup per "Backup / restore" above.
+```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
+  exec rails bundle exec rails "scansolo:smoke[<account_id>]"
+```
 
-No rollback step here performs a real deploy, DNS change, or provider
-action — this document only describes the procedure for when a human
-operator executes it, per RF-94/RF-100.
+Passes when every line is `PASS` and the task prints `ScanSolo smoke passed`
+(non-zero exit on any `FAIL`).
+
+### Step 9 — Rollback
+
+Application rollback to the previous image tag:
+
+```sh
+export SCANSOLO_IMAGE_TAG=$PREVIOUS_SCANSOLO_IMAGE_TAG
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml up -d --no-deps rails sidekiq
+```
+
+Database restore from the step 2 dump (only when data must be reverted; stops
+Rails and Sidekiq first):
+
+```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml stop rails sidekiq
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
+  --profile backup run --rm --no-deps --entrypoint sh backup -c \
+  'dropdb -h postgres -U postgres chatwoot && createdb -h postgres -U postgres chatwoot && gunzip -c /backups/chatwoot-<timestamp>.sql.gz | psql -h postgres -U postgres -d chatwoot'
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml up -d --no-deps rails sidekiq
+```
+
+To stop ScanSolo outbound without a rollback, turn the account's
+`scansolo_enabled` flag off (kill switch).
+
+## OpenAI key rotation
+
+The OpenAI key is the `CAPTAIN_OPEN_AI_API_KEY` InstallationConfig (Super
+Admin → Settings). After saving or rotating it, restart Rails and Sidekiq so
+both processes pick up the new key:
+
+```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml restart rails sidekiq
+```
+
+Then run the step 8 smoke check.
+
+## Pre-cutover setup with an empty inbox allowlist
+
+`scansolo_enabled` is the single ScanSolo kill switch (D-21): turning it off
+also hides the ScanSolo UI and API. Pre-cutover setup (agent config,
+knowledge, templates) is therefore done with the flag **on** and an **empty
+inbox allowlist** in the published agent config, which keeps ScanSolo outbound
+at zero. Fill the allowlist only at cutover.

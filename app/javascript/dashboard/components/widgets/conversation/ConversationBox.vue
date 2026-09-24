@@ -1,6 +1,7 @@
 <script>
 import { mapGetters } from 'vuex';
 import ConversationHeader from './ConversationHeader.vue';
+import HandoffControlBanner from 'dashboard/components-next/conversation/HandoffControlBanner.vue';
 import DashboardAppFrame from '../DashboardApp/Frame.vue';
 import EmptyState from './EmptyState/EmptyState.vue';
 import MessagesView from './MessagesView.vue';
@@ -8,6 +9,7 @@ import MessagesView from './MessagesView.vue';
 export default {
   components: {
     ConversationHeader,
+    HandoffControlBanner,
     DashboardAppFrame,
     EmptyState,
     MessagesView,
@@ -106,6 +108,11 @@ export default {
       :class="{
         'border-b border-b-n-weak !pt-2': !dashboardApps.length,
       }"
+    />
+    <HandoffControlBanner
+      v-if="currentChat.id"
+      :key="currentChat.id"
+      :conversation="currentChat"
     />
     <woot-tabs
       v-if="dashboardApps.length && currentChat.id"

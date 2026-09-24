@@ -1,4 +1,5 @@
 <script setup>
+import ScanSoloPageLayout from 'dashboard/routes/dashboard/scansolo/components/ScanSoloPageLayout.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
@@ -63,53 +64,56 @@ defineExpose({ onDragStart, onDrop });
 </script>
 
 <template>
-  <div class="flex gap-4 overflow-x-auto p-4">
-    <div
-      v-for="stage in SCANSOLO_PIPELINE_STAGES"
-      :key="stage"
-      data-testid="pipeline-column"
-      :data-stage="stage"
-      class="flex-shrink-0 w-72"
-      @dragover.prevent
-      @drop="onDrop(stage)"
-    >
-      <h3 class="text-n-slate-11 text-sm font-medium mb-2">
-        {{ t(`SCANSOLO.PIPELINE_BOARD.STAGES.${stage.toUpperCase()}`) }}
-      </h3>
+  <ScanSoloPageLayout>
+    <div class="flex gap-4 overflow-x-auto p-4">
       <div
-        v-for="opportunity in opportunitiesByStage[stage]"
-        :key="opportunity.id"
-        draggable="true"
-        data-testid="pipeline-card"
-        :data-opportunity-id="opportunity.id"
-        class="rounded-lg border border-n-weak p-3 mb-2 bg-n-solid-1"
-        @dragstart="onDragStart(opportunity.id)"
+        v-for="stage in SCANSOLO_PIPELINE_STAGES"
+        :key="stage"
+        data-testid="pipeline-column"
+        :data-stage="stage"
+        class="flex-shrink-0 w-72"
+        @dragover.prevent
+        @drop="onDrop(stage)"
       >
-        <p data-testid="card-stage">
+        <h3 class="text-n-slate-11 text-sm font-medium mb-2">
           {{ t(`SCANSOLO.PIPELINE_BOARD.STAGES.${stage.toUpperCase()}`) }}
-        </p>
-        <p data-testid="card-owner">
-          {{
-            opportunity.ownerId || t('SCANSOLO.PIPELINE_BOARD.UNASSIGNED_OWNER')
-          }}
-        </p>
-        <p data-testid="card-last-interaction">
-          {{ opportunity.lastCustomerInteractionAt }}
-        </p>
-        <p data-testid="card-next-follow-up">
-          {{
-            opportunity.nextFollowUpAt ||
-            t('SCANSOLO.PIPELINE_BOARD.NOT_SCHEDULED')
-          }}
-        </p>
-        <p data-testid="card-stale">
-          {{
-            isStale(opportunity)
-              ? t('SCANSOLO.PIPELINE_BOARD.STALE_INDICATOR')
-              : ''
-          }}
-        </p>
+        </h3>
+        <div
+          v-for="opportunity in opportunitiesByStage[stage]"
+          :key="opportunity.id"
+          draggable="true"
+          data-testid="pipeline-card"
+          :data-opportunity-id="opportunity.id"
+          class="rounded-lg border border-n-weak p-3 mb-2 bg-n-solid-1"
+          @dragstart="onDragStart(opportunity.id)"
+        >
+          <p data-testid="card-stage">
+            {{ t(`SCANSOLO.PIPELINE_BOARD.STAGES.${stage.toUpperCase()}`) }}
+          </p>
+          <p data-testid="card-owner">
+            {{
+              opportunity.ownerId ||
+              t('SCANSOLO.PIPELINE_BOARD.UNASSIGNED_OWNER')
+            }}
+          </p>
+          <p data-testid="card-last-interaction">
+            {{ opportunity.lastCustomerInteractionAt }}
+          </p>
+          <p data-testid="card-next-follow-up">
+            {{
+              opportunity.nextFollowUpAt ||
+              t('SCANSOLO.PIPELINE_BOARD.NOT_SCHEDULED')
+            }}
+          </p>
+          <p data-testid="card-stale">
+            {{
+              isStale(opportunity)
+                ? t('SCANSOLO.PIPELINE_BOARD.STALE_INDICATOR')
+                : ''
+            }}
+          </p>
+        </div>
       </div>
     </div>
-  </div>
+  </ScanSoloPageLayout>
 </template>

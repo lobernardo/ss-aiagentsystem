@@ -87,7 +87,24 @@
         "FORBIDDEN_SUBJECTS": "Assuntos proibidos",
         "TRANSFER_CRITERIA": "Critérios de transferência",
         "RESPONSE_LIMITS": "Limites de resposta",
-        "SERVICE_HOURS": "Horário de atendimento"
+        "SERVICE_HOURS": "Horário de atendimento",
+        "REQUIRE_PROPOSAL_APPROVAL": "Exigir aprovação de um administrador antes de enviar propostas",
+        "ALLOWED_INBOX_IDS": "Caixas de entrada atendidas pela IA"
+      },
+      "SECTIONS": {
+        "IDENTITY": "Identidade",
+        "MODEL": "Modelo",
+        "BEHAVIOR": "Comportamento",
+        "QUALIFICATION": "Qualificação",
+        "SAFETY": "Segurança",
+        "HANDOFF": "Handoff",
+        "HOURS": "Horário",
+        "PROPOSAL": "Proposta",
+        "CHANNELS": "Canais"
+      },
+      "CHANNELS": {
+        "PLACEHOLDER": "Selecione as caixas de entrada",
+        "EMPTY_HELP": "Sem nenhuma caixa de entrada selecionada, a IA não responde em nenhum canal."
       }
     },
     "KNOWLEDGE_CENTER": {
@@ -130,7 +147,8 @@
       "RETURN_TO_AI_BUTTON": "Retornar para IA",
       "REASON_LABEL": "Motivo da transferência",
       "REASON_PLACEHOLDER": "Descreva o motivo da transferência",
-      "CANCEL": "Cancelar"
+      "CANCEL": "Cancelar",
+      "NOT_ALLOWED": "Somente administradores ou o responsável pela conversa podem alterar o controle da IA."
     },
     "FOLLOW_UPS": {
       "TITLE": "Follow-ups",

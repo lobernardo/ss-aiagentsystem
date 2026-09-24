@@ -1,10 +1,10 @@
-version: '3'
-
 services:
   base: &base
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA}
     image: scansolo-chatwoot:${SCANSOLO_IMAGE_TAG:-local}
     env_file: .env ## Change this file for customized env variables
     volumes:
@@ -38,7 +38,7 @@ services:
     restart: always
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.1-pg16
     restart: always
     ports:
       - '127.0.0.1:5432:5432'
@@ -47,11 +47,10 @@ services:
     environment:
       - POSTGRES_DB=chatwoot
       - POSTGRES_USER=postgres
-      # Please provide your own password.
-      - POSTGRES_PASSWORD=
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 
   redis:
-    image: redis:alpine
+    image: redis:8.2.1-alpine
     restart: always
     command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\""]
     env_file: .env

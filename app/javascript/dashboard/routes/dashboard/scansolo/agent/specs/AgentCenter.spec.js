@@ -1,5 +1,7 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import { createStore } from 'vuex';
+import { withFullI18n } from 'test-i18n';
 import ScanSoloAiAgentConfigAPI from 'dashboard/api/scansoloAiAgentConfig';
 import AgentCenter from '../AgentCenter.vue';
 
@@ -11,9 +13,7 @@ vi.mock('dashboard/api/scansoloAiAgentConfig', () => ({
   },
 }));
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: key => key }),
-}));
+withFullI18n();
 
 const draftFixture = {
   id: 1,
@@ -35,8 +35,26 @@ const draftFixture = {
   transfer_criteria: 'Cliente pede humano',
   response_limits: 'Ate 3 mensagens por turno',
   service_hours: '09:00-20:00 America/Sao_Paulo',
+  require_proposal_approval: true,
+  allowed_inbox_ids: [12],
   updated_at: '2026-01-01T09:00:00Z',
 };
+
+const inboxesFixture = [
+  { id: 11, name: 'WhatsApp Vendas' },
+  { id: 12, name: 'WhatsApp Suporte' },
+];
+
+const mountAgentCenter = () =>
+  mount(AgentCenter, {
+    global: {
+      plugins: [
+        createStore({
+          getters: { 'inboxes/getInboxes': () => inboxesFixture },
+        }),
+      ],
+    },
+  });
 
 describe('AgentCenter', () => {
   beforeEach(() => {
@@ -48,7 +66,7 @@ describe('AgentCenter', () => {
   });
 
   it('exposes every RF-20 field', async () => {
-    const wrapper = mount(AgentCenter);
+    const wrapper = mountAgentCenter();
     await flushPromises();
 
     [
@@ -76,12 +94,21 @@ describe('AgentCenter', () => {
     });
   });
 
+  it('renders translated labels, never raw i18n keys', async () => {
+    const wrapper = mountAgentCenter();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('SCANSOLO.');
+    expect(wrapper.text()).toContain('Provedor do modelo');
+    expect(wrapper.text()).toContain('Campos obrigatórios de qualificação');
+  });
+
   it('shows a visible draft-vs-published indicator', async () => {
-    const wrapper = mount(AgentCenter);
+    const wrapper = mountAgentCenter();
     await flushPromises();
 
     expect(wrapper.find('[data-testid="agent-status-indicator"]').text()).toBe(
-      'SCANSOLO.AGENT_CENTER.STATUS_NOT_PUBLISHED'
+      'Ainda não publicado'
     );
 
     ScanSoloAiAgentConfigAPI.get.mockResolvedValue({
@@ -90,16 +117,16 @@ describe('AgentCenter', () => {
         published: { ...draftFixture, status: 'published' },
       },
     });
-    const publishedWrapper = mount(AgentCenter);
+    const publishedWrapper = mountAgentCenter();
     await flushPromises();
 
     expect(
       publishedWrapper.find('[data-testid="agent-status-indicator"]').text()
-    ).toBe('SCANSOLO.AGENT_CENTER.STATUS_PUBLISHED');
+    ).toBe('Publicado');
   });
 
   it('blocks accidental publish: clicking Publish only opens a confirmation, it does not call the API', async () => {
-    const wrapper = mount(AgentCenter);
+    const wrapper = mountAgentCenter();
     await flushPromises();
 
     await wrapper.find('[data-testid="publish-button"]').trigger('click');
@@ -115,7 +142,7 @@ describe('AgentCenter', () => {
       data: { ...draftFixture, status: 'published' },
     });
 
-    const wrapper = mount(AgentCenter);
+    const wrapper = mountAgentCenter();
     await flushPromises();
 
     await wrapper.find('[data-testid="publish-button"]').trigger('click');
@@ -131,7 +158,7 @@ describe('AgentCenter', () => {
   });
 
   it('cancelling the confirmation dialog never publishes', async () => {
-    const wrapper = mount(AgentCenter);
+    const wrapper = mountAgentCenter();
     await flushPromises();
 
     await wrapper.find('[data-testid="publish-button"]').trigger('click');
@@ -150,7 +177,7 @@ describe('AgentCenter', () => {
       data: { ...draftFixture, name: 'Agente v1 editado' },
     });
 
-    const wrapper = mount(AgentCenter);
+    const wrapper = mountAgentCenter();
     await flushPromises();
 
     await wrapper.find('form').trigger('submit');
@@ -158,5 +185,59 @@ describe('AgentCenter', () => {
 
     expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledTimes(1);
     expect(ScanSoloAiAgentConfigAPI.publish).not.toHaveBeenCalled();
+  });
+
+  it('organizes the form into the 9 sections in order', async () => {
+    const wrapper = mountAgentCenter();
+    await flushPromises();
+
+    expect(wrapper.findAll('form h2').map(heading => heading.text())).toEqual([
+      'Identidade',
+      'Modelo',
+      'Comportamento',
+      'Qualificação',
+      'Segurança',
+      'Handoff',
+      'Horário',
+      'Proposta',
+      'Canais',
+    ]);
+  });
+
+  it('lists the account inboxes by name in the Canais multi-select', async () => {
+    const wrapper = mountAgentCenter();
+    await flushPromises();
+    const channels = wrapper.find('[data-testid="field-allowedInboxIds"]');
+
+    expect(channels.text()).toContain('WhatsApp Suporte');
+
+    await channels.find('.cursor-pointer').trigger('click');
+    const optionLabels = channels
+      .findAll('li[role="option"]')
+      .map(option => option.text());
+
+    expect(optionLabels).toEqual(['WhatsApp Vendas', 'WhatsApp Suporte']);
+    expect(channels.text()).not.toMatch(/\b1[12]\b/);
+  });
+
+  it('saves the selected inboxes as allowed_inbox_ids', async () => {
+    ScanSoloAiAgentConfigAPI.updateDraft.mockResolvedValue({
+      data: { ...draftFixture, allowed_inbox_ids: [12, 11] },
+    });
+    const wrapper = mountAgentCenter();
+    await flushPromises();
+    const channels = wrapper.find('[data-testid="field-allowedInboxIds"]');
+
+    await channels.find('.cursor-pointer').trigger('click');
+    await channels.findAll('li[role="option"]')[0].trigger('click');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowed_inbox_ids: [12, 11],
+        require_proposal_approval: true,
+      })
+    );
   });
 });

@@ -1,3 +1,4 @@
+import store from 'dashboard/store';
 import { frontendURL } from 'dashboard/helper/URLHelper.js';
 import { SCANSOLO_MODULES } from './scansoloModules';
 import ScanSoloComingSoonPage from './pages/ScanSoloComingSoonPage.vue';
@@ -12,6 +13,21 @@ import Executions from './executions/Executions.vue';
 
 const meta = {
   permissions: ['administrator', 'agent', 'custom_role'],
+};
+
+// RF-51: accounts without `scansolo_enabled` never mount a ScanSolo screen.
+// On a direct page load the account may not be in the store yet.
+export const redirectUnlessScanSoloEnabled = async (to, _from, next) => {
+  const accountId = Number(to.params.accountId);
+  if (!store.getters['accounts/getAccount'](accountId).id) {
+    await store.dispatch('accounts/get', { silent: true, accountId });
+  }
+
+  if (store.getters['accounts/getAccount'](accountId).scansolo_enabled) {
+    next();
+    return;
+  }
+  next({ name: 'home', params: { accountId: to.params.accountId } });
 };
 
 // Modules whose real screen has landed replace the ScanSoloComingSoonPage
@@ -36,6 +52,7 @@ export default {
         ),
         name: scanSoloModule.name,
         meta,
+        beforeEnter: redirectUnlessScanSoloEnabled,
         component: component || ScanSoloComingSoonPage,
         ...(component ? {} : { props: { moduleKey: scanSoloModule.key } }),
       };
@@ -44,12 +61,14 @@ export default {
       path: frontendURL('accounts/:accountId/scansolo/pipeline/:opportunityId'),
       name: 'scansolo_pipeline_opportunity_detail',
       meta,
+      beforeEnter: redirectUnlessScanSoloEnabled,
       component: OpportunityDetail,
     },
     {
       path: frontendURL('accounts/:accountId/scansolo/agent/turns'),
       name: 'scansolo_agent_turn_evidence',
       meta,
+      beforeEnter: redirectUnlessScanSoloEnabled,
       component: TurnEvidenceViewer,
     },
   ],

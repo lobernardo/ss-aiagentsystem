@@ -19,7 +19,7 @@ RSpec.describe Rake::Task do # rubocop:disable RSpec/SpecFilePathFormat
       expect(ScanSolo::CadenceDefinition.active.order(:stage).pluck(:stage, :offsets)).to eq(
         [
           ['em_contato', [24, 48, 72, 96, 120]],
-          ['em_qualificacao', [24, 48, 72, 96, 120, 144, 168]],
+          ['em_qualificacao', [24, 48, 96, 168]],
           ['novo_lead', [2, 24, 48, 96]],
           ['proposta_enviada', [24, 72, 168]]
         ]

@@ -27,7 +27,7 @@ RSpec.describe ScanSolo::StatusReport do
       git_sha: GIT_HASH, pending_migrations: false, llm_key_configured: true, inbox_conflicts: [],
       cadence_cron_registered: true, proposal_integration: 'configured'
     )
-    expect(report.cadence_definitions).to eq('novo_lead' => 1, 'em_contato' => 1, 'em_qualificacao' => 1, 'proposta_enviada' => 1)
+    expect(report.cadence_definitions).to eq('novo_lead' => 1, 'em_contato' => 1, 'em_qualificacao' => 2, 'proposta_enviada' => 1)
     expect(report.agent).to eq(published: true, enabled: true, model: 'gpt-4.1-mini', allowed_inbox_ids: [channel.inbox.id, web_inbox.id])
     expect(report.templates_last_synced_at).to eq(channel.inbox.id.to_s => last_sync)
     expect(report.failed_checks).to be_empty

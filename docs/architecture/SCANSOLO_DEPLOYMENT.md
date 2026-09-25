@@ -38,6 +38,12 @@ Persistent volumes: `postgres_data` (database), `redis_data` (Redis),
 `storage_data` (Active Storage local files), `scansolo_backups` (`pg_dump`
 archives — ship them off-host).
 
+## Database name
+
+Production Rails uses `chatwoot_production` (Chatwoot's default when `POSTGRES_DATABASE` is unset). The `chatwoot` database created by
+`POSTGRES_DB` in `docker-compose.production.yaml` is not used by the application. Backups and restores always target
+`chatwoot_production` (override with `POSTGRES_DATABASE` in `.env` if the VPS ever uses another name).
+
 ## Deploy procedure
 
 Run every step from the deploy directory on the VPS, in order, in the same
@@ -69,13 +75,13 @@ docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml
   --profile backup run --rm --no-deps --entrypoint sh backup -c 'ls -lh /backups | tail -n 3'
 ```
 
-Passes when the newest `chatwoot-<timestamp>.sql.gz` exists, is not empty and
+Passes when the newest `chatwoot_production-<timestamp>.sql.gz` exists, is not empty and
 its size is in line with the previous dump. Record its file name for step 9.
 
 ### Step 3 — Build the image with GIT_SHA and a new SCANSOLO_IMAGE_TAG
 
 ```sh
-git checkout origin/main
+git checkout <release-ref>   # the validated release branch/commit; origin/main holds only planning docs today
 export GIT_SHA=$(git rev-parse HEAD)
 export SCANSOLO_IMAGE_TAG=$(date +%Y%m%d%H%M)-$(git rev-parse --short HEAD)
 docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml build rails
@@ -137,7 +143,7 @@ Rails and Sidekiq first):
 docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml stop rails sidekiq
 docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
   --profile backup run --rm --no-deps --entrypoint sh backup -c \
-  'dropdb -h postgres -U postgres chatwoot && createdb -h postgres -U postgres chatwoot && gunzip -c /backups/chatwoot-<timestamp>.sql.gz | psql -h postgres -U postgres -d chatwoot'
+  'dropdb -h postgres -U postgres chatwoot_production && createdb -h postgres -U postgres chatwoot_production && gunzip -c /backups/chatwoot_production-<timestamp>.sql.gz | psql -h postgres -U postgres -d chatwoot_production'
 docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml up -d --no-deps rails sidekiq
 ```
 

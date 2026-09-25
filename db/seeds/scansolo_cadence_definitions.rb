@@ -7,7 +7,8 @@
 cadence_definitions_seed = [
   { stage: 'novo_lead', version: 1, offsets: [2, 24, 48, 96] },
   { stage: 'em_contato', version: 1, offsets: [24, 48, 72, 96, 120] },
-  { stage: 'em_qualificacao', version: 1, offsets: [24, 48, 72, 96, 120, 144, 168] },
+  # v2 (DEC-038, 2026-09-25): 4 attempts instead of 7 so reused templates are not repeated.
+  { stage: 'em_qualificacao', version: 2, offsets: [24, 48, 96, 168] },
   # Post-proposal follow-up cadence, enrolled when the opportunity enters
   # proposta_enviada (RF-24).
   { stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168] }
@@ -18,4 +19,10 @@ cadence_definitions_seed.each do |attrs|
     definition.offsets = attrs[:offsets]
     definition.active = true
   end
+end
+
+# Only the seeded version of each stage stays active; older versions are
+# deactivated (in-flight enrollments keep running on their own definition).
+cadence_definitions_seed.each do |attrs|
+  ScanSolo::CadenceDefinition.where(stage: attrs[:stage]).where.not(version: attrs[:version]).update_all(active: false)
 end

@@ -22,11 +22,12 @@ RSpec.describe ScanSolo::CadenceDefinition do
       expect(definition.offsets).to eq([24, 48, 72, 96, 120])
     end
 
-    it 'schedules exactly 7 attempts 24h apart for Em Qualificação' do
+    it 'schedules exactly 4 attempts at +24h/+48h/+96h/+168h for Em Qualificação (v2, DEC-038)' do
       definition = described_class.current_for('em_qualificacao')
 
-      expect(definition.attempt_count).to eq(7)
-      expect(definition.offsets).to eq([24, 48, 72, 96, 120, 144, 168])
+      expect(definition.attempt_count).to eq(4)
+      expect(definition.offsets).to eq([24, 48, 96, 168])
+      expect(definition.version).to eq(2)
     end
   end
 

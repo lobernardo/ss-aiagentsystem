@@ -24,8 +24,13 @@ services:
   rails:
     restart: always
     logging: *scansolo_logging
+    # Rails credentials de produção (Make: scan_solo.make.*) ficam FORA do Git, na VPS.
+    # Pasta vazia/ausente = Rails usa config/credentials.yml.enc como antes.
+    volumes:
+      - ${SCANSOLO_CREDENTIALS_DIR:-/opt/scansolo/secrets/credentials}:/app/config/credentials:ro
     healthcheck:
-      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:3000']
+      # 127.0.0.1 (localhost cai em IPv6 e o Puma só escuta IPv4) + cabeçalho https (FORCE_SSL redireciona)
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', '--header', 'X-Forwarded-Proto: https', 'http://127.0.0.1:3000/health']
       interval: 30s
       timeout: 10s
       retries: 5
@@ -34,6 +39,8 @@ services:
   sidekiq:
     restart: always
     logging: *scansolo_logging
+    volumes:
+      - ${SCANSOLO_CREDENTIALS_DIR:-/opt/scansolo/secrets/credentials}:/app/config/credentials:ro
     healthcheck:
       test: ['CMD-SHELL', 'bundle exec sidekiqmon processes 2>/dev/null | grep -q .']
       interval: 30s

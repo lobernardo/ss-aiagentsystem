@@ -61,7 +61,7 @@ class ScanSolo::Knowledge::IngestionService
   end
 
   def chunk(text)
-    text.strip
+    text.gsub(/\r\n?/, "\n").strip
         .split(/\n{2,}/)
         .flat_map { |paragraph| wrap(paragraph) }
         .reject(&:blank?)

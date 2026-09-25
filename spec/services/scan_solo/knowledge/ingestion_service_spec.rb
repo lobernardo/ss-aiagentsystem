@@ -34,6 +34,13 @@ RSpec.describe ScanSolo::Knowledge::IngestionService do
 
       expect(source.knowledge_chunks.count).to eq(2)
     end
+
+    it 'splits paragraphs separated by CRLF (browser form submission)' do
+      source.update_columns(content: "Pergunta 1?\r\nResposta 1.\r\n\r\nPergunta 2?\r\nResposta 2.")
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+
+      expect(source.knowledge_chunks.count).to eq(2)
+    end
   end
 
   describe 'RF-25: requires no production LLM credential' do

@@ -129,8 +129,8 @@ services:
     environment:
       - PGPASSWORD=${POSTGRES_PASSWORD}
     command: >
-      sh -c "pg_dump -h postgres -U postgres -d ${POSTGRES_DATABASE:-chatwoot_production} |
-      gzip > /backups/${POSTGRES_DATABASE:-chatwoot_production}-$$(date +%Y%m%d%H%M%S).sql.gz"
+      sh -c "pg_dump -h postgres -U postgres -d chatwoot_production |
+      gzip > /backups/chatwoot_production-$$(date +%Y%m%d%H%M%S).sql.gz"
     volumes:
       - scansolo_backups:/backups
     profiles:

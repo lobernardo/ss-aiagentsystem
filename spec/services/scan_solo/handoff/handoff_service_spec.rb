@@ -16,11 +16,12 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
     draft.update!(name: 'Agente', enabled: true, required_qualification_fields: %w[budget],
                   allowed_inbox_ids: [conversation.inbox_id])
     ScanSolo::AiAgent::PublishService.new(account: account).call
-    create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact, content: 'Quero saber mais sobre o produto')
+    create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact,
+                     content: 'Quero saber mais sobre o produto')
   end
 
   describe '.call' do
-    it 'creates exactly one private note with all nine required elements' do
+    it 'creates exactly one private note with all nine required elements', :aggregate_failures do
       described_class.call(conversation: conversation, reason: 'Cliente pediu para falar com humano', actor: agent)
 
       notes = conversation.messages.where(private: true)
@@ -36,6 +37,37 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
       expect(content).to include('Status da proposta: não aplicável')
       expect(content).to include('Ações pendentes:')
       expect(content).to include('Próximo passo recomendado:')
+    end
+
+    context 'with config v2 and data under native and alternative keys (RF-16)' do
+      let(:contact) do
+        create(:contact, account: account, email: 'lead@example.com',
+                         custom_attributes: { 'cidade_uf' => 'Rio/RJ', 'objections' => 'preço alto' })
+      end
+
+      before do
+        draft = ScanSolo::AiAgentConfig.draft_for!(account)
+        draft.update!(required_qualification_fields: ['Objetivo do serviço', 'Cidade / UF', 'Prazo desejado', 'E-mail'])
+        ScanSolo::AiAgent::PublishService.new(account: account).call
+      end
+
+      it 'lists the resolver-satisfied fields in config order and keeps the other eight lines unchanged' do
+        described_class.call(conversation: conversation, reason: 'transferência', actor: agent)
+
+        expect(conversation.messages.where(private: true).last.content.lines(chomp: true)).to eq(
+          [
+            'Motivo da transferência: transferência',
+            'Resumo: Cliente: Quero saber mais sobre o produto',
+            'Objetivo do cliente: não informado',
+            'Campos de qualificação coletados: Cidade / UF: Rio/RJ, E-mail: lead@example.com',
+            'Objeções: preço alto',
+            'Etapa do pipeline: Em Qualificação',
+            'Status da proposta: não aplicável',
+            'Ações pendentes: nenhuma',
+            'Próximo passo recomendado: Revisar o histórico da conversa e responder diretamente ao cliente.'
+          ]
+        )
+      end
     end
 
     it 'shows the pt-BR label of the current proposal version status (RF-21)' do
@@ -71,7 +103,7 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
 
       expect do
         described_class.call(conversation: conversation, reason: 'segunda solicitação', actor: agent)
-      end.not_to change { conversation.messages.where(private: true).count }
+      end.not_to(change { conversation.messages.where(private: true).count })
     end
 
     it 'still creates the note when the conversation already has the bare handoff_requested flag set (model-initiated path)' do
@@ -88,7 +120,7 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
 
       expect do
         described_class.call(conversation: conversation, reason: 'tentativa tardia', actor: agent)
-      end.not_to change { conversation.messages.where(private: true).count }
+      end.not_to(change { conversation.messages.where(private: true).count })
     end
   end
 end

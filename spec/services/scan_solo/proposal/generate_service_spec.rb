@@ -32,6 +32,26 @@ RSpec.describe ScanSolo::Proposal::GenerateService do
     it 'proceeds when all required fields are present' do
       expect { call }.not_to raise_error
     end
+
+    context 'with required fields satisfied through native values and aliases (RF-14)' do
+      before do
+        draft = ScanSolo::AiAgentConfig.draft_for!(account)
+        draft.update!(required_qualification_fields: ['E-mail', 'Cidade / UF', 'Área ou extensão'])
+        ScanSolo::AiAgent::PublishService.new(account: account).call
+        contact.update!(email: 'lead@example.com', custom_attributes: { 'cidade_uf' => 'Rio/RJ', 'area_total' => '800 m²' })
+      end
+
+      it 'creates the proposal version' do
+        expect { call }.to change(ScanSolo::ProposalVersion, :count).by(1)
+      end
+
+      it 'rejects naming exactly the unsatisfied label and creates no version' do
+        contact.update!(custom_attributes: { 'cidade_uf' => 'Rio/RJ' })
+
+        expect { call }.to raise_error(ActiveRecord::RecordInvalid, /campos obrigatórios da proposta incompletos: Área ou extensão\z/)
+        expect(ScanSolo::ProposalVersion.count).to eq(0)
+      end
+    end
   end
 
   describe 'generation request (RF-75)' do

@@ -54,4 +54,34 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
       remaining_attempts.each { |attempt| expect(attempt.reload).to be_scheduled }
     end
   end
+
+  describe 'fields satisfied through native values and aliases (RF-13)' do
+    let(:contact) { create(:contact, account: account, email: 'lead@example.com') }
+
+    before do
+      draft = ScanSolo::AiAgentConfig.draft_for!(account)
+      draft.update!(required_qualification_fields: ['E-mail', 'Cidade / UF', 'Prazo desejado'])
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+    end
+
+    it 'is complete and cancels every scheduled attempt when the remaining fields are satisfied only via native/alias' do
+      contact.update!(custom_attributes: { 'cidade_uf' => 'Rio/RJ', 'prazo' => 'amanhã' })
+
+      result = call
+
+      expect(result).to be_complete
+      expect(enrollment.reload).to be_cancelled
+      expect(enrollment.attempts.pluck(:result).uniq).to eq(['cancelled'])
+    end
+
+    it 'cancels only the earliest scheduled attempt when one field is still unsatisfied' do
+      contact.update!(custom_attributes: { 'cidade' => 'Rio/RJ' })
+
+      result = call
+
+      expect(result.missing_fields).to eq(['Prazo desejado'])
+      expect(enrollment.reload).to be_active
+      expect(enrollment.attempts.order(:scheduled_at).map(&:result)).to eq(%w[cancelled scheduled scheduled])
+    end
+  end
 end

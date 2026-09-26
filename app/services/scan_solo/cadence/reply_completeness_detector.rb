@@ -1,7 +1,7 @@
 # RF-65: deterministic field-completeness detection only -- reuses RF-16's
-# "all required fields satisfied" rule (the same
-# `custom_attributes[field].present?` check as
-# ScanSolo::Actions::QualificationFieldAction), never an NLP/intent
+# "all required fields satisfied" rule as reported by
+# ScanSolo::Qualification::FieldResolver (native contact fields and
+# alias/normalized custom attribute keys count, RF-13), never an NLP/intent
 # classifier. A full reply (every required qualification field for the
 # opportunity's stage now satisfied) stops/recalculates every pending
 # cadence attempt; a partial reply cancels only the immediate pending send,
@@ -41,15 +41,9 @@ class ScanSolo::Cadence::ReplyCompletenessDetector
 
   attr_reader :opportunity
 
-  def required_fields
-    Array(ScanSolo::AiAgentConfig.published_for(opportunity.account)&.required_qualification_fields)
-  end
-
   def missing_fields
-    contact = opportunity.contact
-    return required_fields if contact.blank?
-
-    required_fields.select { |field| contact.custom_attributes[field].blank? }
+    config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
+    ScanSolo::Qualification::FieldResolver.call(contact: opportunity.contact, config: config).missing_labels
   end
 
   def cancel_immediate_pending!

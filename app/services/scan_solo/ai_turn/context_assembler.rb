@@ -7,7 +7,9 @@
 # missing key as an oversight.
 #
 # The opportunity context carries the collected and missing required
-# qualification fields of the published config (RF-05), and the knowledge
+# qualification fields of the published config (RF-05), as reported by
+# ScanSolo::Qualification::FieldResolver -- native name/email/phone and
+# alias/normalized custom attribute keys satisfy a field (RF-08) -- and the knowledge
 # context carries exactly the chunks that go into the prompt, with the
 # `{source_id, source_title, chunk_id, similarity_score}` evidence the turn
 # persists (RF-46); a retrieval outage yields no chunks plus its reason.
@@ -72,16 +74,15 @@ class ScanSolo::AiTurn::ContextAssembler
     opportunity = ScanSolo::PipelineOpportunity.find_by(conversation_id: conversation.id)
     return NOT_APPLICABLE if opportunity.blank?
 
-    required_fields = Array(config.required_qualification_fields)
-    attributes = opportunity.contact.custom_attributes
+    resolver = ScanSolo::Qualification::FieldResolver.call(contact: opportunity.contact, config: config)
 
     {
       available: true,
       stage: opportunity.stage,
       owner_id: opportunity.owner_id,
       last_customer_interaction_at: opportunity.last_customer_interaction_at,
-      collected_fields: attributes.slice(*required_fields).compact_blank,
-      missing_fields: required_fields.select { |field| attributes[field].blank? }
+      collected_fields: resolver.collected,
+      missing_fields: resolver.missing_labels
     }
   end
 

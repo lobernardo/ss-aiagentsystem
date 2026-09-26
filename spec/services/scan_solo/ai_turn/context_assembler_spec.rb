@@ -55,6 +55,28 @@ RSpec.describe ScanSolo::AiTurn::ContextAssembler do
       expect(snapshot[:pipeline_context]).to include(collected_fields: { 'budget' => '5000' }, missing_fields: ['area'])
     end
 
+    it 'treats native name and email as satisfying "Nome" and "E-mail" (RF-08)' do
+      config.update!(required_qualification_fields: ['Nome', 'E-mail', 'Cidade / UF'])
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
+
+      snapshot = described_class.call(message: message, config: config, retrieval_service: mock_retrieval_service)
+
+      expect(snapshot[:pipeline_context]).to include(
+        collected_fields: { 'Nome' => 'Maria', 'E-mail' => 'maria@example.com' },
+        missing_fields: ['Cidade / UF']
+      )
+    end
+
+    it 'recognizes data stored under an alternative key of a config label (RF-08)' do
+      config.update!(required_qualification_fields: ['Cidade / UF'])
+      contact.update!(custom_attributes: { 'cidade_uf' => 'Rio/RJ' })
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
+
+      snapshot = described_class.call(message: message, config: config, retrieval_service: mock_retrieval_service)
+
+      expect(snapshot[:pipeline_context]).to include(collected_fields: { 'Cidade / UF' => 'Rio/RJ' }, missing_fields: [])
+    end
+
     describe 'RF-46: knowledge evidence' do
       it 'returns the retrieved chunks with source title, chunk id and similarity score' do
         result = ScanSolo::Knowledge::RetrievalService::Result.new(chunk_id: 7, source_id: 3, source_title: 'Planos', source_type: 'faq',

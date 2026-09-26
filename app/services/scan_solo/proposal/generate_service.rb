@@ -1,8 +1,8 @@
 # RF-73/RF-74/RF-75/RF-76: `proposal.generate` is the sole path that
 # creates a ScanSolo::ProposalVersion. Rejects the request outright -- no
-# record created -- when the opportunity's required qualification fields
-# aren't all deterministically satisfied, the same field-completeness check
-# ScanSolo::Cadence::ReplyCompletenessDetector uses for RF-16 (RF-74).
+# record created -- when ScanSolo::Qualification::FieldResolver reports any
+# required qualification field unsatisfied, the same field-completeness rule
+# ScanSolo::Cadence::ReplyCompletenessDetector uses for RF-16 (RF-74/RF-14).
 # Requests generation exclusively through the registered provider (the mock
 # provider outside production, RF-83) and never writes value/currency/
 # artifact_url itself -- only ScanSolo::Proposal::CallbackHandler, invoked
@@ -47,10 +47,7 @@ class ScanSolo::Proposal::GenerateService
   end
 
   def missing_required_fields
-    contact = opportunity.contact
-    required = Array(ScanSolo::AiAgentConfig.published_for(opportunity.account)&.required_qualification_fields)
-    return required if contact.blank?
-
-    required.select { |field| contact.custom_attributes[field].blank? }
+    config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
+    ScanSolo::Qualification::FieldResolver.call(contact: opportunity.contact, config: config).missing_labels
   end
 end

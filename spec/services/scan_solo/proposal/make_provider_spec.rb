@@ -3,7 +3,16 @@ require 'rails_helper'
 RSpec.describe ScanSolo::Proposal::MakeProvider do
   let(:account) { create(:account) }
   let(:user) { create(:user, account: account) }
-  let(:contact) { create(:contact, account: account, custom_attributes: { 'budget' => '5000', 'internal' => 'private' }) }
+  let(:config_v2_labels) do
+    ['Objetivo do serviço', 'Cidade / UF', 'Endereço da obra', 'Área ou extensão', 'Profundidade de interesse',
+     'Prazo desejado', 'Integração de segurança', 'Empresa', 'E-mail']
+  end
+  let(:contact) do
+    create(:contact, account: account, name: 'Leonardo', email: 'leo@example.com',
+                     custom_attributes: { 'Cidade / UF' => 'Rio/RJ', 'Área ou extensão' => '800 m²', 'Empresa' => '',
+                                          'Integração de segurança' => 'NR-35', 'budget' => '5000' })
+  end
+  let(:expected_qualification) { { 'cidade_uf' => 'Rio/RJ', 'area' => '800 m²', 'email' => 'leo@example.com', 'nome' => 'Leonardo' } }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let(:opportunity) do
     ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
@@ -13,7 +22,7 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
   let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id) }
 
   before do
-    ScanSolo::AiAgentConfig.draft_for!(account).update!(required_qualification_fields: ['budget'])
+    ScanSolo::AiAgentConfig.draft_for!(account).update!(required_qualification_fields: config_v2_labels)
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
@@ -22,7 +31,7 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
       expect(ScanSolo::Make::OutboundRequestService).to receive(:call).with(
         account: account, action: 'proposal.generate', correlation_id: correlation_id, idempotency_key: correlation_id, retry_count: 0,
         payload: {
-          account_id: account.id, opportunity_id: opportunity.id, proposal_version_id: version.id, qualification: { 'budget' => '5000' },
+          account_id: account.id, opportunity_id: opportunity.id, proposal_version_id: version.id, qualification: expected_qualification,
           requested_by_user_id: user.id, requested_at: Time.current.iso8601
         }
       )
@@ -68,10 +77,22 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
         a_request(:post, scenario_url).with do |req|
           body = JSON.parse(req.body)
           body['action'] == 'proposal.generate' && body['proposal_version_id'] == version.id &&
-            body['qualification'] == { 'budget' => '5000' } && body['requested_by_user_id'] == user.id && body['requested_at'].present?
+            body['qualification'] == expected_qualification && body['requested_by_user_id'] == user.id && body['requested_at'].present?
         end
       ).to have_been_made.once
       expect(version.reload).to be_generating
+    end
+
+    it 'posts a payload valid against the refined CT-05 MakeIntegrationRequestPayload schema' do
+      stub_request(:post, scenario_url).to_return(status: 200, body: '{}')
+      asyncapi = YAML.safe_load_file(Rails.root.join('.spec/features/scansolo-agent-qualification-continuity/asyncapi.yaml'))
+      schema = JSONSchemer.schema(
+        asyncapi.dig('components', 'schemas', 'MakeIntegrationRequestPayload').merge('components' => asyncapi['components'])
+      )
+
+      described_class.request_generation(proposal_version: version, correlation_id: correlation_id, actor: user)
+
+      expect(a_request(:post, scenario_url).with { |req| schema.valid?(JSON.parse(req.body)) }).to have_been_made.once
     end
 
     {
@@ -90,6 +111,37 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
         expect(version.failure_reason).to eq(reason)
         expect(ScanSolo::MakeRequest.find_by(correlation_id: correlation_id)).to be_failed
       end
+    end
+  end
+
+  describe 'CT-05 canonical qualification (RF-15)' do
+    let(:payloads) { [] }
+
+    before do
+      allow(ScanSolo::Make::OutboundRequestService).to receive(:call) { |**kwargs| payloads << kwargs[:payload] }
+    end
+
+    def qualification
+      described_class.request_generation(proposal_version: version, correlation_id: correlation_id)
+      payloads.last[:qualification]
+    end
+
+    it 'sends only canonical keys with the stored values, whatever the config label spelling' do
+      expect(qualification).to eq(expected_qualification)
+      expect(qualification.keys).to all(match(/\A[a-z0-9_]+\z/))
+      expect(qualification.keys - ScanSolo::Qualification::FieldResolver::MAKE_KEYS).to be_empty
+    end
+
+    it 'sends native nome and telefone even when the config does not require them' do
+      contact.update!(phone_number: '+5521999990000')
+
+      expect(qualification).to include('nome' => 'Leonardo', 'telefone' => '+5521999990000')
+    end
+
+    it 'omits keys without a present value and never sends integracao_seguranca' do
+      expect(qualification).not_to have_key('empresa')
+      expect(qualification).not_to have_key('integracao_seguranca')
+      expect(qualification.values).to all(be_present)
     end
   end
 end

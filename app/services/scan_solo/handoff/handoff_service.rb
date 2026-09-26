@@ -102,11 +102,11 @@ class ScanSolo::Handoff::HandoffService
     contact.custom_attributes['objective'].presence || 'não informado'
   end
 
+  # RF-16: the resolver's satisfied fields as `<config label>: <value>` in
+  # config order.
   def qualification_fields
-    return 'nenhum' if contact.blank?
-
-    allowed = Array(ScanSolo::AiAgentConfig.published_for(conversation.account)&.required_qualification_fields)
-    collected = contact.custom_attributes.slice(*allowed).compact
+    config = ScanSolo::AiAgentConfig.published_for(conversation.account)
+    collected = ScanSolo::Qualification::FieldResolver.call(contact: contact, config: config).collected
     return 'nenhum' if collected.blank?
 
     collected.map { |field, value| "#{field}: #{value}" }.join(', ')

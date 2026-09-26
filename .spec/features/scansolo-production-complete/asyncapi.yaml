@@ -218,9 +218,11 @@ components:
         qualification:
           type: object
           description: >
-            NEW (CT-05). Keys = the published config's `required_qualification_fields`;
-            values = `contact.custom_attributes[field]`. Final field mapping and
-            price variables are HG-03.
+            NEW (CT-05). Fixed canonical key set, present-only (unsatisfied keys
+            omitted, never null); values resolved by
+            `ScanSolo::Qualification::FieldResolver`. Refined in
+            .spec/features/scansolo-agent-qualification-continuity/asyncapi.yaml.
+            Price variables are HG-03.
           propertyNames:
             pattern: '^[a-z0-9_]+$'
           additionalProperties:

@@ -131,7 +131,7 @@ Only `scheduled` attempts change; sent attempts are never rewritten. Extend: add
 
 ### Reply completeness
 
-- `Cadence::ReplyCompletenessDetector`: required fields = published config `required_qualification_fields`, checked via `contact.custom_attributes[field].present?`.
+- `Cadence::ReplyCompletenessDetector`: required fields = published config `required_qualification_fields`, satisfaction reported by `ScanSolo::Qualification::FieldResolver` (native name/email/phone and normalized/alias `custom_attributes` keys count).
 - All present -> cancel all enrollments; some missing -> cancel only the next scheduled attempt per active enrollment.
 
 ### Due attempt sending
@@ -173,7 +173,7 @@ Only `scheduled` attempts change; sent attempts are never rewritten. Extend: add
 
 | Step | Service | Guard | Result |
 |---|---|---|---|
-| Generate | `Proposal::GenerateService` | all `required_qualification_fields` present on contact, else 422 `campos obrigatórios da proposta incompletos` | new current version `generating`; provider callback |
+| Generate | `Proposal::GenerateService` | `ScanSolo::Qualification::FieldResolver` reports every `required_qualification_fields` entry satisfied, else 422 `campos obrigatórios da proposta incompletos` | new current version `generating`; provider callback |
 | Callback (generate) | `Proposal::CallbackHandler.apply_generate_result!` | matching `generate_correlation_id`, not yet applied (row lock) | `generated` + value/currency/artifact_url, or `failed` |
 | Approve | `Proposal::ApproveService` | version `is_current` | `approved_at`, `approved` if was `generated`; idempotent |
 | Send | `Proposal::SendService` | current; `generated`/`approved`/`sent`; approval present when `approval_required?` | provider send |

@@ -5,6 +5,9 @@
 # offered to the model (RF-12). `service_hours`/`response_limits` are model
 # instructions only; the AI keeps answering 24/7 (D-22 interim default).
 #
+# RF-17: the fixed continuity rules come first and are code constants, not
+# config -- no agent config edit can remove or reword them.
+#
 # The whole payload goes through ScanSolo::AiTurn::PromptRedactor, so a
 # secret-shaped value stored in config or context never reaches the provider.
 class ScanSolo::AiTurn::PromptBuilder
@@ -14,8 +17,15 @@ class ScanSolo::AiTurn::PromptBuilder
   # which conversation or opportunity an action touches.
   TURN_SCOPED_PARAMS = %w[conversation_id opportunity_id].freeze
 
+  CONTINUITY_RULES = [
+    'Nunca pergunte novamente informação já presente no contato, nos campos coletados ou no histórico.',
+    'Responda primeiro à pergunta/intenção atual do cliente; só depois peça no máximo um campo faltante.',
+    'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.'
+  ].freeze
+
   ACTION_DESCRIPTIONS = {
-    'qualification_field' => 'registrar campos de qualificação informados pelo cliente',
+    'qualification_field' => 'registrar todos os dados de qualificação informados na mensagem do cliente, ' \
+                             'numa única chamada com todos os campos',
     'stage_transition' => 'avançar a oportunidade para em_qualificacao ou qualificado',
     'private_note' => 'criar uma nota interna para a equipe',
     'cadence_signal' => 'sinalizar um evento de follow-up; use opt_out quando o cliente pedir para não receber mais mensagens',
@@ -59,6 +69,7 @@ class ScanSolo::AiTurn::PromptBuilder
 
   def rule_sections
     {
+      'Regras fixas de atendimento' => list(CONTINUITY_RULES),
       'Regras do agente' => agent_rules,
       'Horário de atendimento' => "#{text(config.service_hours)}\nResponda sempre; use o horário apenas para orientar o cliente.",
       'Limites de resposta' => text(config.response_limits),

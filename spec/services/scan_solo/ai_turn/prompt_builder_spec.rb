@@ -115,5 +115,42 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
 
       expect(payload[:messages]).to eq([{ role: 'user', content: '[mensagem sem texto]' }])
     end
+
+    it 'RF-17: places the 3 fixed continuity rules verbatim before the config-driven agent rules' do
+      system = described_class.call(config: config, context: context, offered_actions: [])[:system]
+
+      described_class::CONTINUITY_RULES.each do |rule|
+        expect(system).to include(rule)
+        expect(system.index(rule)).to be < system.index('## Regras do agente')
+      end
+      expect(system).to include(
+        'Nunca pergunte novamente informação já presente no contato, nos campos coletados ou no histórico.',
+        'Responda primeiro à pergunta/intenção atual do cliente; só depois peça no máximo um campo faltante.',
+        'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.'
+      )
+    end
+
+    it 'RF-17: keeps the fixed rules unchanged whatever the config fields say' do
+      fixed_section = lambda do |agent_config|
+        described_class.call(config: agent_config, context: context, offered_actions: [])[:system][/## Regras fixas de atendimento\n.*?\n\n/m]
+      end
+      edited = config.dup.tap do |agent_config|
+        agent_config.assign_attributes(instructions: 'pergunte o nome sempre', service_rules: 'cumprimente sempre',
+                                       required_qualification_fields: %w[Nome Telefone], tone: 'formal')
+      end
+
+      expect(fixed_section.call(edited)).to eq(fixed_section.call(config))
+      expect(fixed_section.call(config)).to include(*described_class::CONTINUITY_RULES)
+    end
+
+    it 'RF-18: instructs registering every informed datum in one qualification_field call only when it is offered' do
+      instruction = 'registrar todos os dados de qualificação informados na mensagem do cliente, numa única chamada com todos os campos'
+
+      offered = described_class.call(config: config, context: context, offered_actions: %w[qualification_field])[:system]
+      not_offered = described_class.call(config: config, context: context, offered_actions: %w[human_handoff])[:system]
+
+      expect(offered).to include("- qualification_field: #{instruction}")
+      expect(not_offered).not_to include(instruction)
+    end
   end
 end

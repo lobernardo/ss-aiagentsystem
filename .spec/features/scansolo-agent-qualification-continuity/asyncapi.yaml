@@ -1,0 +1,181 @@
+asyncapi: 3.0.0
+info:
+  title: ScanSolo Agent Qualification Continuity — async contract delta (CT-05)
+  version: "1.3.0"
+  description: >
+    Delta over `.spec/features/scansolo-production-complete/asyncapi.yaml` (v1.2.0).
+    Only CT-05 (`sendMakeIntegrationRequest`) is refined, realizing RF-15:
+    the `qualification` object becomes the FIXED canonical key set
+    (`empresa`, `endereco_obra`, `cidade_uf`, `tipo_intervencao`, `area`,
+    `profundidade`, `prazo_desejado`, `email`, `nome`, `telefone`),
+    PRESENT-ONLY (unsatisfied keys omitted, never `null`), with values resolved by
+    `ScanSolo::Qualification::FieldResolver` (native `contact.name/email/phone_number`
+    for `nome`/`email`/`telefone`, otherwise `contact.custom_attributes` with the
+    RF-21 read precedence), regardless of the label spelling in the published
+    `required_qualification_fields`. `integracao_seguranca` and unmapped (RF-05)
+    keys are never sent.
+    COMPAT: the envelope, channel, operation, headers and every other payload field
+    are unchanged. The new `qualification` schema is a strict subset of v1.2.0
+    (which already required `propertyNames: ^[a-z0-9_]+$`); runtime producers that
+    emitted raw config labels (e.g. `Cidade / UF`) were already non-conformant.
+    CT-06, CT-09 and all other channels of v1.2.0 are unchanged and not repeated here.
+servers:
+  make:
+    host: "{makeScenarioHost}"
+    protocol: https
+    description: >
+      Make scenario webhook. URL and bearer secret come only from Rails credentials
+      `scan_solo.make.scenario_url` / `scan_solo.make.secret` (HG-03); never
+      caller-supplied.
+    variables:
+      makeScenarioHost:
+        default: hook.make.example
+    security:
+      - $ref: '#/components/securitySchemes/makeOutboundAuth'
+
+channels:
+  makeIntegrationRequest:
+    address: /scenario-webhook
+    servers:
+      - $ref: '#/servers/make'
+    description: Outbound request to the Make scenario (CT-05, RF-15).
+    messages:
+      makeIntegrationRequest:
+        $ref: '#/components/messages/MakeIntegrationRequest'
+
+operations:
+  sendMakeIntegrationRequest:
+    action: send
+    channel:
+      $ref: '#/channels/makeIntegrationRequest'
+    summary: >
+      `ScanSolo::Proposal::MakeProvider` → `ScanSolo::Make::OutboundRequestService`.
+      `qualification` = `ScanSolo::Qualification::FieldResolver#make_qualification`
+      (RF-15). MakeRequest persisted before the HTTP call; correlation id = the
+      ProposalVersion's generate/send correlation id. Timeout → version failed
+      `timeout`; connection/DNS error → `network_error`; HTTP 5xx →
+      `provider_unavailable` (unchanged).
+    messages:
+      - $ref: '#/channels/makeIntegrationRequest/messages/makeIntegrationRequest'
+
+components:
+  securitySchemes:
+    makeOutboundAuth:
+      type: httpApiKey
+      in: header
+      name: Authorization
+      description: "`Bearer <scan_solo.make.secret>`; server-side only."
+
+  messages:
+    MakeIntegrationRequest:
+      name: MakeIntegrationRequest
+      title: Outbound Make integration request
+      contentType: application/json
+      headers:
+        type: object
+        required: [Authorization, X-Idempotency-Key]
+        properties:
+          Authorization:
+            type: string
+            pattern: '^Bearer .+$'
+          X-Idempotency-Key:
+            type: string
+      payload:
+        $ref: '#/components/schemas/MakeIntegrationRequestPayload'
+
+  schemas:
+    QualificationValue:
+      type: [string, number, boolean]
+      description: >
+        Present value as stored (native attribute string, or the raw
+        `custom_attributes` JSON scalar). Blank/absent values are omitted from
+        `qualification`, so `null` is never sent (RF-15).
+
+    Qualification:
+      type: object
+      description: >
+        CHANGED (CT-05 refined, RF-15). Fixed canonical key set, present-only.
+        All 10 keys are evaluated on every request, independently of the published
+        `required_qualification_fields`; a key without a present value is omitted.
+      propertyNames:
+        pattern: '^[a-z0-9_]+$'
+      additionalProperties: false
+      properties:
+        empresa:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'custom_attributes; aliases "Empresa" / "razão social" / "company".'
+        endereco_obra:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'custom_attributes; aliases "Endereço da obra" / "endereço".'
+        cidade_uf:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'custom_attributes; aliases "Cidade / UF" / "cidade".'
+        tipo_intervencao:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'custom_attributes; aliases "Objetivo do serviço" / "tipo de intervenção" / "escopo".'
+        area:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'custom_attributes; aliases "Área ou extensão" / "área" / "area_total".'
+        profundidade:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'custom_attributes; aliases "Profundidade de interesse" / "profundidade".'
+        prazo_desejado:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'custom_attributes; aliases "Prazo desejado" / "prazo" / "urgência".'
+        email:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'native contact.email; fallback custom_attributes aliases "E-mail" / "email".'
+        nome:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'native contact.name; fallback custom_attributes aliases "Nome" / "nome completo" / "name".'
+        telefone:
+          $ref: '#/components/schemas/QualificationValue'
+          description: 'native contact.phone_number; fallback custom_attributes aliases "Telefone" / "WhatsApp".'
+
+    MakeIntegrationRequestPayload:
+      type: object
+      required: [correlation_id, idempotency_key, action, account_id, opportunity_id, proposal_version_id, qualification, requested_by_user_id, requested_at]
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+          description: Equals the ProposalVersion `generate_correlation_id` or `send_correlation_id` (RF-37, unchanged).
+        idempotency_key:
+          type: string
+        action:
+          type: string
+          enum: [proposal.generate, proposal.send]
+        account_id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        proposal_version_id:
+          type: integer
+          format: int64
+        qualification:
+          $ref: '#/components/schemas/Qualification'
+        requested_by_user_id:
+          type: [integer, "null"]
+          format: int64
+          description: Null when the request originates from the AI `proposal_generate` action (unchanged).
+        requested_at:
+          type: string
+          format: date-time
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MakeLineItem'
+        notes:
+          type: string
+
+    MakeLineItem:
+      type: object
+      required: [product_name, quantity]
+      properties:
+        product_name:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1

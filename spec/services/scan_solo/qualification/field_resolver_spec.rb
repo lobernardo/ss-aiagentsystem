@@ -184,7 +184,7 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
     it 'references no enterprise or Captain code' do
       source = File.read(Rails.root.join('app/services/scan_solo/qualification/field_resolver.rb'))
 
-      expect(source).not_to match(/enterprise|Captain::/i)
+      expect(source).not_to match(/enterprise|Captain:{2}/i)
     end
   end
 end

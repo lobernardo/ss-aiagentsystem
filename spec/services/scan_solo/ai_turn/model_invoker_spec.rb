@@ -25,7 +25,7 @@ RSpec.describe ScanSolo::AiTurn::ModelInvoker do
       expect(result.latency_ms).to be >= 0
     end
 
-    it 'raises for output that does not follow the {reply, actions} schema' do
+    it 'raises for output that does not follow the {reply, actions, asked_fields, summary} schema' do
       provider = ->(**) { { content: 'texto solto', provider: 'x', model: 'y' } }
 
       expect { described_class.call(config: config, payload: payload, llm_provider: provider) }
@@ -39,8 +39,53 @@ RSpec.describe ScanSolo::AiTurn::ModelInvoker do
     end
   end
 
+  describe 'RF-10/CT-02: required qualification metadata' do
+    let(:base_output) { { 'reply' => 'ok', 'actions' => [] } }
+
+    [
+      {},
+      { 'summary' => false },
+      { 'asked_fields' => [] },
+      { 'asked_fields' => [], 'summary' => 'sim' },
+      { 'asked_fields' => [], 'summary' => nil },
+      { 'asked_fields' => [], 'summary' => 0 },
+      { 'asked_fields' => nil, 'summary' => false },
+      { 'asked_fields' => 'nome', 'summary' => false },
+      { 'asked_fields' => {}, 'summary' => false },
+      { 'asked_fields' => ['nome', 1], 'summary' => false }
+    ].each do |metadata|
+      it "rejects missing or malformed metadata #{metadata.inspect}" do
+        output = base_output.merge(metadata)
+        provider = ->(**) { { content: output } }
+
+        expect { described_class.call(config: config, payload: payload, llm_provider: provider) }.to(
+          raise_error { |error| expect(error.class.name).to eq('ScanSolo::AiTurn::ModelInvoker::InvalidOutputError') }
+        )
+      end
+    end
+
+    it 'returns the supplied asked fields and a true summary indicator' do
+      provider = lambda do |**kwargs|
+        ScanSolo::TestMode::MockLlmProvider.call(**kwargs, fixture_asked_fields: %w[nome area], fixture_summary: true)
+      end
+
+      result = described_class.call(config: config, payload: payload, llm_provider: provider)
+
+      expect(result).to have_attributes(asked_fields: %w[nome area], summary: true)
+    end
+
+    it 'accepts an empty asked fields array and a false summary indicator' do
+      result = described_class.call(config: config, payload: payload, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(result).to have_attributes(asked_fields: [], summary: false)
+    end
+  end
+
   describe 'real provider path (RubyLLM)' do
-    let(:reply) { instance_double(RubyLLM::Message, content: { 'reply' => 'ok', 'actions' => [] }, input_tokens: 11, output_tokens: 3) }
+    let(:reply) do
+      instance_double(RubyLLM::Message, content: { 'reply' => 'ok', 'actions' => [], 'asked_fields' => [], 'summary' => false },
+                                        input_tokens: 11, output_tokens: 3)
+    end
     let(:chat) { instance_double(RubyLLM::Chat) }
     let(:llm_context) { instance_double(RubyLLM::Context) }
 

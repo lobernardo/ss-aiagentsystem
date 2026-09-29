@@ -35,7 +35,7 @@ Antes de implementar, leia:
       Arquivos: `Gemfile`, `Gemfile.lock`
       Mudança: `gem 'pdf-reader'` no grupo default; `docker exec scansolo-phase2-test sh -c 'cd /app && bundle install'`. Nenhuma outra gem.
       Cobre: RF-19
-      Acceptance criteria: `Gemfile.lock` contém `pdf-reader`; `docker exec scansolo-phase2-test sh -c 'cd /app && bundle exec ruby -e "require %q(pdf-reader); puts PDF::Reader::VERSION"'` imprime uma versão; nenhuma outra gem adicionada.
+      Acceptance criteria: `Gemfile.lock` contém `pdf-reader`; `docker exec scansolo-phase2-test sh -c 'cd /app && bundle exec ruby -e "require %q(pdf-reader); puts Gem.loaded_specs[%q(pdf-reader)].version"'` imprime `2.16.0`; nenhuma outra gem adicionada.
       Testes: comando acima.
 - [ ] T04 — Saída do modelo exige `asked_fields` e `summary` (CT-02)
       Arquivos: `app/services/scan_solo/ai_turn/model_invoker.rb`, `app/services/scan_solo/test_mode/mock_llm_provider.rb`, `spec/services/scan_solo/ai_turn/model_invoker_spec.rb`, `spec/services/scan_solo/test_mode/mock_llm_provider_spec.rb`

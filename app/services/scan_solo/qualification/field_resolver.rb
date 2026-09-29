@@ -14,20 +14,83 @@
 # `custom_attributes` are read -- never messages, an LLM or HTTP -- and
 # nothing is written.
 class ScanSolo::Qualification::FieldResolver
+  # Lead state RF-02: closed catalog in qualification question order.
+  CATALOG = [
+    { key: 'nome', block: 'identificacao', label: 'Contato' },
+    { key: 'empresa', block: 'identificacao', label: 'Empresa / razão social' },
+    { key: 'cargo', block: 'identificacao', label: 'Cargo' },
+    { key: 'cnpj', block: 'identificacao', label: 'CNPJ' },
+    { key: 'telefone', block: 'identificacao', label: 'Telefone' },
+    { key: 'email', block: 'identificacao', label: 'E-mail principal' },
+    { key: 'emails_copia', block: 'identificacao', label: 'E-mails em cópia' },
+    { key: 'tipo_servico', block: 'servico', label: 'Tipo de serviço' },
+    { key: 'tipo_intervencao', block: 'servico', label: 'Objetivo' },
+    { key: 'tecnologia', block: 'servico', label: 'Tecnologia' },
+    { key: 'interferencias_buscadas', block: 'servico', label: 'Interferências buscadas' },
+    { key: 'cliente_final', block: 'local', label: 'Cliente / local final' },
+    { key: 'cidade_uf', block: 'local', label: 'Cidade / UF' },
+    { key: 'endereco_obra', block: 'local', label: 'Endereço' },
+    { key: 'bairro', block: 'local', label: 'Bairro' },
+    { key: 'link_local', block: 'local', label: 'Link' },
+    { key: 'area', block: 'escopo', label: 'Área' },
+    { key: 'metragem', block: 'escopo', label: 'Metragem' },
+    { key: 'quantidade_pontos', block: 'escopo', label: 'Quantidade de pontos' },
+    { key: 'profundidade', block: 'escopo', label: 'Profundidade de investigação' },
+    { key: 'profundidade_intervencao', block: 'escopo', label: 'Profundidade da intervenção' },
+    { key: 'superficie', block: 'escopo', label: 'Superfície' },
+    { key: 'observacoes_tecnicas', block: 'escopo', label: 'Observações técnicas' },
+    { key: 'data_desejada', block: 'execucao', label: 'Data desejada' },
+    { key: 'prazo_desejado', block: 'execucao', label: 'Prazo' },
+    { key: 'diarias', block: 'execucao', label: 'Diárias' },
+    { key: 'integracao_seguranca', block: 'execucao', label: 'Integração' },
+    { key: 'tempo_integracao', block: 'execucao', label: 'Tempo de integração' },
+    { key: 'restricoes_acesso', block: 'execucao', label: 'Restrições de acesso' },
+    { key: 'documentacoes_necessarias', block: 'execucao', label: 'Documentações necessárias' },
+    { key: 'prazo_proposta', block: 'comercial', label: 'Prazo para proposta' },
+    { key: 'email_envio_proposta', block: 'comercial', label: 'E-mail para envio' },
+    { key: 'emails_copia_proposta', block: 'comercial', label: 'Cópias' },
+    { key: 'condicoes_especiais', block: 'comercial', label: 'Condições especiais' }
+  ].map(&:freeze).freeze
+  CATALOG_KEYS = CATALOG.pluck(:key).freeze
+  BLOCKS = CATALOG.pluck(:block).uniq.freeze # rubocop:disable Rails/UniqBeforePluck -- CATALOG is an Array, not a relation
+
   # RF-04, in table order (the order is the RF-21 alias read precedence).
   # The canonical key itself is also an accepted spelling of its entry.
   ALIASES = {
-    'nome' => ['Nome', 'nome completo', 'name'],
+    'nome' => ['Nome', 'nome completo', 'name', 'Contato'],
     'telefone' => %w[Telefone WhatsApp],
-    'email' => %w[E-mail email],
-    'tipo_intervencao' => ['Objetivo do serviço', 'tipo de intervenção', 'escopo'],
+    'email' => ['E-mail', 'email', 'E-mail principal'],
+    'tipo_intervencao' => ['Objetivo do serviço', 'tipo de intervenção', 'escopo', 'Objetivo'],
     'cidade_uf' => ['Cidade / UF', 'cidade'],
     'endereco_obra' => ['Endereço da obra', 'endereço'],
     'area' => ['Área ou extensão', 'área', 'area_total'],
-    'profundidade' => ['Profundidade de interesse', 'profundidade'],
+    'profundidade' => ['Profundidade de interesse', 'profundidade', 'Profundidade de investigação'],
     'prazo_desejado' => ['Prazo desejado', 'prazo', 'urgência'],
-    'empresa' => ['Empresa', 'razão social', 'company'],
-    'integracao_seguranca' => ['Integração de segurança']
+    'empresa' => ['Empresa', 'razão social', 'company', 'Empresa / razão social'],
+    'integracao_seguranca' => ['Integração de segurança', 'Integração'],
+    'cargo' => ['Cargo'],
+    'cnpj' => ['CNPJ'],
+    'emails_copia' => ['E-mails em cópia'],
+    'tipo_servico' => ['Tipo de serviço'],
+    'tecnologia' => ['Tecnologia'],
+    'interferencias_buscadas' => ['Interferências buscadas'],
+    'cliente_final' => ['Cliente / local final'],
+    'bairro' => ['Bairro'],
+    'link_local' => ['Link'],
+    'metragem' => ['Metragem'],
+    'quantidade_pontos' => ['Quantidade de pontos'],
+    'profundidade_intervencao' => ['Profundidade da intervenção'],
+    'superficie' => ['Superfície'],
+    'observacoes_tecnicas' => ['Observações técnicas'],
+    'data_desejada' => ['Data desejada'],
+    'diarias' => ['Diárias'],
+    'tempo_integracao' => ['Tempo de integração'],
+    'restricoes_acesso' => ['Restrições de acesso'],
+    'documentacoes_necessarias' => ['Documentações necessárias'],
+    'prazo_proposta' => ['Prazo para proposta'],
+    'email_envio_proposta' => ['E-mail para envio'],
+    'emails_copia_proposta' => ['Cópias'],
+    'condicoes_especiais' => ['Condições especiais']
   }.freeze
 
   NATIVE = { 'nome' => :name, 'email' => :email, 'telefone' => :phone_number }.freeze

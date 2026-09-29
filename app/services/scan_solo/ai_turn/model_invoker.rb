@@ -1,7 +1,8 @@
 # Invokes the agent's resolved provider (ScanSolo::AiAgent::ModelResolver,
 # RF-21) through the existing lib/llm stack (RubyLLM) with the payload built
 # by ScanSolo::AiTurn::PromptBuilder: the system message as instructions, the
-# history as chat messages and the structured output `{reply, actions[]}`
+# history as chat messages and the structured output
+# `{reply, actions[], asked_fields[], summary}` (RF-10, CT-02)
 # (RF-05, RF-12). It measures the model call duration (`latency_ms`, RF-59)
 # and bounds it with ScanSolo::AI_TURN_MODEL_TIMEOUT, which the
 # per-conversation turn lock outlives (RF-11).
@@ -21,7 +22,7 @@ class ScanSolo::AiTurn::ModelInvoker
 
   PROVIDER_ERRORS = [RubyLLM::Error, RubyLLM::ConfigurationError, RubyLLM::ModelNotFoundError, Timeout::Error].freeze
 
-  Result = Struct.new(:content, :actions, :provider, :model, :input_tokens, :output_tokens, :latency_ms, :failure_reason,
+  Result = Struct.new(:content, :actions, :asked_fields, :summary, :provider, :model, :input_tokens, :output_tokens, :latency_ms, :failure_reason,
                       keyword_init: true) do
     def failed?
       failure_reason.present?
@@ -76,13 +77,17 @@ class ScanSolo::AiTurn::ModelInvoker
 
   def build_result(response, latency_ms)
     output = response[:content]
-    unless output.is_a?(Hash) && output['reply'].is_a?(String) && output['actions'].is_a?(Array)
-      raise InvalidOutputError, 'model output does not match the {reply, actions} schema'
-    end
+    raise InvalidOutputError, 'model output does not match the {reply, actions, asked_fields, summary} schema' unless valid_output?(output)
 
     Result.new(
-      content: output['reply'], actions: output['actions'], provider: response[:provider], model: response[:model],
+      content: output['reply'], actions: output['actions'], asked_fields: output['asked_fields'], summary: output['summary'],
+      provider: response[:provider], model: response[:model],
       input_tokens: response[:input_tokens], output_tokens: response[:output_tokens], latency_ms: latency_ms
     )
+  end
+
+  def valid_output?(output)
+    output.is_a?(Hash) && output['reply'].is_a?(String) && output['actions'].is_a?(Array) &&
+      output['asked_fields'].is_a?(Array) && output['asked_fields'].all?(String) && [true, false].include?(output['summary'])
   end
 end

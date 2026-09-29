@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_23_000007) do
+ActiveRecord::Schema[7.2].define(version: 2026_09_29_000002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1616,6 +1616,35 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_23_000007) do
     t.index ["added_by_id"], name: "index_scan_solo_knowledge_sources_on_added_by_id"
   end
 
+  create_table "scan_solo_lead_state_events", force: :cascade do |t|
+    t.bigint "lead_state_id", null: false
+    t.string "subject", null: false
+    t.string "key"
+    t.text "previous_value"
+    t.string "previous_status"
+    t.text "new_value"
+    t.string "new_status"
+    t.bigint "source_message_id"
+    t.bigint "source_attachment_id"
+    t.datetime "created_at", null: false
+    t.index ["lead_state_id"], name: "index_scan_solo_lead_state_events_on_lead_state_id"
+  end
+
+  create_table "scan_solo_lead_states", force: :cascade do |t|
+    t.bigint "opportunity_id", null: false
+    t.string "intent"
+    t.integer "qualification_status", default: 0, null: false
+    t.datetime "qualification_completed_at"
+    t.string "next_action"
+    t.datetime "next_action_recorded_at"
+    t.bigint "next_action_source_message_id"
+    t.jsonb "authorized_actions", default: [], null: false
+    t.jsonb "fields", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["opportunity_id"], name: "index_scan_solo_lead_states_on_opportunity_id", unique: true
+  end
+
   create_table "scan_solo_make_callbacks", force: :cascade do |t|
     t.string "correlation_id"
     t.string "action"
@@ -1903,6 +1932,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_23_000007) do
   add_foreign_key "scan_solo_cadence_enrollments", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_contact_extensions", "contacts"
   add_foreign_key "scan_solo_knowledge_chunks", "scan_solo_knowledge_sources", column: "source_id"
+  add_foreign_key "scan_solo_lead_state_events", "scan_solo_lead_states", column: "lead_state_id"
+  add_foreign_key "scan_solo_lead_states", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_make_requests", "accounts"
   add_foreign_key "scan_solo_proposal_versions", "scan_solo_proposals", column: "proposal_id"
   add_foreign_key "scan_solo_proposals", "scan_solo_pipeline_opportunities", column: "opportunity_id"

@@ -35,6 +35,8 @@ gem 'haikunator'
 gem 'liquid'
 # Parse Markdown to HTML
 gem 'commonmarker'
+# Extract text from lead documents (RF-19)
+gem 'pdf-reader'
 # Validate Data against JSON Schema
 gem 'json_schemer'
 # used in swagger build

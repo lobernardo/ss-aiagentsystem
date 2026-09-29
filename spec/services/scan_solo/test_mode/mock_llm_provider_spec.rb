@@ -16,7 +16,7 @@ RSpec.describe ScanSolo::TestMode::MockLlmProvider do
     it 'produces a simulated structured response with zero outbound calls to any real transport' do
       result = described_class.call(config: config, payload: payload)
 
-      expect(result[:content]).to eq('reply' => described_class::DEFAULT_RESPONSE, 'actions' => [])
+      expect(result[:content]).to eq('reply' => described_class::DEFAULT_RESPONSE, 'actions' => [], 'asked_fields' => [], 'summary' => false)
       expect(result[:real_send]).to be false
     end
 
@@ -24,7 +24,15 @@ RSpec.describe ScanSolo::TestMode::MockLlmProvider do
       actions = [{ 'action_id' => 'cadence_signal', 'params' => { 'signal' => 'opt_out' } }]
       result = described_class.call(config: config, payload: payload, fixture_response: 'Resposta fixa de teste', fixture_actions: actions)
 
-      expect(result[:content]).to eq('reply' => 'Resposta fixa de teste', 'actions' => actions)
+      expect(result[:content]).to eq('reply' => 'Resposta fixa de teste', 'actions' => actions, 'asked_fields' => [], 'summary' => false)
+    end
+
+    it 'returns the supplied qualification metadata' do
+      result = described_class.call(config: config, payload: payload, fixture_asked_fields: %w[nome area], fixture_summary: true)
+
+      expect(result[:content]).to eq(
+        'reply' => described_class::DEFAULT_RESPONSE, 'actions' => [], 'asked_fields' => %w[nome area], 'summary' => true
+      )
     end
 
     it 'captures the last payload it received' do

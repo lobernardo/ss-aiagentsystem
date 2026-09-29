@@ -5,7 +5,7 @@
 # HTTP client, and requires no production LLM credential (RF-25).
 #
 # It answers in the same structured shape the real provider returns
-# (`content` = `{'reply' => ..., 'actions' => [...]}`, RF-05) and keeps the
+# (`content` includes reply, actions, asked_fields and summary, RF-10/CT-02) and keeps the
 # last payload it received in `last_payload`, so specs can assert exactly
 # what would have been sent to the provider.
 class ScanSolo::TestMode::MockLlmProvider
@@ -17,20 +17,26 @@ class ScanSolo::TestMode::MockLlmProvider
     attr_reader :last_payload
   end
 
-  def self.call(config:, payload:, fixture_response: nil, fixture_actions: [])
+  # rubocop:disable Metrics/ParameterLists
+  def self.call(config:, payload:, fixture_response: nil, fixture_actions: [], fixture_asked_fields: [], fixture_summary: false)
     @last_payload = payload
-    new(config: config).call(payload: payload, fixture_response: fixture_response, fixture_actions: fixture_actions)
+    new(config: config).call(
+      payload: payload, fixture_response: fixture_response, fixture_actions: fixture_actions,
+      fixture_asked_fields: fixture_asked_fields, fixture_summary: fixture_summary
+    )
   end
+
+  # rubocop:enable Metrics/ParameterLists
 
   def initialize(config:)
     @config = config
   end
 
-  def call(payload:, fixture_response: nil, fixture_actions: [])
+  def call(payload:, fixture_response: nil, fixture_actions: [], fixture_asked_fields: [], fixture_summary: false)
     reply = fixture_response || DEFAULT_RESPONSE
 
     {
-      content: { 'reply' => reply, 'actions' => fixture_actions },
+      content: { 'reply' => reply, 'actions' => fixture_actions, 'asked_fields' => fixture_asked_fields, 'summary' => fixture_summary },
       provider: PROVIDER,
       model: MODEL,
       input_tokens: payload.to_json.length,

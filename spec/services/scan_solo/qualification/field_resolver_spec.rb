@@ -17,6 +17,75 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
     resolver.fields.find { |candidate| candidate.label == label }
   end
 
+  describe 'lead state RF-02: closed catalog' do
+    let(:catalog) do
+      [
+        { key: 'nome', block: 'identificacao', label: 'Contato' },
+        { key: 'empresa', block: 'identificacao', label: 'Empresa / razão social' },
+        { key: 'cargo', block: 'identificacao', label: 'Cargo' },
+        { key: 'cnpj', block: 'identificacao', label: 'CNPJ' },
+        { key: 'telefone', block: 'identificacao', label: 'Telefone' },
+        { key: 'email', block: 'identificacao', label: 'E-mail principal' },
+        { key: 'emails_copia', block: 'identificacao', label: 'E-mails em cópia' },
+        { key: 'tipo_servico', block: 'servico', label: 'Tipo de serviço' },
+        { key: 'tipo_intervencao', block: 'servico', label: 'Objetivo' },
+        { key: 'tecnologia', block: 'servico', label: 'Tecnologia' },
+        { key: 'interferencias_buscadas', block: 'servico', label: 'Interferências buscadas' },
+        { key: 'cliente_final', block: 'local', label: 'Cliente / local final' },
+        { key: 'cidade_uf', block: 'local', label: 'Cidade / UF' },
+        { key: 'endereco_obra', block: 'local', label: 'Endereço' },
+        { key: 'bairro', block: 'local', label: 'Bairro' },
+        { key: 'link_local', block: 'local', label: 'Link' },
+        { key: 'area', block: 'escopo', label: 'Área' },
+        { key: 'metragem', block: 'escopo', label: 'Metragem' },
+        { key: 'quantidade_pontos', block: 'escopo', label: 'Quantidade de pontos' },
+        { key: 'profundidade', block: 'escopo', label: 'Profundidade de investigação' },
+        { key: 'profundidade_intervencao', block: 'escopo', label: 'Profundidade da intervenção' },
+        { key: 'superficie', block: 'escopo', label: 'Superfície' },
+        { key: 'observacoes_tecnicas', block: 'escopo', label: 'Observações técnicas' },
+        { key: 'data_desejada', block: 'execucao', label: 'Data desejada' },
+        { key: 'prazo_desejado', block: 'execucao', label: 'Prazo' },
+        { key: 'diarias', block: 'execucao', label: 'Diárias' },
+        { key: 'integracao_seguranca', block: 'execucao', label: 'Integração' },
+        { key: 'tempo_integracao', block: 'execucao', label: 'Tempo de integração' },
+        { key: 'restricoes_acesso', block: 'execucao', label: 'Restrições de acesso' },
+        { key: 'documentacoes_necessarias', block: 'execucao', label: 'Documentações necessárias' },
+        { key: 'prazo_proposta', block: 'comercial', label: 'Prazo para proposta' },
+        { key: 'email_envio_proposta', block: 'comercial', label: 'E-mail para envio' },
+        { key: 'emails_copia_proposta', block: 'comercial', label: 'Cópias' },
+        { key: 'condicoes_especiais', block: 'comercial', label: 'Condições especiais' }
+      ]
+    end
+
+    it 'matches all 34 RF-02 fields, blocks and labels in order' do
+      expect(described_class::CATALOG).to eq(catalog)
+      expect(described_class::CATALOG.size).to eq(34)
+      expect(described_class::CATALOG_KEYS).to eq(catalog.pluck(:key))
+      expect(described_class::BLOCKS).to eq(%w[identificacao servico local escopo execucao comercial])
+    end
+
+    it 'resolves every RF-02 label to its canonical key' do
+      catalog.each do |entry|
+        expect(described_class.canonical_key(entry[:label])).to eq(entry[:key])
+      end
+    end
+
+    it 'keeps commercial fields distinct from execution and contact fields' do
+      expect(described_class.canonical_key('Prazo para proposta')).to eq('prazo_proposta')
+      expect(described_class.canonical_key('E-mail para envio')).to eq('email_envio_proposta')
+      expect(described_class.canonical_key('Objetivo do serviço')).to eq('tipo_intervencao')
+    end
+
+    it 'never assigns one normalized spelling to different keys' do
+      pairs = described_class::ALIASES.flat_map do |key, aliases|
+        [key, *aliases].map { |spelling| [described_class.normalize(spelling), key] }
+      end
+      pairs.group_by(&:first).each_value do |entries|
+        expect(entries.map(&:last).uniq.size).to eq(1)
+      end
+    end
+  end
+
   describe 'RF-01/RF-02: native contact fields' do
     it 'satisfies "Nome" from contact.name with origin native' do
       contact.update!(name: 'Leonardo')

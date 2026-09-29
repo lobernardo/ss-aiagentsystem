@@ -27,6 +27,7 @@ RAILS_ENV=test bundle exec rspec \
   spec/services/scan_solo/lead_state/completion_service_spec.rb \
   spec/services/scan_solo/ai_turn/context_assembler_spec.rb \
   spec/services/scan_solo/ai_turn/output_validator_spec.rb \
+  spec/services/scan_solo/ai_turn/prompt_builder_spec.rb \
   spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_spec.rb \
   spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_lead_state_spec.rb \
   spec/services/scan_solo/qualification/consumer_consistency_spec.rb \

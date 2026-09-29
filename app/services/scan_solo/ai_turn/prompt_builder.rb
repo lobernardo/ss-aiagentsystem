@@ -8,6 +8,12 @@
 # RF-17: the fixed continuity rules come first and are code constants, not
 # config -- no agent config edit can remove or reword them.
 #
+# Lead state (RF-09, RF-13, RF-16, RF-24, CT-02): the system message carries
+# the lead state and summary sections of ScanSolo::AiTurn::LeadStatePrompt,
+# history entries describe their attachments and links, the output schema
+# requires `asked_fields` and `summary`, and a regenerated attempt carries
+# the previous attempt's violation (RF-11a).
+#
 # The whole payload goes through ScanSolo::AiTurn::PromptRedactor, so a
 # secret-shaped value stored in config or context never reaches the provider.
 class ScanSolo::AiTurn::PromptBuilder
@@ -19,9 +25,25 @@ class ScanSolo::AiTurn::PromptBuilder
 
   CONTINUITY_RULES = [
     'Nunca pergunte novamente informação já presente no contato, nos campos coletados ou no histórico.',
-    'Responda primeiro à pergunta/intenção atual do cliente; só depois peça no máximo um campo faltante.',
-    'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.'
+    'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos, ' \
+    'apenas entre os campos elegíveis (faltantes).',
+    'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.',
+    'Se a mensagem do cliente contiver uma pergunta direta, responda-a antes de qualquer pergunta de qualificação.',
+    'Não peça nova confirmação para ação já pedida ou autorizada.',
+    'Liste em asked_fields as chaves dos campos que a resposta pergunta.'
   ].freeze
+
+  # RF-11a: the violations that trigger one regenerated attempt.
+  VIOLATION_INSTRUCTIONS = {
+    'confirmed_field_question' => 'a resposta perguntou um campo já confirmado',
+    'question_limit' => 'a resposta perguntou mais de 2 campos',
+    'field_not_missing' => 'a resposta perguntou um campo que não está entre os elegíveis',
+    'qualification_closed' => 'a resposta fez perguntas de qualificação com a qualificação concluída'
+  }.freeze
+
+  ATTACHMENT_TYPE_LABELS = {
+    'location' => 'localização', 'pdf' => 'PDF', 'image' => 'imagem', 'audio' => 'áudio', 'video' => 'vídeo', 'file' => 'arquivo'
+  }.freeze
 
   ACTION_DESCRIPTIONS = {
     'qualification_field' => 'registrar todos os dados de qualificação informados na mensagem do cliente, ' \
@@ -35,14 +57,15 @@ class ScanSolo::AiTurn::PromptBuilder
                            'e se há risco de interpretação'
   }.freeze
 
-  def self.call(config:, context:, offered_actions:)
-    new(config: config, context: context, offered_actions: offered_actions).call
+  def self.call(config:, context:, offered_actions:, previous_violation: nil)
+    new(config: config, context: context, offered_actions: offered_actions, previous_violation: previous_violation).call
   end
 
-  def initialize(config:, context:, offered_actions:)
+  def initialize(config:, context:, offered_actions:, previous_violation: nil)
     @config = config
     @context = context.deep_symbolize_keys
     @offered_actions = offered_actions
+    @previous_violation = previous_violation
   end
 
   def call
@@ -53,17 +76,21 @@ class ScanSolo::AiTurn::PromptBuilder
 
   private
 
-  attr_reader :config, :context, :offered_actions
+  attr_reader :config, :context, :offered_actions, :previous_violation
 
   def system_message
     sections = rule_sections.merge(
       'Contexto do contato' => contact_block,
       'Oportunidade' => opportunity_block,
+      **ScanSolo::AiTurn::LeadStatePrompt.call(lead_state_context: context[:lead_state_context]),
       'Base de conhecimento' => knowledge_block,
       'Memória do cliente' => memory_block,
       'Ações disponíveis' => actions_block,
-      'Formato da resposta' => 'Responda apenas com o JSON do esquema: `reply` com a mensagem ao cliente e `actions` com as ações.'
+      'Formato da resposta' => 'Responda apenas com o JSON do esquema: `reply` com a mensagem ao cliente, `actions` com as ações, ' \
+                               '`asked_fields` com as chaves dos campos perguntados e `summary` indicando se a resposta traz o ' \
+                               'resumo completo dos dados.'
     )
+    sections['Correção obrigatória'] = correction_block if previous_violation
 
     ["Você é #{config.name.presence || 'o agente comercial'}, atendendo clientes pelo WhatsApp.",
      *sections.map { |title, body| "## #{title}\n#{body}" }].join("\n\n")
@@ -111,6 +138,11 @@ class ScanSolo::AiTurn::PromptBuilder
     ].join("\n")
   end
 
+  def correction_block
+    "A tentativa anterior foi rejeitada pela violação #{previous_violation}: #{VIOLATION_INSTRUCTIONS.fetch(previous_violation)}. " \
+      'Gere uma nova resposta sem repetir essa violação.'
+  end
+
   def knowledge_block
     chunks = context[:knowledge_context][:chunks]
     return 'nenhum trecho relevante encontrado' if chunks.empty?
@@ -139,9 +171,23 @@ class ScanSolo::AiTurn::PromptBuilder
     )
   end
 
+  # RF-16: attachments and links are described, so only a message with no
+  # text and no attachment is a placeholder.
   def chat_messages
     context[:conversation_history].map do |entry|
-      { role: entry[:role] == 'customer' ? 'user' : 'assistant', content: entry[:content].presence || '[mensagem sem texto]' }
+      parts = [entry[:content], *entry[:attachments].map { |attachment| describe_attachment(attachment) }]
+      parts << "[Links: #{entry[:urls].join(', ')}]" if entry[:urls].any?
+      { role: entry[:role] == 'customer' ? 'user' : 'assistant', content: parts.compact_blank.join("\n").presence || '[mensagem sem texto]' }
+    end
+  end
+
+  def describe_attachment(attachment)
+    type = ATTACHMENT_TYPE_LABELS.fetch(attachment[:type].to_s, attachment[:type].to_s)
+    if attachment[:type].to_s == 'location'
+      "[Anexo #{type}: lat #{attachment[:lat]}, long #{attachment[:long]}, link #{attachment[:link]}]"
+    else
+      details = [attachment[:file_name], "extração: #{attachment[:extracted] ? 'sim' : 'não'}"].compact_blank
+      "[Anexo #{type}: #{details.join(', ')}]"
     end
   end
 
@@ -157,8 +203,11 @@ class ScanSolo::AiTurn::PromptBuilder
       strict: false,
       schema: {
         type: 'object',
-        properties: { reply: { type: 'string' }, actions: { type: 'array', items: action_item } },
-        required: %w[reply actions],
+        properties: {
+          reply: { type: 'string' }, actions: { type: 'array', items: action_item },
+          asked_fields: { type: 'array', items: { type: 'string' } }, summary: { type: 'boolean' }
+        },
+        required: %w[reply actions asked_fields summary],
         additionalProperties: false
       }
     }

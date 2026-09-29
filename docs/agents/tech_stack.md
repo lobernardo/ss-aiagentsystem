@@ -6,62 +6,61 @@
 
 ### Runtime and language
 
-- **Language**: Ruby 3.4.4 (`.ruby-version`, Gemfile `ruby '3.4.4'`); JavaScript on Node 24.13.0 (`.nvmrc`, package.json `engines.node` 24.x)
-- **Framework**: Rails 7.2.3.1 (Gemfile.lock); Vue ^3.5.12 via Vite 6.4.2 + vite_rails 3.10.0
+- **Language**: Ruby 3.4.4 (`.ruby-version`, Gemfile `ruby '3.4.4'`); JavaScript on Node 24.x (`package.json` engines, `.nvmrc` 24.13.0)
+- **Framework**: Rails 7.2.3.1 (Gemfile); Vue ^3.5.12 + Vite 6.4.2 via `vite_rails` / `vite-plugin-ruby` ^5.2.1
 
 | Component | Value | Source |
 |---|---|---|
-| Web server | Puma 7.2.1 | Gemfile.lock, `Procfile` web |
-| Background jobs | Sidekiq 7.3.10 + sidekiq-cron 2.4.0 | Gemfile.lock, `config/sidekiq.yml`, `config/schedule.yml` |
-| Database | PostgreSQL + pgvector (`pgvector/pgvector:pg16` in `docker-compose.production.yaml`) | `db/schema.rb` `enable_extension "vector"` |
-| Cache / pubsub | Redis (redis 5.0.6) | Gemfile.lock, `config/cable.yml` |
-| LLM client | ruby_llm 1.15.0, ruby_llm-schema 0.3.0 | Gemfile.lock, `lib/llm/` |
-| Vector search | neighbor 0.2.3, pgvector 0.1.1 | Gemfile.lock, `ScanSolo::KnowledgeChunk has_neighbors` |
-| Authorization | Pundit 2.3.0 | `app/policies/scan_solo/` |
-| JSON views | jbuilder 2.15.1 | `app/views/api/v1/accounts/scan_solo/` |
-| JSON schema | json_schemer 0.2.24 | `ScanSolo::Make::CallbackVerifier`, `ScanSolo::Actions::Executor` |
-| HTTP client | httparty 0.24.0 | `ScanSolo::Make::OutboundRequestService` |
-| Frontend state | Pinia ^3.0.4 (ScanSolo), Vuex ~4.1.0 (upstream) | `app/javascript/dashboard/store/scansolo/` |
-| Styling | Tailwind ^3.4.19 | package.json |
-| Package managers | Bundler 2.5.16, pnpm 10.x (`packageManager pnpm@10.2.0`) | `docker/Dockerfile`, package.json |
-| Container | `ruby:3.4.4-alpine3.21` + Node 24 multi-stage | `docker/Dockerfile` |
+| Web server | Puma ~> 7.2, >= 7.2.1 | Gemfile; `Procfile` web |
+| Background jobs | Sidekiq ~> 7.3.10, sidekiq-cron >= 2.4.0 | Gemfile; `config/sidekiq.yml`, `config/schedule.yml` |
+| Database | PostgreSQL + pgvector (`pgvector/pgvector:pg16` in `docker-compose.test.yaml`/CI) | `config/database.yml` |
+| Cache / queue backend | Redis (`redis`, `redis-namespace`) | Gemfile; `config/cable.yml` |
+| CSS | Tailwind ^3.4.19 | `package.json`, `tailwind.config.js` |
+| Frontend state | Pinia ^3.0.4 (ScanSolo stores), Vuex ~4.1.0 (upstream) | `app/javascript/dashboard/store/scansolo/*.js` use `defineStore` |
+| LLM client | ruby_llm >= 1.14.1 + ruby_llm-schema; ai-agents >= 0.12.0; ruby-openai | Gemfile |
+| Package managers | Bundler (`Gemfile.lock`); pnpm@10.2.0 | `package.json` `packageManager` |
+
+### Commands
+
+| Task | Command |
+|---|---|
+| Setup | `bundle install && pnpm install` |
+| Dev | `overmind start -f ./Procfile.dev` (backend :3000, sidekiq, `bin/vite dev`) |
+| DB prepare | `bundle exec rails db:chatwoot_prepare` (Makefile `db`; `Procfile` release) |
+| Ruby tests | `bundle exec rspec --profile=10 --format progress $TESTS` (`.github/workflows/run_foss_spec.yml`) |
+| JS tests | `pnpm test` → `TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage` |
+| JS coverage | `pnpm run test:coverage` |
+| Ruby lint | `bundle exec rubocop --parallel` |
+| JS lint | `pnpm run eslint` → `eslint app/**/*.{js,vue}` |
+| Security | `bundle exec brakeman -q --no-pager`; `bundle audit check -v` |
+| Swagger drift | `bundle exec rake swagger:build` then git status on `swagger/swagger.json` (`.circleci/config.yml`) |
+| Docker image | `docker build -f ./docker/Dockerfile .` (Makefile `docker`) |
 
 ### Tests
 
-| Role | Tool | Version | Config |
-|---|---|---|---|
-| Ruby runner | rspec-rails | 7.0.1 | `.rspec` `--require spec_helper` |
-| Ruby assertions | rspec-expectations, shoulda-matchers | shoulda-matchers 5.3.0 | `spec/rails_helper.rb` |
-| Ruby mocks / data | factory_bot_rails 6.4.3, webmock 3.23.1, mock_redis 0.36.0, climate_control 1.2.0 | — | `spec/support/scansolo_webmock_enforcement.rb` |
-| Ruby DB isolation | database_cleaner-active_record | 2.1.0 | — |
-| Ruby coverage | simplecov + simplecov_json_formatter | 0.22.0 / 0.1.4 | `spec/coverage_helper.rb` |
-| JS runner | Vitest (jsdom ^27.2.0) | 3.0.5 | `vitest.config.ts` |
-| JS component tests | @vue/test-utils | ^2.4.6 | colocated `specs/` dirs |
-| JS coverage | @vitest/coverage-v8 | 3.0.5 | `pnpm run test:coverage` |
-| E2E | @playwright/test | ^1.56.1 | `tests/playwright/playwright.config.ts` |
-| In-app test doubles | `ScanSolo::TestMode::MockLlmProvider`, `MockEmbeddingProvider`, `ScanSolo::Proposal::MockProvider` | — | `app/services/scan_solo/test_mode/` |
-
-Commands:
-
-```bash
-bundle exec rspec spec/path/to/file_spec.rb
-pnpm test                 # TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage
-pnpm run test:coverage    # TZ=UTC vitest --no-watch --no-cache --coverage
-bundle exec rubocop --parallel
-pnpm run eslint
-```
+| Concern | Ruby | JS |
+|---|---|---|
+| Runner | RSpec (rspec-rails >= 6.1.5; `.rspec`, `spec/rails_helper.rb`) | Vitest 3.0.5 (`vitest.config.ts`, `vitest.setup.js`) |
+| E2E | — | Playwright (`tests/playwright/playwright.config.ts`) |
+| Assertions | rspec-expectations, shoulda-matchers | @vue/test-utils ^2.4.6 + jsdom |
+| Mocks / fixtures | webmock, mock_redis, climate_control, factory_bot_rails (`spec/factories`) | fake-indexeddb, `__mocks__/fileMock.js` |
+| Contract | skooma (OpenAPI response validation) | — |
+| Coverage | simplecov + simplecov_json_formatter (`spec/coverage_helper.rb`) | @vitest/coverage-v8 3.0.5 |
+| Other | test-prof, database_cleaner, rspec_junit_formatter | — |
+| LLM in tests | `ScanSolo::TestMode::MockLlmProvider`, `MockEmbeddingProvider` injected via `llm_provider:` | — |
 
 ### External integrations
 
 | System | Client wiring |
 |---|---|
-| OpenAI chat | `RubyLLM.chat(model:)` in `ScanSolo::AiTurn::ModelInvoker`; route from `Llm::FeatureRouter` feature `scansolo_agent_response` |
-| OpenAI embeddings | `ScanSolo::Knowledge::EmbeddingService`; feature `scansolo_knowledge_embedding` (`text-embedding-3-small`) |
-| Make | `HTTParty.post` in `ScanSolo::Make::OutboundRequestService`; inbound `Webhooks::ScanSolo::MakeController` |
-| WhatsApp Cloud | Native Chatwoot `Channel::Whatsapp`; no ScanSolo-specific client |
+| OpenAI (chat + embeddings) | RubyLLM via `Llm::Config`, `Llm::FeatureRouter`, `config/llm.yml` features `scansolo_agent_response` (default `gpt-4.1-mini`), `scansolo_knowledge_embedding` (`text-embedding-3-small`) |
+| Make | HTTParty POST in `ScanSolo::Make::OutboundRequestService`; Rails credentials `scan_solo.make.*` |
+| Meta WhatsApp Cloud API | Native Chatwoot WhatsApp channel + `ScanSolo::Messaging::NativeTemplateSender` |
+| Object storage | ActiveStorage (`aws-sdk-s3`; MinIO in `docker-compose.scansolo.yaml`) |
+| Error tracking | `ChatwootExceptionTracker` (Sentry gems) with `scansolo_correlation_id` tag |
 
 ## Related documents
 
-- [`dependencies.md`](dependencies.md) — gem/package inventory by purpose
-- [`coding_guidelines.md`](coding_guidelines.md) — lint rules and code patterns
-- [`architecture.md`](architecture.md) — how components wire together
+- [`dependencies.md`](dependencies.md) — gem/package inventory and shared infrastructure
+- [`coding_guidelines.md`](coding_guidelines.md) — lint tooling and enforced patterns
+- [`architecture.md`](architecture.md) — how the stack is layered

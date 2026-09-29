@@ -6,48 +6,50 @@
 
 ### Purpose
 
-ScanSolo AI Agent System extends Chatwoot Community (Rails 7.2 + Vue 3) with an account-gated sales layer — pipeline/Kanban, guarded AI agent turns, RAG knowledge base, follow-up cadences, proposals, human handoff and audit visibility — on top of native conversations (`README.md`, `app/**/scan_solo/`).
+ScanSolo AI Agent System runs a Chatwoot Community Edition fork that answers Meta WhatsApp leads with a guarded AI sales agent, tracks them on a commercial pipeline, sends template follow-up cadences and requests proposals from Make (`README.md`, `app/services/scan_solo/`).
 
 ### Business problem
 
-- Inbound WhatsApp leads need an AI first response that never speaks while a human controls the conversation (`ScanSolo::AiTurn::EligibilityGuard`).
-- Sales stage must be tracked per conversation with an auditable history (`ScanSolo::PipelineOpportunity`, `ScanSolo::PipelineStageEvent`).
-- Follow-ups must go out only via approved templates inside 09:00-20:00 America/Sao_Paulo (`ScanSolo::Cadence::SendingWindow`, `TemplateAvailabilityGuard`).
-- AI must not state price, delivery status or proposal-sent claims without a validated action result (`ScanSolo::AiTurn::OutputValidator`).
-- Proposal value/currency/artifact must come only from a provider callback, never from model output (`ScanSolo::Proposal::CallbackHandler`).
+- 1 operational system replaces the previous Lexus CRM runtime; Lexus remains a reference for behavior and contracts only (`README.md` "Architecture principle").
+- Inbound WhatsApp leads need an immediate reply, qualification-field collection and stage tracking without manual triage (`ScanSolo::ConversationListener`, `ScanSolo::AiTurn::TurnOrchestrator`).
+- Silent leads need deterministic follow-up using approved Meta templates inside a 09:00-20:00 `America/Sao_Paulo` window (`ScanSolo::Cadence::SendingWindow`).
+- Humans must be able to take over, get a 9-line handoff note, and return control to the AI (`ScanSolo::Handoff::*`).
+- Proposal generation/send lives in tenant Make scenarios; the app must call them safely and trust only signed callbacks (`ScanSolo::Make::OutboundRequestService`, `ScanSolo::Make::CallbackVerifier`).
 
 ### Consumers and integrations
 
 | System | Role |
 |---|---|
-| Chatwoot dashboard SPA (`app/javascript/dashboard/routes/dashboard/scansolo/`) | Operator UI: 6 modules pipeline, agent, knowledge, followups, proposals, executions |
-| Account-scoped REST API `/api/v1/accounts/:account_id/scan_solo/*` | Backend for the SPA (`config/routes.rb` `namespace :scan_solo`) |
-| Native Chatwoot WhatsApp channel (`Channel::Whatsapp`) | Inbound messages; outbound via `conversation.messages.create!` |
-| OpenAI via RubyLLM (`lib/llm`, `config/llm.yml`) | Agent responses (`scansolo_agent_response`) and embeddings (`scansolo_knowledge_embedding`) |
-| Make (make.com) | Signed inbound callback `POST /webhooks/scan_solo/make`; outbound client `ScanSolo::Make::OutboundRequestService` (no non-comment caller in `app/`) |
-| Sidekiq + sidekiq-cron | `ScanSolo::AiTurnJob`, `ScanSolo::CadenceDueAttemptJob` (every 5 min) |
-| PostgreSQL + pgvector | `scan_solo_*` tables, `vector(1536)` embeddings |
+| Meta WhatsApp Cloud API | Inbound customer messages via native `webhooks/whatsapp/:phone_number`; outbound replies and templates via native Chatwoot WhatsApp channel (`ScanSolo::Messaging::NativeTemplateSender`) |
+| Chatwoot dashboard (Vue 3) | Agents/admins; ScanSolo screens under `app/javascript/dashboard/routes/dashboard/scansolo/` (agent, pipeline, followups, knowledge, proposals, executions) |
+| Account API `/api/v1/accounts/:account_id/scan_solo/*` | Dashboard API clients `app/javascript/dashboard/api/scansolo*.js` |
+| Make | Outbound `proposal.generate` / `proposal.send` HTTP POST; inbound signed callback `POST /webhooks/scan_solo/make` |
+| OpenAI (via RubyLLM + `Llm::FeatureRouter`) | Turn replies (`scansolo_agent_response`) and embeddings (`scansolo_knowledge_embedding`) in `config/llm.yml` |
+| PostgreSQL + pgvector | All state; knowledge chunk vectors `vector(1536)` |
+| Redis + Sidekiq | Jobs, cron, per-conversation turn mutex, ActionCable |
+| MinIO / S3-compatible storage | ActiveStorage (knowledge uploads) in `docker-compose.scansolo.yaml` |
 
 ### Macro flow
 
-1. Customer message arrives on native Chatwoot inbox; `Message` persisted by upstream code.
-2. `AsyncDispatcher` fires `message_created` to `ScanSolo::ConversationListener` (`app/dispatchers/async_dispatcher.rb:23`).
-3. Listener exits unless message is incoming and `account.scansolo_enabled?`; updates `last_customer_interaction_at`, applies `novo_lead -> em_contato` rule.
-4. Listener enqueues `ScanSolo::AiTurnJob` (queue `medium`).
-5. `ScanSolo::AiTurn::TurnOrchestrator` dedupes turn, checks eligibility + published config, assembles context (history, contact, pipeline, RAG), runs input guardrail, invokes model, validates output.
-6. In one transaction: supported actions (`stage_transition`) execute, `ResponseSender` creates outgoing message from AgentBot and stores turn evidence (`invocation_status: succeeded`).
-7. Stage changes stop/recalculate cadences; `CadenceDueAttemptJob` sends due template attempts and records evidence.
-8. Operators review turns, executions and audit events via `ai_turns` and `executions` endpoints.
+1. Customer message reaches the native WhatsApp webhook; Chatwoot persists a `Message`.
+2. `AsyncDispatcher` delivers `message_created` to `ScanSolo::ConversationListener`.
+3. `ScanSolo::Eligibility` checks account flag `scansolo_enabled`, published+enabled config, inbox allowlist, no active bot; ineligible → no footprint.
+4. Listener bootstraps/updates the `PipelineOpportunity` (`novo_lead` → `em_contato` on later inbound), runs the opt-out keyword check, enqueues `ScanSolo::AiTurnJob`.
+5. `AiTurnJob` takes a Redis mutex per conversation; `TurnOrchestrator` assembles context (history, contact, pipeline, proposal, RAG), applies input guardrail, invokes the model, validates output.
+6. Under the `ConversationExtension` row lock, the orchestrator rechecks eligibility, runs model-requested actions through `ScanSolo::Actions::Registry`, sends the reply; the turn ends `succeeded` / `suppressed` / `failed`.
+7. Actions move stage (`em_qualificacao`, `qualificado`), write qualification fields, hand off to a human, or request a proposal from Make.
+8. Stage entry enrolls cadences; `ScanSolo::CadenceDueAttemptJob` (cron every 5 min) sends due template attempts.
+9. Make callback updates `ProposalVersion`; `ScanSolo::AuditEvent` rows and the Execuções feed record every step.
 
 ### Out of scope
 
-- Lexus CRM migration and production cutover: design-only docs (`docs/migration/SCANSOLO_LEXUS_CUTOVER_DESIGN.md`, `docs/runbooks/PRODUCTION_CUTOVER.md`); no code reads or writes Lexus.
-- `enterprise/` proprietary overlay: README licensing boundary forbids copying its implementation into ScanSolo code.
-- Real Make proposal dispatch: `GenerateService`/`SendService`/`RetryPolicy` default `provider: ScanSolo::Proposal::MockProvider`.
+- Proprietary `enterprise/` code: ScanSolo code sits under `app/`; README forbids copying `enterprise/` implementation; CI `run_foss_spec.yml` runs `rm -rf enterprise` before specs.
+- Proposal document rendering and tenant-specific integrations: delegated to Make (`README.md` flow; `ScanSolo::Proposal::MakeProvider`).
+- Lexus CRM as a runtime dependency after cutover (`README.md`).
 
 ## Related documents
 
-- [`architecture.md`](architecture.md) — layers, directory layout, async flows
-- [`domain_rules.md`](domain_rules.md) — pipeline, turn, cadence, handoff, proposal rules
-- [`api_contracts.md`](api_contracts.md) — ScanSolo REST endpoints and Make callback
-- [`tech_stack.md`](tech_stack.md) — languages, frameworks, test tooling
+- [`architecture.md`](architecture.md) — layout, layers, async flows
+- [`domain_rules.md`](domain_rules.md) — eligibility, pipeline, cadence, handoff, proposal rules
+- [`api_contracts.md`](api_contracts.md) — ScanSolo HTTP endpoints and Make callback
+- [`tech_stack.md`](tech_stack.md) — runtimes, frameworks, test tooling

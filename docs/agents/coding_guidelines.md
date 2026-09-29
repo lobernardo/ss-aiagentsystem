@@ -4,63 +4,64 @@
 
 ## AS IS — Current state
 
-### 1. Compact class definitions under the `ScanSolo::` namespace
+### 1. Compact class names
 
-- Write `class ScanSolo::Cadence::SendingWindow`, not nested `module ScanSolo; module Cadence`.
-- Enforced by `.rubocop.yml` `Style/ClassAndModuleChildren: EnforcedStyle: compact`.
-- Seen in every file under `app/services/scan_solo/`, `app/models/scan_solo/`, `app/controllers/api/v1/accounts/scan_solo/`.
+- Define `class ScanSolo::Actions::Executor` style, never nested `module ... class`. Enforced by `.rubocop.yml` `Style/ClassAndModuleChildren: EnforcedStyle: compact`.
+- Observed: `app/services/scan_solo/eligibility.rb`, `app/services/scan_solo/actions/executor.rb`.
 
-### 2. Service objects with class-level `.call`
+### 2. One class per file
 
-- Pattern: `def self.call(...)` delegating to `new(...).call`; inputs exposed via private `attr_reader`.
-- Seen in `ScanSolo::AiTurn::TurnOrchestrator`, `ScanSolo::Cadence::EnrollmentService`, `ScanSolo::Handoff::TakeoverService`, `ScanSolo::Proposal::GenerateService`, `ScanSolo::Knowledge::RetrievalService`.
-- Result structs via `Struct.new(..., keyword_init: true)` with predicate methods (`ModelInvoker::Result#failed?`, `TemplateAvailabilityGuard::Result#blocked?`, `CallbackVerifier::Result#valid?`).
+- 1 class per file; nested exception classes allowed. Enforced by custom cop `rubocop/one_class_per_file.rb` (`Style/OneClassPerFile: Enabled: true`).
+- Exception by explicit disable: `app/services/scan_solo/actions/proposal_actions.rb` (`# rubocop:disable Style/OneClassPerFile`).
 
-### 3. Single "sole path" writer per state transition
+### 3. Line length 150
 
-- One service owns each mutation; controllers and other services call it instead of updating columns.
-- `StageTransitionService` (stage), `EnrollmentService` (enrollment create), `AttemptEvidenceRecorder` (attempt result), `ReturnToAiService` (back to `ai_active`), `CallbackHandler` (proposal value/currency/artifact_url and `sent`).
-- Cadence stop logic routes through `StopRecalculatePolicy` -> `LifecycleService`.
+- Ruby lines ≤150 chars. Enforced by `.rubocop.yml` `Layout/LineLength: Max: 150`.
+- Long keyword-arg signatures wrap with `# rubocop:disable Metrics/ParameterLists` (`ScanSolo::Actions::Registry.call`, `ScanSolo::Make::OutboundRequestService.call`).
 
-### 4. Business-rule rejection raises `ActiveRecord::RecordInvalid`
+### 4. Service object with `self.call`
 
-- Add to `record.errors`, then `raise ActiveRecord::RecordInvalid, record`; `RequestExceptionHandler#render_record_invalid` returns 422 `{message, attributes}`.
-- Seen in `StageTransitionService#reject!`, `SendService#reject!`, `ApproveService#reject_unless_current!`, `GenerateService#reject_if_incomplete!`.
-- No bespoke `rescue` in ScanSolo controllers.
+- Services expose `def self.call(**kwargs) = new(**kwargs).call`, private `attr_reader`, keyword-only args.
+- Observed: `ScanSolo::Qualification::FieldResolver`, `ScanSolo::AiTurn::PromptBuilder`, `ScanSolo::Cadence::StopRecalculatePolicy`, `ScanSolo::Handoff::HandoffService`.
 
-### 5. Controller shape: gate, scope, authorize, delegate
+### 5. Single writer per state
 
-- Inherit `Api::V1::Accounts::ScanSolo::BaseController` (`prepend_before_action :ensure_scansolo_enabled` -> 404).
-- Scope every lookup by `Current.account` (`where(account_id: Current.account.id).find(...)` or `joins(:opportunity).where(scan_solo_pipeline_opportunities: { account_id: ... })`).
-- Call `authorize(record)` (Pundit, `ScanSolo::*Policy`) before delegating to a service; reference models with leading `::ScanSolo::`.
-- Whitelist input with `params.permit(...)` / `params.require(...)`.
+- 1 service owns each mutation; header comment names it "sole"/"single".
+- `PipelineOpportunity#stage` → `ScanSolo::Pipeline::StageTransitionService`; model side effects → `ScanSolo::Actions::Registry`/`Executor`; return-to-AI → `ScanSolo::Handoff::ReturnToAiService`; qualification reads → `ScanSolo::Qualification::FieldResolver`; outbound Make HTTP → `ScanSolo::Make::OutboundRequestService`.
 
-### 6. Idempotency backed by unique indexes
+### 6. Requirement-tagged header comments
 
-- Guard in code (`find_or_create_by!`, `exists?`, `with_lock` + applied timestamp) and back with a DB unique index; rescue `ActiveRecord::RecordNotUnique` to return the existing row.
-- Seen in `EnrollmentService` (`idx_scansolo_cadence_enrollments_on_opportunity_and_definition`), `TurnOrchestrator#create_turn` (unique `message_id`), `Webhooks::ScanSolo::MakeController` (unique `correlation_id`), `Actions::Executor` (unique `idempotency_key`).
+- Each ScanSolo class opens with a comment citing requirement ids (`RF-xx`, `CT-xx`, `RNF-xx`) and the rule it implements.
+- Observed: every file under `app/services/scan_solo/`, `app/jobs/scan_solo/`, `app/controllers/api/v1/accounts/scan_solo/`. `Style/Documentation` is disabled in `.rubocop.yml`, so this is convention, not lint.
 
-### 7. Ruby style limits
+### 7. Result structs for decisions
 
-- Line length max 150 — enforced by `.rubocop.yml` `Layout/LineLength`.
-- 2-space indent, LF, UTF-8, trailing newline — enforced by `.editorconfig`.
-- Pre-commit runs `rubocop -a` on staged `.rb` and `eslint --fix` on `app/**/*.{js,vue}` — enforced by `.husky/pre-commit` + package.json `lint-staged`.
+- Decision services return `Struct.new(..., keyword_init: true)` with predicate methods instead of raising.
+- Observed: `ScanSolo::Eligibility::Result`, `ScanSolo::Cadence::AttemptPrecheck::Result`, `ScanSolo::Make::CallbackVerifier::Result`, `ScanSolo::Cadence::ReplyCompletenessDetector::Result`.
 
-### 8. Vue: `<script setup>`, Pinia stores, server-confirmed state
+### 8. Errors through existing handlers
 
-- All 9 `.vue` files under `app/javascript/dashboard/routes/dashboard/scansolo/` use `<script setup>`.
-- Stores: `defineStore('scansolo<Name>', {...})` exporting `useScansolo<Name>Store`, payloads passed through `camelcaseKeys(..., { deep: true })` (`store/scansolo/pipelineOpportunities.js`).
-- API clients extend `ApiClient` with `accountScoped: true` (`api/scansoloPipelineOpportunities.js`).
-- Event names camelCase, component names PascalCase, no bare strings in templates — enforced by `.eslintrc.js` `vue/custom-event-name-casing`, `vue/component-name-in-template-casing`, `vue/no-bare-strings-in-template`.
-- Strings live in `app/javascript/dashboard/i18n/locale/en/scansolo.json`.
+- Invalid transitions raise `ActiveRecord::RecordInvalid` → global 422 (`StageTransitionService#reject!`, `AiAgentConfigsController#validate_draft_params!`).
+- Domain exceptions live in `lib/custom_exceptions/scan_solo.rb` (`ProposalIntegrationNotConfigured`, `CadenceDefinitionMissing`, `Forbidden`) and map to 422/403 in `Api::V1::Accounts::ScanSolo::BaseController`.
+- Missing required production config fails loudly: `StageEntryEnroller` reports `CadenceDefinitionMissing`; `Proposal::Integration.provider!` raises in production.
 
-### 9. Tests never reach real providers
+### 9. Idempotency keys and correlation ids
 
-- `spec/support/scansolo_webmock_enforcement.rb` lists forbidden hosts (`api.openai.com`, `graph.facebook.com`, `hook(s).*.make.com`, ...) and credential env keys.
-- Stub providers with `ScanSolo::TestMode::MockLlmProvider` / `MockEmbeddingProvider`; request specs authenticate via `create_new_auth_token` and assert on `response.parsed_body`.
+- Every side effect carries `correlation_id`; repeatable operations carry a unique `idempotency_key` backed by a unique index.
+- Observed: `scan_solo_agent_action_executions.idempotency_key`, `scan_solo_ai_turns.correlation_id`, `scan_solo_make_requests.correlation_id`; orchestrator key `"#{correlation_id}:#{index}:#{action_id}"`.
+
+### 10. Vue component conventions
+
+- `<script>` → `<template>` → `<style>` block order; PascalCase component names; camelCase custom events; no bare strings in templates; no static inline styles. Enforced by `.eslintrc.js` `vue/block-order`, `vue/component-name-in-template-casing`, `vue/custom-event-name-casing`, `vue/no-bare-strings-in-template`, `vue/no-static-inline-styles`.
+- ScanSolo stores use Pinia `defineStore` + `camelcase-keys` (`app/javascript/dashboard/store/scansolo/executions.js`); API clients extend `ApiClient` with `accountScoped: true` (`app/javascript/dashboard/api/scansoloProposals.js`).
+
+### 11. Formatting and hooks
+
+- LF, UTF-8, 2-space indent, trim trailing whitespace, final newline. Enforced by `.editorconfig`.
+- Pre-commit: `lint-staged` (eslint --fix on `app/**/*.{js,vue}`, scss-lint) + `bundle exec rubocop --force-exclusion -a` on staged `.rb` (`.husky/pre-commit`). Pre-push: `sh bin/validate_push` (`.husky/pre-push`).
 
 ## Related documents
 
-- [`tech_stack.md`](tech_stack.md) — tool versions and test commands
-- [`architecture.md`](architecture.md) — layer responsibilities these patterns implement
-- [`domain_rules.md`](domain_rules.md) — the rules the sole-path services enforce
+- [`tech_stack.md`](tech_stack.md) — lint/test tool versions and commands
+- [`architecture.md`](architecture.md) — layer boundaries these patterns protect
+- [`domain_rules.md`](domain_rules.md) — the rules the single-writer services implement

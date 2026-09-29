@@ -6,192 +6,235 @@
 
 ### Overview
 
-- Account gate: ScanSolo behavior runs only when `Account#scansolo_enabled?` (`has_flags 1 => :scansolo_enabled`, column `scansolo_feature_flags`, `app/models/account.rb`).
-- Pipeline opportunity: 1 per conversation, 8 stages (`ScanSolo::PipelineOpportunity`).
-- AI control state: 1 `ConversationExtension` per conversation, 6 states gating AI turns.
-- AI turn: 1 per inbound message, guarded pipeline with evidence (`ScanSolo::AiTurn`).
-- Agent config: 1 draft per account, immutable published snapshots (`ScanSolo::AiAgentConfig`).
-- Knowledge: account-scoped sources chunked + embedded for cosine retrieval.
-- Cadence: versioned per-stage definitions, idempotent enrollments, scheduled attempts with evidence.
-- Proposal: 1 per opportunity, versioned, provider-driven generate/send with optional approval.
-- Registered actions: 8 action ids with classification and JSON schema.
-- Audit: `ScanSolo::AuditEvent` rows keyed by `correlation_id`, readonly after create.
+- **Eligibility**: account kill switch + published config + inbox allowlist + no active bot.
+- **AI turn**: 1 turn per inbound message, terminal state always, all-or-nothing actions.
+- **Actions**: closed registry of 8 action ids; schema-validated, idempotent, confirmation-gated.
+- **Qualification**: required fields from published config, resolved from native contact columns and aliased `custom_attributes`.
+- **Pipeline**: 8 stages; 1 writer; AI moves forward only to `em_qualificacao`/`qualificado`.
+- **Cadence**: stage-entry enrollment, template attempts, 09:00-20:00 `America/Sao_Paulo`, pause vs cancel triggers.
+- **Handoff**: control state machine on `ConversationExtension`; 9-line private note.
+- **Opt-out**: keyword exact match or model signal; blocks enrollment and cancels attempts.
+- **Proposal**: generate/approve/send via Make; signed callbacks; safe-retry + dead letter.
+- **Audit**: `ScanSolo::AuditLogger.record!` writes `scan_solo_audit_events` with `correlation_id`.
 
-### Pipeline stage transitions
+### Eligibility gate
 
-Implemented in `ScanSolo::Pipeline::StageTransitionService` (sole stage writer).
+`ScanSolo::Eligibility.for_inbox` (`app/services/scan_solo/eligibility.rb`), checked in order:
 
-| Input | Outcome |
-|---|---|
-| `target_stage` not in `PipelineOpportunity.stages` | 422 `stage must be one of ...` |
-| Current stage `ganho` or `perdido` | 422 `opportunity stage is terminal` |
-| Target `negociacao` and `authorized: false` | 422 `negociacao requires an explicit authorized action` |
-| Otherwise | `update!(stage:)` + `PipelineStageEvent(from, to, actor)` in 1 transaction |
-
-After success: `StopRecalculatePolicy.call(trigger:)` with `ganho -> won`, `perdido -> lost`, else `stage_changed`. Extend: add stage to `TERMINAL_STAGES` / `GUARDED_STAGES` / `CADENCE_TRIGGERS` constants.
-
-- Stages: `novo_lead:0 em_contato:1 em_qualificacao:2 qualificado:3 proposta_enviada:4 negociacao:5 ganho:6 perdido:7`.
-- API caller (`PipelineOpportunitiesController#stage_transitions`) passes `authorized: true`, actor `Current.user`; replays within 5 s (`STAGE_TRANSITION_IDEMPOTENCY_WINDOW`) with matching stage event return current state without a new transition.
-
-### First inbound moves Novo Lead to Em Contato
-
-- `ScanSolo::Pipeline::InboundMessageTransitionRule`: incoming message + opportunity in `novo_lead` -> `em_contato`. Fires once; later messages no-op.
-- Called by `ScanSolo::ConversationListener` after `record_customer_interaction!`.
-
-### Stale opportunity indicator
-
-- `ScanSolo::PIPELINE_STALE_THRESHOLD = 48.hours` (`config/initializers/scansolo_constants.rb`), not per-account.
-- Stale = `last_customer_interaction_at <= 48.hours.ago`; nil interaction is not stale (`ScanSolo::Pipeline::OpportunityQuery`).
-
-### AI turn pipeline
-
-`ScanSolo::AiTurn::TurnOrchestrator`, invoked by `ScanSolo::AiTurnJob`.
-
-| Step | Class | Failure outcome |
+| # | Condition | `reason` when false |
 |---|---|---|
-| Dedupe | `AiTurn.create!` (unique `message_id`, `correlation_id` = UUID) | return nil, no row |
-| Eligibility | `EligibilityGuard` — only `ai_active` eligible | `suppressed`, "conversation is human-controlled or opted out" |
-| Config | `AiAgentConfig.published_for(account)` + `enabled?` | `suppressed`, "no published/enabled AI agent config" |
-| Context | `ContextAssembler` — last 20 chat messages, contact, pipeline, `proposal_context: not_applicable`, knowledge (RAG), `durable_memory` | stored in `context_snapshot` |
-| Input guardrail | `InputGuardrail` — case-insensitive substring match on `forbidden_subjects` | `suppressed`, "input guardrail blocked: forbidden subject" |
-| Prompt | `PromptRedactor` replaces secret-shaped tokens with `[REDACTED]` | — |
-| Model | `ModelInvoker` via RubyLLM; instructions = role, objective, persona, tone, instructions, service_rules | `failed`, provider error class + message |
-| Output | `OutputValidator` | `failed`, "output validation blocked: <claim>" |
-| Send | transaction: `stage_transition` actions + `ResponseSender` (outgoing message from `AgentBot` named after config) | turn `succeeded` with tokens, model, `response_message_id` |
+| 1 | `account.scansolo_enabled?` | `scansolo_disabled` |
+| 2 | `AiAgentConfig.published_for(account)&.enabled?` | `config_unavailable` |
+| 3 | inbox belongs to account and in `config.allowed_inbox_ids` | `inbox_not_allowlisted` |
+| 4 | `!inbox.active_bot?` | `inbox_has_active_bot` |
 
-- `SUPPORTED_ACTIONS = %w[stage_transition]`; other action types are skipped by the orchestrator.
-- `InputGuardrail#allowed_actions` always excludes `proposal_approve`, `proposal_send`.
-- Log lines pass through `PromptRedactor` via `config/initializers/scansolo_log_redaction.rb`.
+- Listener checks it before any write (`ScanSolo::ConversationListener#message_created`); ineligible accounts/inboxes get 0 rows.
+- Controllers: `Api::V1::Accounts::ScanSolo::BaseController#ensure_scansolo_enabled` returns 404 before auth when the flag is off.
+- Extend: add a check to `for_inbox`; every caller (listener, orchestrator, cadence precheck) picks it up.
 
-### Output claim blocking
+### AI turn lifecycle
 
-`ScanSolo::AiTurn::OutputValidator` blocks unless claim type is in `validated_claims` (orchestrator passes none):
+`ScanSolo::AiTurn::TurnOrchestrator`, `ScanSolo::AiTurnJob`, `ScanSolo::StaleTurnSweeperJob`:
 
-| Claim | Pattern |
+- 1 `AiTurn` per `message_id` (unique index); `pending` turn without response resumes on same row + correlation id; terminal turns never reprocess.
+- `AiTurnJob` holds Redis mutex `SCANSOLO::AI_TURN::CONVERSATION::<id>` for `AI_TURN_LOCK_TTL` = 3 min; lock contention retries every 5s.
+- Model call: timeout 45s, 1 retry (`config/initializers/scansolo_constants.rb`).
+- Sweeper: `pending` older than 10 min → `failed` / `stale_pending`, under row lock.
+- Pre-model and pre-send (under `ConversationExtension#with_lock`) suppression reasons:
+
+| Check | `failure_reason` |
 |---|---|
-| `price` | `/r\$\s?\d|\b\d+([.,]\d{2})?\s?reais\b/i` |
-| `proposal_sent` | `/proposta (foi )?enviada|enviei a proposta/i` |
-| `delivery_status` | `/pedido entregue|entrega confirmada|status da entrega/i` |
+| Eligibility reason `inbox_has_active_bot` / `config_unavailable` | same value |
+| Any other ineligibility | `not_eligible` |
+| `extension.ai_active?` false | `human_controlled` |
+| Non-private `User` outgoing message after trigger without `scansolo_origin` | `human_replied` |
+| Trigger no longer latest incoming message | `superseded` |
+| Forbidden subject in inbound content | `input guardrail blocked: forbidden subject` |
 
-Extend: add a key to `CLAIM_PATTERNS`.
+- Output block → `failed` with `output validation blocked: <violation>`; exception → `failed` with `<ErrorClass>: <redacted message>` + `ChatwootExceptionTracker` tag `scansolo_correlation_id`.
+- After the turn: if an active cadence enrollment predates the trigger message, run `ReplyCompletenessDetector` (skipped for `superseded` turns).
 
-### Model routing
+### Prompt construction
 
-- `ScanSolo::AiAgent::ModelResolver`: `Llm::FeatureRouter.resolve(feature: 'scansolo_agent_response')`; overrides with `config.model_selection` when `Llm::Models.valid_model_for?`.
-- `config/llm.yml`: `scansolo_agent_response` models `gpt-4.1-mini` (default), `gpt-4.1`, `gpt-5.1`, `gpt-5.2`; `scansolo_knowledge_embedding` `text-embedding-3-small`; both `internal: true`.
+`ScanSolo::AiTurn::PromptBuilder`:
 
-### Agent config draft and publish
+- pt-BR system message; section order: `Regras fixas de atendimento` → agent rules → hours → limits → transfer criteria → restricted info → playbook → required fields → contact → opportunity → knowledge → memory → actions → response format.
+- Fixed continuity rules are code constants (`CONTINUITY_RULES`), not config: never re-ask known info; answer the current intent first, then ask ≤1 missing field; greet only in the first reply.
+- `service_hours` is instruction only; AI answers 24/7.
+- History: last 20 `chat` messages, oldest first (`ContextAssembler::RECENT_MESSAGE_LIMIT`, `order(created_at: :desc).limit(20).reverse`); `customer` → `user`, `agent` → `assistant`.
+- Output schema `scansolo_turn`: `{reply: string, actions: [{action_id ∈ offered, params}]}`.
+- `conversation_id` / `opportunity_id` removed from the params schema shown to the model; orchestrator injects them from the turn.
+- Whole payload passes through `ScanSolo::AiTurn::PromptRedactor`.
 
-- `AiAgentConfig.draft_for!` = `find_or_create_by!(account:, status: :draft)`; partial unique index enforces 1 draft per account.
-- `ScanSolo::AiAgent::PublishService` copies `FIELDS` into a new `published` row and points `draft.published_version` at it, in 1 transaction; previous published rows stay untouched.
-- `require_proposal_approval` defaults `true` (schema).
+### Input and output guardrails
 
-### Knowledge ingestion and retrieval
+- `InputGuardrail`: case-insensitive substring match on `config.forbidden_subjects` blocks the turn. Offered actions = all 8 minus `proposal_approve`, `proposal_send`; minus `proposal_generate` when `Proposal::Integration.configured?` is false.
+- `OutputValidator` blocks when:
 
-- `IngestionService`: split on blank lines, wrap at `CHUNK_SIZE = 500` chars; delete old chunks and insert new ones in 1 transaction.
-- `RetrievalService`: enabled sources of the account only; `nearest_neighbors(:embedding, distance: 'cosine')`, `DEFAULT_TOP_K = 5`; `similarity_score = clamp(1 - distance, 0, 1)`.
-- Outage (`ActiveRecord::StatementInvalid`, `PG::Error`, `RubyLLM::Error`, `RubyLLM::ConfigurationError`) -> `{ results: [], failure_reason: "..." }`, no raise.
-- Deleting a source destroys its chunks (`dependent: :destroy`).
+| Violation | Pattern |
+|---|---|
+| `restricted_information` | any `config.restricted_information` entry, case-insensitive substring |
+| `price` | `/r\$\s?\d\|\b\d+([.,]\d{2})?\s?reais\b/i` |
+| `proposal_sent` | `/proposta (foi )?enviada\|enviei a proposta/i` |
+| `delivery_status` | `/pedido entregue\|entrega confirmada\|status da entrega/i` |
 
-### Human handoff state machine
+- Claims pass only when `validated_claims[claim]` is set; orchestrator passes none, so any match blocks.
 
-States (`ConversationExtension#ai_control_state`): `ai_active:0 handoff_requested:1 awaiting_human:2 human_active:3 paused:4 closed:5`.
+### Action registry and executor
 
-| Service | From | To | Side effects |
+`ScanSolo::Actions::Registry::HANDLERS`, `ScanSolo::Actions::Executor`, `ScanSolo::Actions::ConfirmationGate`:
+
+| action_id | Handler | Classification | Params |
 |---|---|---|---|
-| `HandoffAction` (registered action) | any | `handoff_requested` | none (no note) |
-| `Handoff::HandoffService` | `ai_active`, `handoff_requested` | `awaiting_human` | 9-line private note; other states no-op |
-| `Handoff::TakeoverService` | not `human_active` | `human_active` | HandoffService, `AuditEvent handoff.takeover`, cancel scheduled cadence attempts |
-| `Handoff::ReturnToAiService` | not `ai_active` | `ai_active` | `AuditEvent handoff.return_to_ai`; sole path back to AI |
+| `qualification_field` | `QualificationFieldAction` | automatic | `conversation_id`, `fields{}` |
+| `stage_transition` | `StageTransitionAction` | automatic | `opportunity_id`, `target_stage` |
+| `private_note` | `PrivateNoteAction` | automatic | `conversation_id`, `content` |
+| `proposal_generate` | `ProposalActions::Generate` | automatic | `opportunity_id` |
+| `proposal_approve` | `ProposalActions::Approve` | requires_confirmation | `opportunity_id` |
+| `proposal_send` | `ProposalActions::Send` | requires_confirmation | `opportunity_id` |
+| `cadence_signal` | `CadenceSignalAction` | automatic | `opportunity_id`, `signal` ∈ `full_reply partial_reply stage_changed won lost opt_out manual_pause` |
+| `human_handoff` | `HandoffAction` | automatic | `conversation_id`, `reason` |
 
-- Note lines (pt-BR): Motivo da transferência, Resumo (last 3 chat messages), Objetivo do cliente, Campos de qualificação coletados, Objeções, Etapa do pipeline, Status da proposta (`não aplicável`), Ações pendentes, Próximo passo recomendado.
-- Authorization: `ScanSolo::HandoffPolicy` — administrator or conversation `assignee_id == user.id`.
+- Every schema is closed (`additionalProperties: false`); `JSONSchemer` rejects extra keys → `InvalidParamsError`.
+- Unregistered / `disabled` / not-offered action → `UnregisteredActionError`; raises roll back all earlier actions and the reply (0 messages).
+- Repeat `idempotency_key` never re-runs an executed side effect; `requires_confirmation` stays `pending` until a call with `confirmed: true`.
+- Executed → `AuditEvent` `agent_action.<action_id>` linked on the execution row.
+- `.call` self-registers the action row in `scan_solo_agent_actions`.
+- Extend: add handler class with `CLASSIFICATION` + `SCHEMA`, add to `HANDLERS`, `InputGuardrail::ALL_ACTIONS`, `PromptBuilder::ACTION_DESCRIPTIONS`.
 
-### Cadence enrollment and scheduling
+### Qualification field resolution
 
-- `Cadence::EnrollmentService`: `find_or_create_by!(opportunity, cadence_definition)`; creates 1 attempt per `offsets` entry: `step = i+1`, `scheduled_at = enrollment.created_at + offset hours`, `template_reference = "scansolo_cadence_<stage>_v<version>_step<n>"`.
-- `CadenceDefinition.current_for(stage)` = highest active `version` for stage.
-- Manual enroll: `LifecycleService.enroll!` raises `UnauthorizedError` unless `authorized: true`; policy `CadenceEnrollmentPolicy#create?` requires administrator.
-- `pause!` active only, clears `next_attempt_at`; `resume!` shifts every scheduled attempt by pause duration; `cancel!` marks scheduled attempts `cancelled`.
+`ScanSolo::Qualification::FieldResolver` — only reader of "field satisfied?"; consumers: `QualificationFieldAction`, `ContextAssembler`, `ReplyCompletenessDetector`, `HandoffService`, `Proposal::MakeProvider` (and `GenerateService` per commit 34ed058791).
 
-### Cadence stop/recalculate triggers
+- Normalize: transliterate, trim, downcase, split on `space _ / -`, join `_`.
+- Canonical alias table (`ALIASES`):
 
-`ScanSolo::Cadence::StopRecalculatePolicy`:
+| Canonical | Accepted spellings |
+|---|---|
+| `nome` | Nome, nome completo, name |
+| `telefone` | Telefone, WhatsApp |
+| `email` | E-mail, email |
+| `tipo_intervencao` | Objetivo do serviço, tipo de intervenção, escopo |
+| `cidade_uf` | Cidade / UF, cidade |
+| `endereco_obra` | Endereço da obra, endereço |
+| `area` | Área ou extensão, área, area_total |
+| `profundidade` | Profundidade de interesse, profundidade |
+| `prazo_desejado` | Prazo desejado, prazo, urgência |
+| `empresa` | Empresa, razão social, company |
+| `integracao_seguranca` | Integração de segurança |
 
-| Trigger | Source | Effect |
+- Label without alias → its normalized form is the canonical key.
+- `nome`/`email`/`telefone` read native `name`/`email`/`phone_number` first, fall back to `custom_attributes`.
+- Custom key precedence: exact canonical key > exact config label > alias-table order > lexicographic.
+- `make_qualification`: 10 `MAKE_KEYS` evaluated regardless of config; only present values sent.
+- Pure read: no messages, LLM, HTTP or writes.
+- Extend: add a row to `ALIASES` (and `MAKE_KEYS` if Make needs it).
+
+### Qualification writes and auto-transition
+
+`ScanSolo::Actions::QualificationFieldAction`:
+
+- Native key → written only when column blank and valid; invalid value restored and reported (`not_applied_fields`); already present → `native_already_present`.
+- Required non-native key → written under canonical `custom_attributes` key; other keys → `unrecognized_fields`, never persisted.
+- 1 `contact.save!` per call.
+- `em_contato` + any accepted required key → `em_qualificacao`; `em_qualificacao` + all required satisfied → `qualificado`.
+
+### Pipeline stages
+
+`ScanSolo::PipelineOpportunity` enum: `novo_lead 0, em_contato 1, em_qualificacao 2, qualificado 3, proposta_enviada 4, negociacao 5, ganho 6, perdido 7`.
+
+| Trigger | From | To | Implementer |
+|---|---|---|---|
+| First eligible inbound message | — | `novo_lead` (created) | `Pipeline::OpportunityBootstrapService` (1 per conversation, unique index) |
+| Later inbound message | `novo_lead` | `em_contato` | `Pipeline::InboundMessageTransitionRule` |
+| AI `stage_transition` | lower stage | `em_qualificacao` / `qualificado` only, forward only | `Actions::StageTransitionAction` (else `rejected` / `stage_not_allowed_for_ai`) |
+| Human `POST .../stage_transitions` | any non-terminal | any stage; `negociacao` requires `authorized: true` | `PipelineOpportunitiesController` |
+| Any | `ganho` / `perdido` | — (terminal, rejected) | `Pipeline::StageTransitionService` |
+
+- Each transition writes `PipelineStageEvent` in the same transaction, then `StopRecalculatePolicy` (`won`/`lost`/`stage_changed`) and `StageEntryEnroller`.
+- Human replay of same `(opportunity, target_stage, actor)` within 5s → no new event (`STAGE_TRANSITION_IDEMPOTENCY_WINDOW`).
+- `PIPELINE_STALE_THRESHOLD` = 48 h.
+
+### Cadence engine
+
+- Enrollment: `Cadence::StageEntryEnroller` for stages `novo_lead em_contato em_qualificacao proposta_enviada`; skipped for opted-out contacts; missing active `CadenceDefinition` → `CadenceDefinitionMissing` exception report + audit `cadence.definition_missing`.
+- Manual enroll requires admin (`CadenceEnrollmentPolicy#create?`); unique `(opportunity_id, cadence_definition_id)` for status active/paused.
+- Stop/recalculate (`Cadence::StopRecalculatePolicy`):
+
+| Trigger | Effect | Called from |
 |---|---|---|
-| `stage_changed`, `won`, `lost` | `StageTransitionService` | cancel all active/paused enrollments |
-| `opt_out` | `CadenceSignalAction` (`POLICY_TRIGGERS`) | cancel all |
-| `manual_pause` | `CadenceSignalAction` (`POLICY_TRIGGERS`) | pause all active |
-| `replacement` | in `TRIGGERS`; no caller observed | cancel all |
-| takeover (`handle_takeover`) | `TakeoverService` | cancel all |
-| unknown | — | `ArgumentError` |
+| `stage_changed`, `won`, `lost` | cancel all | `Pipeline::StageTransitionService` |
+| `opt_out` | cancel all | `OptOut::MarkService` |
+| `replacement` | cancel all | policy `TRIGGERS` |
+| `manual_pause` | pause all | `CadenceSignalAction` |
+| `handoff` | pause all | `HandoffAction`, `TakeoverService.handle_takeover` |
 
-Only `scheduled` attempts change; sent attempts are never rewritten. Extend: add to `TRIGGERS` (and `PAUSING_TRIGGERS` for pause semantics).
+- Only `scheduled` attempts change; sent attempts never altered. Return to AI resumes paused schedule shifted by paused duration (`Cadence::ResumeOnReturnService`).
+- Reply completeness (`Cadence::ReplyCompletenessDetector`): all required fields satisfied → cancel all; else cancel only the next scheduled attempt.
+- Due attempt precheck (`Cadence::AttemptPrecheck`), in order:
 
-### Reply completeness
+| # | Condition | Decision / reason |
+|---|---|---|
+| 0 | `scansolo_enabled` off | defer `scansolo_disabled` |
+| 1 | contact opted out | cancel `opt_out` |
+| 2 | conversation resolved | cancel `conversation_resolved` |
+| 3 | eligibility false | defer `<eligibility reason>` |
+| 4 | extension present and not `ai_active` | defer `human_controlled` |
+| 5 | template blocked (`TemplateAvailabilityGuard`) | defer `<guard reason>` |
+| — | otherwise | send |
 
-- `Cadence::ReplyCompletenessDetector`: required fields = published config `required_qualification_fields`, satisfaction reported by `ScanSolo::Qualification::FieldResolver` (native name/email/phone and normalized/alias `custom_attributes` keys count).
-- All present -> cancel all enrollments; some missing -> cancel only the next scheduled attempt per active enrollment.
+- Send window: 09:00 ≤ hour < 20:00 `America/Sao_Paulo`, every day; outside → `scheduled_at` = next 09:00 (`Cadence::SendingWindow`).
+- Send → `dispatched`; `sent` only from `Messaging::DeliveryReconciler`. Late send after deferral shifts remaining attempts by the delay; ≤1 attempt per enrollment per run.
 
-### Due attempt sending
+### Handoff and AI control
 
-`ScanSolo::CadenceDueAttemptJob.process_attempt!` under row lock:
+`ScanSolo::ConversationExtension#ai_control_state`: `ai_active 0, handoff_requested 1, awaiting_human 2, human_active 3, paused 4, closed 5`.
 
-| Condition | Result |
-|---|---|
-| attempt not `scheduled` or enrollment not `active` | skip |
-| outside 09:00-20:00 `America/Sao_Paulo` (`SendingWindow`) | reschedule to `next_in_window` (today or tomorrow 09:00) |
-| no enabled published config | `skipped` (`automation_disabled`) |
-| `Channel::Whatsapp` without approved template named `template_reference` | `skipped` (`template_unavailable`) |
-| non-WhatsApp channel | template treated as available |
-| send raises | `failed` |
-| send ok | `sent`, `sent_at` set |
+| Entry | Service | Result |
+|---|---|---|
+| AI `human_handoff` action | `HandoffService` + pause cadence | `awaiting_human` |
+| `POST .../handoff` (assigned agent or admin) | `TakeoverService` trigger `explicit` | `human_active`, audit `handoff.takeover` |
+| Manual non-private `User` reply without `scansolo_origin` | `TakeoverService` trigger `human_reply` | `human_active` |
+| `POST .../return_to_ai` | `ReturnToAiService` (only path back) | `ai_active`, audit `handoff.return_to_ai`, cadence resume |
 
-- `AttemptEvidenceRecorder` raises `AlreadyRecordedError` on a terminal attempt; updates `current_step` = max terminal step, `next_attempt_at`, `completed` when none scheduled.
-- Test mode: `enroll!(test_mode: true)` processes attempts immediately with `enforce_window: false`.
+- `HandoffService` writes the note only from `ai_active`/`handoff_requested` → exactly 1 note per episode. Note lines: Motivo da transferência, Resumo (last 3 chat messages), Objetivo do cliente, Campos de qualificação coletados, Objeções, Etapa do pipeline, Status da proposta, Ações pendentes, Próximo passo recomendado.
+- Takeover and return are idempotent (no duplicate audit).
 
-### Registered actions
+### Opt-out
 
-`ScanSolo::Actions::Registry::HANDLERS`, synced into `scan_solo_agent_actions`:
-
-| action_id | Classification |
-|---|---|
-| `qualification_field` | automatic |
-| `stage_transition` | automatic |
-| `private_note` | automatic |
-| `proposal_generate` | automatic |
-| `proposal_approve` | requires_confirmation |
-| `proposal_send` | requires_confirmation |
-| `cadence_signal` | automatic |
-| `human_handoff` | automatic |
-
-- `Actions::Executor`: rejects unregistered/`disabled` (`UnregisteredActionError`); JSON-schema-validates params (`InvalidParamsError`); unique `idempotency_key` resumes an existing execution; `ConfirmationGate` keeps `requires_confirmation` pending until `confirmed: true`; success writes `AuditEvent agent_action.<id>`; exception -> `failed`.
-- Registry/Executor have no caller outside `app/services/scan_solo/actions/`.
+- Keyword (`OptOut::KeywordMatcher`): whole message equals a `config.opt_out_keywords` entry after transliterate, downcase, strip punctuation, squish (default `["PARAR","SAIR","STOP"]`). `Parar!` matches; a phrase containing the keyword does not.
+- Model path: `cadence_signal` with `signal: opt_out` → `MarkService` source `model_action`.
+- `MarkService` cancels open enrollments; `ClearService` is the only reset path (admin, `DELETE .../contacts/:id/opt_out`).
 
 ### Proposal lifecycle
 
-| Step | Service | Guard | Result |
-|---|---|---|---|
-| Generate | `Proposal::GenerateService` | `ScanSolo::Qualification::FieldResolver` reports every `required_qualification_fields` entry satisfied, else 422 `campos obrigatórios da proposta incompletos` | new current version `generating`; provider callback |
-| Callback (generate) | `Proposal::CallbackHandler.apply_generate_result!` | matching `generate_correlation_id`, not yet applied (row lock) | `generated` + value/currency/artifact_url, or `failed` |
-| Approve | `Proposal::ApproveService` | version `is_current` | `approved_at`, `approved` if was `generated`; idempotent |
-| Send | `Proposal::SendService` | current; `generated`/`approved`/`sent`; approval present when `approval_required?` | provider send |
-| Callback (send) | `CallbackHandler.apply_send_result!` | matching `send_correlation_id`, not yet applied | `NativeTemplateSender` (`scansolo_proposal_send`), `sent`; or `failed` |
-| Success | `Proposal::SuccessHandler` | opportunity not `ganho`/`perdido` | stage -> `proposta_enviada`, enroll `CadenceDefinition.current_for('proposta_enviada')` |
-
-- `approval_required?` = no published config OR `require_proposal_approval`.
-- `RetryPolicy`: only `failed` with reason in `timeout network_error provider_unavailable`; new correlation id; else `UnsafeRetryError`.
-- Default provider everywhere: `ScanSolo::Proposal::MockProvider` (value `1500.0`, currency `BRL`, artifact `https://mock-proposals.scansolo.test/<id>.pdf`).
+- `ProposalVersion.status`: `generating 0, generated 1, approved 2, sent 3, failed 4`; 1 `is_current` per proposal.
+- Provider: `Proposal::Integration.provider!` → `MakeProvider` when `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` present; `MockProvider` only in dev/test; production without creds → `ProposalIntegrationNotConfigured` (422 `proposal_integration_not_configured`).
+- AI-triggered generate: version created in the turn transaction; Make HTTP fires after all transactions commit.
+- Only the provider callback writes commercial `value` (RF-76).
+- Retry (`Proposal::RetryPolicy`): only `failed` with `failure_reason` ∈ `timeout network_error provider_unavailable`; same version row, new correlation id; `retry_count` ≥ 3 (`MakeRequest::DEAD_LETTER_RETRY_THRESHOLD`) → dead letter, needs `confirm_reprocess: true`. `value` present → retry send step, else generate. Audit `proposal.retry_requested` / `proposal.reprocess_requested`.
 
 ### Make callback trust
 
-- `ScanSolo::Make::CallbackVerifier`: HMAC-SHA256 of raw body with credential `scan_solo.make.inbound_signing_secret`, `secure_compare` against `X-Make-Signature`; then JSON parse, JSON schema, match `MakeRequest` by `correlation_id` + `action`.
-- Rejection reasons: `invalid_signature`, `malformed_json`, `schema_invalid`, `unmatched_request`.
-- `MakeRequest.dead_letter` = `failed` with `retry_count >= 3` (`DEAD_LETTER_RETRY_THRESHOLD`).
+`ScanSolo::Make::CallbackVerifier`, strict order:
+
+| Step | Failure `rejection_reason` | HTTP |
+|---|---|---|
+| HMAC-SHA256 of raw body vs `X-Make-Signature` (`secure_compare`) | `invalid_signature` | 401, nothing persisted |
+| JSON parse | `malformed_json` | 422 |
+| Schema (`action` ∈ `proposal.generate proposal.send`, `status` ∈ `success failure`) | `schema_invalid` | 422 |
+| `MakeRequest` with same `correlation_id` + `action` | `unmatched_request` | 422 |
+
+- Applied redelivery of same `correlation_id` → 200 (unique index on `make_callbacks.correlation_id` where `applied`).
+
+### Knowledge retrieval
+
+- Ingestion chunks at 500 chars (`Knowledge::IngestionService::CHUNK_SIZE`), async on `low` queue.
+- Retrieval: cosine nearest neighbors over enabled sources of the account, default top_k 5, API max 20; score = `1 - distance` clamped 0..1.
+- Outage (`PG::Error`, `ActiveRecord::StatementInvalid`, `RubyLLM::Error`, `RubyLLM::ConfigurationError`) → empty results + `failure_reason`, turn continues.
 
 ## Related documents
 
-- [`data_model.md`](data_model.md) — tables, enums and indexes behind these rules
-- [`api_contracts.md`](api_contracts.md) — endpoints that trigger these rules
-- [`architecture.md`](architecture.md) — async flows and layer boundaries
+- [`data_model.md`](data_model.md) — tables and enums behind these rules
+- [`api_contracts.md`](api_contracts.md) — endpoints that trigger the rules
+- [`architecture.md`](architecture.md) — flows connecting services and jobs

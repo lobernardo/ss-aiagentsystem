@@ -1,0 +1,638 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Agent Lead State — REST contract delta (CT-01, CT-04)
+  version: "1.5.0"
+  description: >
+    Delta over `.spec/features/scansolo-chatwoot-platform/openapi.yaml` (v1.1.0,
+    pipeline opportunities) and `.spec/features/scansolo-production-complete/openapi.yaml`
+    (v1.2.0, AI turns). Only the operations CHANGED by SPEC `scansolo-agent-lead-state`
+    v1.2 are listed (v1.2 delta: `LeadNextAction.source_message_id` is nullable for
+    states created by the RF-01a backfill). CT-01: `GET` / `PATCH /pipeline_opportunities/{id}` and
+    `POST /pipeline_opportunities/{id}/stage_transitions` gain the additive
+    `lead_state` object (RF-01, RF-03, RF-06, RF-14, RF-23, RF-24, RF-26).
+    CT-04: `AiTurn.failure_reason` gains 4 documented values and the
+    `context_snapshot` diagnostics gain `attachment_extraction` (RF-20) and
+    `output_regeneration` (RF-11a). COMPAT: every pre-existing response field
+    keeps name, type and meaning; `GET /pipeline_opportunities` (index) is
+    unchanged and does NOT carry `lead_state`; auth (`PipelineOpportunityPolicy`)
+    and the `scansolo_enabled` 404 gate are unchanged. Base path verified at
+    `config/routes.rb:463`.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: app.scansolo.local
+
+security:
+  - userApiKey: []
+
+paths:
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    get:
+      operationId: showPipelineOpportunity
+      summary: Opportunity detail with lead state (CT-01; RF-26)
+      description: >
+        CHANGED (v1.1.0 + `lead_state`). Rendered by `show.json.jbuilder` =
+        `_pipeline_opportunity` partial + `_lead_state` partial built from
+        `ScanSolo::LeadState::Projection`. Same number of SQL queries for 1 or 50
+        history entries (RNF-05).
+      responses:
+        '200':
+          description: Opportunity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updatePipelineOpportunity
+      summary: Reassign opportunity owner (unchanged request; response gains `lead_state`)
+      description: >
+        CHANGED (response only). `lead_state.status.owner_id` reflects the new owner
+        without any write to the lead state (RF-03).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner_id]
+              additionalProperties: false
+              properties:
+                owner_id:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Owner reassigned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}/stage_transitions:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    post:
+      operationId: createPipelineStageTransition
+      summary: Human stage transition (unchanged request; response gains `lead_state`)
+      description: >
+        CHANGED (response only; renders `show`). Idempotent replay within 5s also
+        returns `lead_state`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_stage]
+              additionalProperties: false
+              properties:
+                target_stage:
+                  $ref: '#/components/schemas/PipelineStage'
+      responses:
+        '200':
+          description: Transition applied (or idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid/unauthorized transition — stage left unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/ai_turns/{correlation_id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: correlation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: showAiTurn
+      summary: One AI turn (CT-04 content change; shape unchanged)
+      description: >
+        CHANGED (content only). `failure_reason` may carry the 2nd-attempt violation
+        (RF-11a). `context_snapshot.attachment_extraction` lists per-attachment
+        extraction outcomes of the trigger message (RF-20) and
+        `context_snapshot.output_regeneration` carries the 1st-attempt violation when
+        the turn regenerated (RF-11a).
+      responses:
+        '200':
+          description: Turn.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiTurn'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    userApiKey:
+      type: apiKey
+      in: header
+      name: api_access_token
+      description: Existing Chatwoot session/API-token auth, unchanged.
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ResourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    Forbidden:
+      description: Authenticated but not authorized by `PipelineOpportunityPolicy`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    NotFound:
+      description: Resource not found in the account, or account not ScanSolo-enabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    UnprocessableEntity:
+      description: Request-boundary validation error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+
+  schemas:
+    ScanSoloError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    PipelineStage:
+      type: string
+      enum: [novo_lead, em_contato, em_qualificacao, qualificado, proposta_enviada, negociacao, ganho, perdido]
+
+    Intent:
+      type: string
+      description: RF-14.
+      enum: [orcamento, avaliacao_tecnica, convite_cotacao, envio_documentos, duvida, verificar_capacidade, localizar_rede, visita, acompanhar_proposta, outro]
+
+    NextActionValue:
+      type: string
+      description: RF-23.
+      enum: [proposta, avaliacao_tecnica, solicitar_documentos, atendimento_humano, aguardar_cliente]
+
+    FieldKey:
+      type: string
+      description: RF-02 closed catalog (34 canonical keys, table order).
+      enum:
+        - nome
+        - empresa
+        - cargo
+        - cnpj
+        - telefone
+        - email
+        - emails_copia
+        - tipo_servico
+        - tipo_intervencao
+        - tecnologia
+        - interferencias_buscadas
+        - cliente_final
+        - cidade_uf
+        - endereco_obra
+        - bairro
+        - link_local
+        - area
+        - metragem
+        - quantidade_pontos
+        - profundidade
+        - profundidade_intervencao
+        - superficie
+        - observacoes_tecnicas
+        - data_desejada
+        - prazo_desejado
+        - diarias
+        - integracao_seguranca
+        - tempo_integracao
+        - restricoes_acesso
+        - documentacoes_necessarias
+        - prazo_proposta
+        - email_envio_proposta
+        - emails_copia_proposta
+        - condicoes_especiais
+
+    FieldStatus:
+      type: string
+      enum: [confirmado, inferido, faltante]
+
+    StageHistoryEntry:
+      type: object
+      required: [id, from_stage, to_stage, actor_type, actor_id, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        from_stage:
+          $ref: '#/components/schemas/PipelineStage'
+        to_stage:
+          $ref: '#/components/schemas/PipelineStage'
+        actor_type:
+          type: [string, "null"]
+        actor_id:
+          type: [integer, "null"]
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+
+    PipelineOpportunityDetail:
+      type: object
+      description: >
+        Existing fields of `_pipeline_opportunity.json.jbuilder` (unchanged,
+        `docs/agents/api_contracts.md:61`) plus `lead_state` (CT-01, additive).
+      required: [id, account_id, contact_id, contact_name, conversation_id, owner_id, stage, last_customer_interaction_at, next_follow_up_at, created_at, updated_at, stage_history, lead_state]
+      properties:
+        id:
+          type: integer
+          format: int64
+        account_id:
+          type: integer
+          format: int64
+        contact_id:
+          type: integer
+          format: int64
+        contact_name:
+          type: [string, "null"]
+        conversation_id:
+          type: integer
+          format: int64
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        last_customer_interaction_at:
+          type: [string, "null"]
+          format: date-time
+        next_follow_up_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        stage_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/StageHistoryEntry'
+        lead_state:
+          $ref: '#/components/schemas/LeadState'
+
+    LeadState:
+      type: object
+      additionalProperties: false
+      required: [intent, qualification, next_action, authorized_actions, blocks, status, history]
+      properties:
+        intent:
+          oneOf:
+            - $ref: '#/components/schemas/Intent'
+            - type: "null"
+        qualification:
+          $ref: '#/components/schemas/LeadQualification'
+        next_action:
+          oneOf:
+            - $ref: '#/components/schemas/LeadNextAction'
+            - type: "null"
+        authorized_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuthorizedAction'
+        blocks:
+          $ref: '#/components/schemas/LeadStateBlocks'
+        status:
+          $ref: '#/components/schemas/LeadStatusBlock'
+        history:
+          type: array
+          description: Append-only, oldest first (RF-06, RNF-06).
+          items:
+            $ref: '#/components/schemas/LeadStateHistoryEntry'
+
+    LeadQualification:
+      type: object
+      additionalProperties: false
+      required: [status, completed_at]
+      properties:
+        status:
+          type: string
+          enum: [em_andamento, concluida]
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+          description: RF-21 completion instant, or the backfill instant for states marked `concluida` by RF-01a.
+
+    LeadNextAction:
+      type: object
+      additionalProperties: false
+      required: [value, recorded_at, source_message_id]
+      properties:
+        value:
+          $ref: '#/components/schemas/NextActionValue'
+        recorded_at:
+          type: string
+          format: date-time
+        source_message_id:
+          type: [integer, "null"]
+          format: int64
+          description: >
+            Trigger message of the turn that recorded it (model `lead_state_update` or the RF-21 intent default).
+            Null only when recorded by the RF-01a backfill (opportunity at `qualificado` or later →
+            `concluida` + `aguardar_cliente`, SPEC v1.2).
+
+    AuthorizedAction:
+      type: object
+      additionalProperties: false
+      required: [action, source_message_id, recorded_at]
+      properties:
+        action:
+          $ref: '#/components/schemas/NextActionValue'
+        source_message_id:
+          type: integer
+          format: int64
+        recorded_at:
+          type: string
+          format: date-time
+
+    LeadStateBlocks:
+      type: object
+      additionalProperties: false
+      required: [identificacao, servico, local, escopo, execucao, comercial]
+      properties:
+        identificacao:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeadStateField'
+        servico:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeadStateField'
+        local:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeadStateField'
+        escopo:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeadStateField'
+        execucao:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeadStateField'
+        comercial:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeadStateField'
+
+    LeadStateField:
+      type: object
+      additionalProperties: false
+      description: "`faltante` ⇔ `value` null (RF-01)."
+      required: [key, label, value, status, classification, updated_at, source_message_id, source_attachment_id]
+      properties:
+        key:
+          $ref: '#/components/schemas/FieldKey'
+        label:
+          type: string
+          description: RF-02 label (pt-BR).
+        value:
+          type: [string, "null"]
+        status:
+          $ref: '#/components/schemas/FieldStatus'
+        classification:
+          type: string
+          enum: [obrigatorio, complementar]
+          description: Derived from the published `required_qualification_fields` (RF-15); independent of intent and stage.
+        updated_at:
+          type: [string, "null"]
+          format: date-time
+        source_message_id:
+          type: [integer, "null"]
+          format: int64
+        source_attachment_id:
+          type: [integer, "null"]
+          format: int64
+
+    LeadStatusBlock:
+      type: object
+      additionalProperties: false
+      description: Derived, never stored (RF-03).
+      required: [stage, confirmed_fields, missing_fields, next_action, owner_id, last_customer_interaction_at, next_follow_up_at]
+      properties:
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        confirmed_fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldKey'
+        missing_fields:
+          type: array
+          description: Required keys whose status is not `confirmado`.
+          items:
+            type: string
+        next_action:
+          oneOf:
+            - $ref: '#/components/schemas/NextActionValue'
+            - type: "null"
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        last_customer_interaction_at:
+          type: [string, "null"]
+          format: date-time
+        next_follow_up_at:
+          type: [string, "null"]
+          format: date-time
+
+    LeadStateHistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [subject, key, previous_value, previous_status, new_value, new_status, source_message_id, source_attachment_id, changed_at]
+      properties:
+        subject:
+          type: string
+          enum: [field, intent, next_action]
+        key:
+          type: [string, "null"]
+          description: RF-02 key when `subject = field`, else null.
+        previous_value:
+          type: [string, "null"]
+        previous_status:
+          type: [string, "null"]
+          enum: [confirmado, inferido, faltante, null]
+        new_value:
+          type: [string, "null"]
+        new_status:
+          type: [string, "null"]
+          enum: [confirmado, inferido, faltante, null]
+        source_message_id:
+          type: [integer, "null"]
+          format: int64
+        source_attachment_id:
+          type: [integer, "null"]
+          format: int64
+        changed_at:
+          type: string
+          format: date-time
+
+    AttachmentExtraction:
+      type: object
+      additionalProperties: false
+      required: [attachment_id, file_type, file_name, extracted, reason]
+      properties:
+        attachment_id:
+          type: integer
+          format: int64
+        file_type:
+          type: string
+        file_name:
+          type: [string, "null"]
+        extracted:
+          type: boolean
+        reason:
+          type: [string, "null"]
+          description: "`unsupported_type` | `too_large` | `too_many_pages` | `no_extractable_text` | `extraction_error: <ErrorClass>` (RF-20); null when extracted."
+
+    OutputRegeneration:
+      type: object
+      additionalProperties: false
+      required: [first_attempt_violation]
+      properties:
+        first_attempt_violation:
+          type: string
+          enum: [confirmed_field_question, question_limit, field_not_missing, qualification_closed]
+
+    AiTurnContextSnapshotLeadStateKeys:
+      type: object
+      description: >
+        Keys added to the existing `context_snapshot` diagnostics (still outside the
+        v1.2.0 contract as a whole; only these two keys are specified here).
+      properties:
+        attachment_extraction:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentExtraction'
+        output_regeneration:
+          $ref: '#/components/schemas/OutputRegeneration'
+
+    AiTurn:
+      type: object
+      description: >
+        Same shape as v1.2.0 `AiTurn`; only the documented `failure_reason` values
+        and the two `context_snapshot` keys change (CT-04).
+      required: [id, correlation_id, conversation_id, message_id, invocation_status, failure_reason, latency_ms, knowledge_evidence, action_evidence, response_delivery_status, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: integer
+          format: int64
+        message_id:
+          type: integer
+          format: int64
+        response_message_id:
+          type: [integer, "null"]
+          format: int64
+        invocation_status:
+          type: string
+          enum: [pending, suppressed, succeeded, failed]
+        model_provider:
+          type: [string, "null"]
+        model_reference:
+          type: [string, "null"]
+        input_tokens:
+          type: [integer, "null"]
+        output_tokens:
+          type: [integer, "null"]
+        cost_estimate:
+          type: [number, "null"]
+        latency_ms:
+          type: [integer, "null"]
+        failure_reason:
+          type: [string, "null"]
+          description: >
+            v1.2.0 values plus `output validation blocked: confirmed_field_question`,
+            `output validation blocked: question_limit`,
+            `output validation blocked: field_not_missing`,
+            `output validation blocked: qualification_closed` (2nd-attempt violation, RF-11a).
+        knowledge_evidence:
+          type: array
+          description: Unchanged.
+          items:
+            $ref: '../scansolo-production-complete/openapi.yaml#/components/schemas/KnowledgeEvidence'
+        action_evidence:
+          type: array
+          description: Unchanged shape; may now include `lead_state_update` entries.
+          items:
+            $ref: '../scansolo-production-complete/openapi.yaml#/components/schemas/ActionEvidence'
+        response_delivery_status:
+          type: [string, "null"]
+          enum: [sent, delivered, read, failed, null]
+        context_snapshot:
+          $ref: '#/components/schemas/AiTurnContextSnapshotLeadStateKeys'
+        created_at:
+          type: string
+          format: date-time

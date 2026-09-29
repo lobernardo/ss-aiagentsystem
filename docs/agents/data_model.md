@@ -8,154 +8,92 @@
 
 | Item | Value |
 |---|---|
-| Engine | PostgreSQL (`config/database.yml`); prod image `pgvector/pgvector:pg16` |
-| Extensions | `pg_stat_statements`, `pg_trgm`, `pgcrypto`, `plpgsql`, `vector` (`db/schema.rb`) |
-| Schema | `db/schema.rb` (ScanSolo tables prefixed `scan_solo_`) |
-| Migrations | ActiveRecord, `db/migrate/20260917231850_*` .. `20260918080001_*` (21 ScanSolo files) |
-| Upstream touch point | `accounts.scansolo_feature_flags bigint default 0` (`has_flags 1 => :scansolo_enabled`), separate from upstream `feature_flags` |
-| File storage | ActiveStorage (`KnowledgeSource has_one_attached :file`) |
+| Engine | PostgreSQL + `vector` extension (pgvector; `pgvector/pgvector:pg16` in `docker-compose.test.yaml`) |
+| Schema | `db/schema.rb` (Ruby format) |
+| Migrations | `db/migrate/` (208 files); ScanSolo range `20260917231850..20260923000007` |
+| Migration tool | ActiveRecord migrations; `rails db:chatwoot_prepare` (release in `Procfile`, `POSTGRES_STATEMENT_TIMEOUT=600s`) |
+| Triggers | `hairtrigger` gem (upstream) |
+| Files | ActiveStorage, `config/storage.yml`; MinIO in `docker-compose.scansolo.yaml` |
+| Vector search | `neighbor` gem `nearest_neighbors(:embedding, distance: 'cosine')` |
+
+- Upstream Chatwoot tables (accounts, inboxes, conversations, messages, contacts, users, ...) live in the same schema; ScanSolo adds `accounts.scansolo_enabled` and 19 `scan_solo_*` tables, models in `app/models/scan_solo/`.
+- ScanSolo extends core records by 1:1 extension tables, not columns: `scan_solo_conversation_extensions`, `scan_solo_contact_extensions`.
 
 ### Entities
 
-#### PipelineOpportunity — `scan_solo_pipeline_opportunities`
+#### Configuration
 
-| Column | Type | Notes |
-|---|---|---|
-| account_id, contact_id, conversation_id | bigint not null | `belongs_to` Account, Contact, Conversation |
-| owner_id | bigint | `belongs_to :owner, class_name: 'User', optional` |
-| stage | integer default 0 | enum `novo_lead em_contato em_qualificacao qualificado proposta_enviada negociacao ganho perdido` |
-| last_customer_interaction_at | datetime | set by `record_customer_interaction!` |
+| Table / model | Key columns | Relations | Invariants |
+|---|---|---|---|
+| `scan_solo_ai_agent_configs` / `AiAgentConfig` | `status` enum `draft 0, published 1`; `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours`; jsonb `qualification_playbook, required_qualification_fields, restricted_information, forbidden_subjects, allowed_inbox_ids`; `opt_out_keywords` default `["PARAR","SAIR","STOP"]`; `require_proposal_approval` default true | `belongs_to :account`, `:published_version` (self) | 1 draft per account (partial unique index `status = 0`) |
+| `scan_solo_agent_actions` / `AgentAction` | `action_id`, `classification` enum `read_only 0, automatic 1, requires_confirmation 2, disabled 3`, jsonb `schema` | `has_many :executions` | `action_id` unique |
+| `scan_solo_template_mappings` / `TemplateMapping` | `stage`, `step` (nullable), `template_name`, `language`, jsonb `params` | `belongs_to :account` | unique `(account_id, stage, step)` NULLS NOT DISTINCT; `stage` ∈ 4 cadence stages; param `source` ∈ `contact_name contact_first_name agent_name stage_label static` |
+| `scan_solo_cadence_definitions` / `CadenceDefinition` | `stage`, `version` default 1, jsonb `offsets`, `active` | `has_many :enrollments` | unique `(stage, version)`; `offsets` present |
 
-- Unique `conversation_id`. `has_many :stage_events`, `:cadence_enrollments`; `has_one :proposal`.
+#### Conversation, contact, pipeline
 
-#### PipelineStageEvent — `scan_solo_pipeline_stage_events`
+| Table / model | Key columns | Relations | Invariants |
+|---|---|---|---|
+| `scan_solo_conversation_extensions` / `ConversationExtension` | `ai_control_state` enum `ai_active 0, handoff_requested 1, awaiting_human 2, human_active 3, paused 4, closed 5` | `belongs_to :conversation` | `conversation_id` unique; row lock serializes turn send |
+| `scan_solo_contact_extensions` / `ContactExtension` | `opted_out` default false, `opted_out_at`, `opted_out_source` | `belongs_to :contact` | `contact_id` unique |
+| `scan_solo_pipeline_opportunities` / `PipelineOpportunity` | `stage` enum `novo_lead 0 … perdido 7`, `owner_id`, `last_customer_interaction_at` | `belongs_to :account, :contact, :conversation, :owner (User)`; `has_many :stage_events, :cadence_enrollments`; `has_one :proposal` | `conversation_id` unique (1 opportunity per conversation) |
+| `scan_solo_pipeline_stage_events` / `PipelineStageEvent` | `from_stage`, `to_stage`, polymorphic `actor`, `created_at` only | `belongs_to :opportunity` | both stages ∈ opportunity stage keys |
 
-- `opportunity_id` not null, `from_stage`/`to_stage` string not null (validated against stage keys), polymorphic `actor` optional, `created_at` only.
-- `readonly?` after persist (append-only history).
+#### AI turns and actions
 
-#### ConversationExtension — `scan_solo_conversation_extensions`
+| Table / model | Key columns | Relations | Invariants |
+|---|---|---|---|
+| `scan_solo_ai_turns` / `AiTurn` | `correlation_id`, `invocation_status` enum `pending 0, suppressed 1, succeeded 2, failed 3`, `model_provider, model_reference, input_tokens, output_tokens, cost_estimate(10,6), latency_ms, failure_reason`; jsonb `context_snapshot, guardrail_outcome, knowledge_evidence, action_evidence` | `belongs_to :message, :conversation, :response_message (Message)` | `message_id` unique; `correlation_id` unique |
+| `scan_solo_agent_action_executions` / `AgentActionExecution` | `action_id`, `correlation_id`, `idempotency_key`, jsonb `params`, `status` enum `pending 0, executed 1, failed 2`, `confirmed_at` | `belongs_to :agent_action, :turn (AiTurn), :audit_event` | `idempotency_key` unique |
+| `scan_solo_audit_events` / `AuditEvent` | polymorphic `subject`, polymorphic `actor`, `event_type`, `correlation_id`, jsonb `payload`, `created_at` only | — | `event_type`, `correlation_id` present; append-only |
 
-- `conversation_id` unique, `ai_control_state` integer enum `ai_active handoff_requested awaiting_human human_active paused closed` (default `ai_active`).
-- `resolve_for(conversation)` = `find_or_create_by!`.
+#### Knowledge
 
-#### AiAgentConfig — `scan_solo_ai_agent_configs`
+| Table / model | Key columns | Relations | Invariants |
+|---|---|---|---|
+| `scan_solo_knowledge_sources` / `KnowledgeSource` | `source_type` enum `document 0, faq 1, company_info 2`, `title, content, origin, enabled`, `index_status` enum `pending 0, indexing 1, indexed 2, failed 3`, `index_error, indexed_at, chunk_count` | `belongs_to :account, :added_by (User)`; `has_many :knowledge_chunks` (dependent destroy); `has_one_attached :file` | `origin` present |
+| `scan_solo_knowledge_chunks` / `KnowledgeChunk` | `content`, `position`, `embedding vector(1536)` | `belongs_to :source` | `content` present |
 
-| Column | Type |
-|---|---|
-| account_id | bigint not null |
-| status | integer enum `draft published` |
-| published_version_id | self-reference (draft -> latest published snapshot) |
-| name, model_provider, model_selection, role, objective, persona, tone, service_hours | string |
-| instructions, service_rules, transfer_criteria, response_limits | text |
-| qualification_playbook, required_qualification_fields, restricted_information, forbidden_subjects | jsonb array default `[]` |
-| enabled | boolean default false |
-| require_proposal_approval | boolean default true |
+#### Cadence
 
-- Partial unique index `account_id WHERE status = 0` -> 1 draft per account.
+| Table / model | Key columns | Relations | Invariants |
+|---|---|---|---|
+| `scan_solo_cadence_enrollments` / `CadenceEnrollment` | `status` enum `active 0, paused 1, cancelled 2, completed 3`, `current_step` default 0, `next_attempt_at`, `paused_at` | `belongs_to :opportunity, :cadence_definition`; `has_many :attempts` | unique `(opportunity_id, cadence_definition_id)` where status ∈ active/paused |
+| `scan_solo_cadence_attempts` / `CadenceAttempt` | `step`, `cadence_version`, `template_reference`, `scheduled_at`, `sent_at`, `result` enum `scheduled 0, sent 1, skipped 2, failed 3, cancelled 4, dispatched 5`, `last_block_reason`, `last_checked_at`, `external_error` | `belongs_to :enrollment`, `:message` (optional) | unique `(enrollment_id, step)` |
 
-#### AiTurn — `scan_solo_ai_turns`
+#### Proposals and Make
 
-| Column | Type | Notes |
-|---|---|---|
-| message_id | bigint not null unique | triggering message |
-| conversation_id | bigint not null | |
-| correlation_id | string not null unique | |
-| invocation_status | integer enum `pending suppressed succeeded failed` | |
-| model_provider, model_reference | string | |
-| input_tokens, output_tokens, latency_ms | integer | |
-| cost_estimate | decimal(10,6) | |
-| failure_reason | text | |
-| context_snapshot, guardrail_outcome | jsonb `{}` | |
-| knowledge_evidence, action_evidence | jsonb `[]` | |
-| response_message_id | bigint | optional `belongs_to :response_message` |
-
-#### AgentAction — `scan_solo_agent_actions`
-
-- `action_id` string unique, `classification` enum `read_only automatic requires_confirmation disabled`, `schema` jsonb. Synced from `ScanSolo::Actions::Registry::HANDLERS`.
-
-#### AgentActionExecution — `scan_solo_agent_action_executions`
-
-- `action_id`, `turn_id` (optional), `correlation_id`, `idempotency_key` unique, `params` jsonb, `status` enum `pending executed failed`, `confirmed_at`, `audit_event_id`.
-
-#### KnowledgeSource — `scan_solo_knowledge_sources`
-
-- `account_id` not null, `added_by_id` (User), `source_type` enum `document faq company_info`, `title`, `content` text, `origin` (required), `enabled` default true.
-- `has_many :knowledge_chunks, dependent: :destroy`; `has_one_attached :file`.
-
-#### KnowledgeChunk — `scan_solo_knowledge_chunks`
-
-- `source_id` not null, `content` text not null, `position` integer, `embedding vector(1536)`.
-- `has_neighbors :embedding, normalize: true`; no ivfflat/hnsw index -> exact nearest-neighbor scan.
-
-#### CadenceDefinition — `scan_solo_cadence_definitions`
-
-- `stage` string, `version` integer (unique per stage), `offsets` jsonb array of hours, `active` boolean; `scope :active`, `current_for(stage)`.
-- `template_reference_for(step)` = `scansolo_cadence_<stage>_v<version>_step<step>`.
-
-#### CadenceEnrollment — `scan_solo_cadence_enrollments`
-
-- `opportunity_id`, `cadence_definition_id` (unique pair), `status` enum `active paused cancelled completed`, `current_step` default 0, `next_attempt_at`, `paused_at`.
-- `has_many :attempts, dependent: :destroy`.
-
-#### CadenceAttempt — `scan_solo_cadence_attempts`
-
-- `enrollment_id` + `step` unique, `cadence_version`, `template_reference`, `scheduled_at` not null, `sent_at`, `result` enum `scheduled sent skipped failed cancelled`.
-- `TERMINAL_RESULTS = sent skipped failed cancelled`; terminal rows never rewritten (`AttemptEvidenceRecorder`).
-
-#### Proposal — `scan_solo_proposals`
-
-- `opportunity_id` unique (1 per opportunity), `current_version_id` pointer.
-
-#### ProposalVersion — `scan_solo_proposal_versions`
-
-| Column | Type | Notes |
-|---|---|---|
-| proposal_id + version_number | unique | `assign_version_number` before create |
-| status | enum `generating generated approved sent failed` | |
-| is_current | boolean | partial unique index `proposal_id WHERE is_current` |
-| value | decimal(12,2) | written only by `CallbackHandler` |
-| currency, artifact_url, failure_reason | string | |
-| generate_correlation_id, send_correlation_id | string unique | |
-| generate_requested_at, generate_callback_applied_at, send_requested_at, send_callback_applied_at | datetime | callback idempotency markers |
-| approved_at, approved_by (polymorphic) | | |
-| sent_message_id | bigint | `belongs_to :sent_message, class_name: 'Message'` |
-
-- Creating a current version unmarks the previous one and syncs `proposals.current_version_id`.
-
-#### MakeRequest — `scan_solo_make_requests`
-
-- `account_id`, `correlation_id` unique, `idempotency_key`, `action`, `payload` jsonb, `status` enum `pending sent completed failed`, `retry_count`.
-- `scope :dead_letter` = `failed` and `retry_count >= 3`.
-
-#### MakeCallback — `scan_solo_make_callbacks`
-
-- `correlation_id` unique (nullable), `action`, `signature_valid`, `applied`, `rejection_reason`, `payload` jsonb, `created_at` only; `readonly?` after persist.
-
-#### AuditEvent — `scan_solo_audit_events`
-
-- Polymorphic `subject` (not null) and `actor` (optional), `event_type`, `correlation_id`, `payload` jsonb, `created_at` only; `readonly?` after persist.
-- Event types written: `handoff.takeover`, `handoff.return_to_ai`, `agent_action.<action_id>`.
+| Table / model | Key columns | Relations | Invariants |
+|---|---|---|---|
+| `scan_solo_proposals` / `Proposal` | `current_version_id` | `belongs_to :opportunity`, `:current_version`; `has_many :versions` | `opportunity_id` unique |
+| `scan_solo_proposal_versions` / `ProposalVersion` | `version_number`, `status` enum `generating 0, generated 1, approved 2, sent 3, failed 4`, `is_current`, `value(12,2)`, `currency`, `artifact_url`, `failure_reason`, `generate_correlation_id`, `generate_requested_at`, `generate_callback_applied_at`, `approved_at`, polymorphic `approved_by`, `send_correlation_id`, `send_requested_at`, `send_callback_applied_at`, `sent_message_id` | `belongs_to :proposal, :sent_message (Message)` | unique `(proposal_id, version_number)`; 1 `is_current` per proposal; unique `generate_correlation_id`, `send_correlation_id` |
+| `scan_solo_make_requests` / `MakeRequest` | `correlation_id`, `idempotency_key`, `action`, jsonb `payload`, `status` enum `pending 0, sent 1, completed 2, failed 3`, `retry_count` | `belongs_to :account` | `correlation_id` unique; dead letter = `failed` and `retry_count >= 3` |
+| `scan_solo_make_callbacks` / `MakeCallback` | `correlation_id`, `action`, `signature_valid`, `applied`, `rejection_reason`, jsonb `payload`, `created_at` only | — | `correlation_id` unique where `applied = true` |
 
 ### Relationships
 
 ```
-Account 1--* PipelineOpportunity *--1 Conversation 1--1 ConversationExtension
-PipelineOpportunity 1--* PipelineStageEvent
-PipelineOpportunity 1--* CadenceEnrollment *--1 CadenceDefinition
-CadenceEnrollment 1--* CadenceAttempt
-PipelineOpportunity 1--1 Proposal 1--* ProposalVersion
-Message 1--1 AiTurn 1--* AgentActionExecution *--1 AgentAction
-Account 1--* AiAgentConfig (1 draft -> published_version)
-Account 1--* KnowledgeSource 1--* KnowledgeChunk
-Account 1--* MakeRequest ~ MakeCallback (by correlation_id)
+Account 1-* AiAgentConfig(draft 1, published *)     Account 1-* TemplateMapping
+Conversation 1-1 ConversationExtension              Contact 1-1 ContactExtension
+Conversation 1-1 PipelineOpportunity *-1 Contact
+PipelineOpportunity 1-* PipelineStageEvent
+PipelineOpportunity 1-* CadenceEnrollment *-1 CadenceDefinition
+CadenceEnrollment 1-* CadenceAttempt *-0..1 Message
+PipelineOpportunity 1-0..1 Proposal 1-* ProposalVersion
+Message 1-0..1 AiTurn 1-* AgentActionExecution *-1 AgentAction
+AgentActionExecution 0..1-1 AuditEvent
+Account 1-* KnowledgeSource 1-* KnowledgeChunk
+Account 1-* MakeRequest ; MakeCallback matched by correlation_id + action
 ```
 
 ### Cache
 
-- No ScanSolo-specific cache; Redis is used by upstream Sidekiq, ActionCable (`config/cable.yml`) and Rails cache.
+- Redis mutex `SCANSOLO::AI_TURN::CONVERSATION::<conversation_id>`, TTL `ScanSolo::AI_TURN_LOCK_TTL` = 3 min (`ScanSolo::AiTurnJob` via `MutexApplicationJob`).
+- Sidekiq queues and sidekiq-cron schedules in Redis (`config/sidekiq.yml`, `config/schedule.yml`); ActionCable on Redis (`config/cable.yml`).
+- No ScanSolo-specific `Rails.cache` usage found in `app/services/scan_solo/`.
 
 ## Related documents
 
-- [`domain_rules.md`](domain_rules.md) — state machines over these enums
-- [`api_contracts.md`](api_contracts.md) — JSON representations of these entities
-- [`architecture.md`](architecture.md) — which layer writes each table
+- [`domain_rules.md`](domain_rules.md) — rules enforced over these tables
+- [`api_contracts.md`](api_contracts.md) — JSON shapes exposing these entities
+- [`architecture.md`](architecture.md) — services that own each write

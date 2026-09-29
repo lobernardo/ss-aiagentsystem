@@ -6,130 +6,121 @@
 
 ### Style
 
-Rails MVC monolith (Chatwoot fork) with a Vue 3 SPA; ScanSolo code is an isolated `ScanSolo::` namespace across `app/{models,services,jobs,policies,serializers,controllers,views}/scan_solo/`, hooked into upstream via the Wisper dispatcher/listener seam and service objects with a class-level `.call`.
+Rails 7.2 MVC monolith (Chatwoot) with a service-object layer and a Wisper event bus; ScanSolo is an isolated `ScanSolo::` namespace extension inside `app/`, plus a Vue 3 SPA built by Vite.
 
 ### Directory layout
 
 ```
 app/
-  controllers/api/v1/accounts/scan_solo/   # REST API, inherits ScanSolo::BaseController (404 gate)
-    conversations/handoff_controller.rb    # control_state / handoff / return_to_ai
-    knowledge/                             # sources CRUD + retrieval_tests
-  controllers/webhooks/scan_solo/          # Make signed inbound callback (ActionController::API)
-  models/scan_solo/                        # 17 AR models, tables scan_solo_*
-  services/scan_solo/
-    ai_turn/                               # TurnOrchestrator + guard/context/guardrail/invoker/validator/sender
-    ai_agent/                              # ModelResolver, PublishService
-    knowledge/                             # ingestion, embedding, retrieval, reindex
-    pipeline/                              # StageTransitionService, rules, queries
-    cadence/                               # enrollment, lifecycle, window, guards, evidence
-    handoff/                               # handoff note, takeover, return-to-AI
-    actions/                               # Registry, Executor, ConfirmationGate, 8 action handlers
-    proposal/                              # generate/approve/send, callback, retry, MockProvider
-    make/                                  # outbound client, callback verifier, dead-letter query
-    messaging/                             # NativeTemplateSender
-    test_mode/                             # MockLlmProvider, MockEmbeddingProvider
-    conversation_listener.rb               # BaseListener subscriber
-    audit_logger.rb                        # AuditEvent writer
-  jobs/scan_solo/                          # AiTurnJob, CadenceDueAttemptJob
-  policies/scan_solo/                      # Pundit policies
-  serializers/scan_solo/                   # CadenceEnrollmentSerializer
+  controllers/api/v1/accounts/scan_solo/   # account-scoped ScanSolo REST (base_controller gates scansolo_enabled)
+  controllers/webhooks/scan_solo/          # make_controller.rb: signed Make callback
+  dispatchers/ listeners/                  # Wisper bus; async_dispatcher.rb registers ScanSolo::ConversationListener
+  jobs/scan_solo/                          # ai_turn_job, cadence_due_attempt_job, knowledge_ingestion_job, stale_turn_sweeper_job
+  models/scan_solo/                        # 19 AR models, tables scan_solo_*
+  policies/scan_solo/                      # Pundit policies per resource
+  services/scan_solo/                      # domain logic
+    actions/        # registry, executor, confirmation_gate, 8 action handlers
+    ai_agent/       # draft_update, publish, model_resolver
+    ai_turn/        # turn_orchestrator, context_assembler, prompt_builder, model_invoker, guardrails, response_sender
+    cadence/        # enrollment, lifecycle, precheck, sending_window, stop/recalculate, reply completeness
+    handoff/        # handoff, takeover, return_to_ai
+    knowledge/      # ingestion, embedding, retrieval, reindex, source writes
+    make/           # outbound_request, callback_verifier, callback_application, dead_letter_query
+    messaging/      # template resolver/sender/mapping, delivery_reconciler
+    opt_out/        # keyword_matcher, mark, clear
+    pipeline/       # opportunity bootstrap/query, stage_transition, inbound transition rule
+    proposal/       # generate/approve/send, make/mock providers, retry_policy, callback/success handlers
+    qualification/  # field_resolver (single qualification-field reader)
+    test_mode/      # mock LLM and embedding providers
   views/api/v1/accounts/scan_solo/         # jbuilder responses
-  javascript/dashboard/
-    routes/dashboard/scansolo/             # 6 module screens + scansoloModules.js
-    store/scansolo/                        # Pinia stores
-    api/scansolo*.js                       # ApiClient subclasses
-config/
-  routes.rb                                # namespace :scan_solo + webhooks/scan_solo/make
-  llm.yml                                  # scansolo_agent_response, scansolo_knowledge_embedding
-  schedule.yml                             # scan_solo_cadence_due_attempt_job
-  initializers/scansolo_*.rb               # constants, log redaction
-db/migrate/2026091*_*scan_solo*            # ScanSolo schema
-enterprise/                                # upstream proprietary overlay (not used by ScanSolo)
-lib/llm/                                   # RubyLLM wrapper, FeatureRouter
-spec/**/scan_solo/                         # RSpec suites
+  javascript/dashboard/                    # api/scansolo*.js, store/scansolo/ (Pinia), routes/dashboard/scansolo/
+enterprise/                                # Chatwoot Enterprise overlay (proprietary; not used by ScanSolo)
+config/                                    # routes.rb, sidekiq.yml, schedule.yml, llm.yml, initializers/scansolo_*.rb, rack_attack.rb
+db/                                        # schema.rb, migrate/ (208 files)
+lib/                                       # llm/ (Config, FeatureRouter, Models), custom_exceptions/scan_solo.rb
+swagger/                                   # OpenAPI source + swagger.json
+docker/ deployment/                        # images, entrypoints, systemd, nginx
+spec/ tests/playwright/                    # RSpec, Vitest co-located, Playwright E2E
 ```
 
 ### Layer responsibilities
 
 | Layer | Owns | Does NOT own |
 |---|---|---|
-| Controllers (`Api::V1::Accounts::ScanSolo::*`) | `scansolo_enabled?` 404 gate, account scoping via `Current.account`, Pundit `authorize`, strong params | Business rules; stage/state changes |
-| Policies (`ScanSolo::*Policy`) | Role checks (administrator, assigned agent) | Data scoping (`Scope#resolve` returns `none`) |
-| Services (`app/services/scan_solo/`) | All state transitions; "sole path" writers (stage, cadence, handoff, proposal callback) | HTTP rendering |
-| Models (`app/models/scan_solo/`) | Enums, uniqueness, readonly audit rows, `draft_for!`/`published_for`/`resolve_for` lookups | Cross-entity workflows |
-| Jobs (`app/jobs/scan_solo/`) | Async turn execution, cron-driven cadence sends | Eligibility logic (delegated to services) |
-| Views (jbuilder) + serializer | JSON response shape | Queries beyond association reads |
-| Listener (`ScanSolo::ConversationListener`) | Enable check, pipeline bookkeeping, job enqueue | AI logic |
-| Vue SPA + Pinia | Rendering server-confirmed state | Local guessing of transition outcomes |
+| Controllers (`Api::V1::Accounts::ScanSolo::*`) | `scansolo_enabled` 404 gate, Pundit authorize (403), request-boundary validation (422), account scoping | Domain rules, state transitions |
+| Listener (`ScanSolo::ConversationListener`) | Eligibility classification, opportunity bootstrap, opt-out keyword, enqueue turn, implicit takeover, delivery reconcile | AI logic, direct writes beyond service calls |
+| Jobs (`app/jobs/scan_solo/`) | Queueing, per-conversation mutex, cron sweeps | Eligibility decisions (delegated to `AttemptPrecheck`, `TurnOrchestrator`) |
+| Services (`app/services/scan_solo/`) | All rules, transactions, locks, audit writes | HTTP rendering |
+| Actions (`ScanSolo::Actions::Registry` + `Executor`) | Sole path from model output to side effect; schema validation, idempotency, confirmation gate | Choosing conversation/opportunity ids (turn-scoped) |
+| Models (`app/models/scan_solo/`) | Enums, associations, uniqueness | Stage changes (only `StageTransitionService`) |
+| Views (jbuilder) | JSON shape | Logic |
+| Frontend (`store/scansolo/`, `api/scansolo*.js`) | UI state, camelCase conversion | Business rules |
 
 ### External integration points
 
 | System | Client/config | Notes |
 |---|---|---|
-| OpenAI (RubyLLM) | `lib/llm`, `ScanSolo::AiAgent::ModelResolver`, `config/llm.yml` | InstallationConfig `CAPTAIN_OPEN_AI_API_KEY`; per-config `model_selection` override |
-| Embeddings | `ScanSolo::Knowledge::EmbeddingService` | `text-embedding-3-small`, 1536 dims |
-| Make | `ScanSolo::Make::OutboundRequestService`, `CallbackVerifier` | Credentials `scan_solo.make.{scenario_url,secret,inbound_signing_secret}`; HMAC-SHA256 `X-Make-Signature` |
-| WhatsApp | Native `Channel::Whatsapp` | Sends via `conversation.messages.create!`; templates from `channel.message_templates` |
-| Rack::Attack | `config/initializers/rack_attack.rb` | `webhooks/scan_solo/make` throttle, `RATE_LIMIT_SCANSOLO_MAKE_CALLBACK` default 60/min/IP |
+| LLM provider | `ScanSolo::AiTurn::ModelInvoker` → `RubyLLM.context`, `Llm::FeatureRouter`, `config/llm.yml` `scansolo_agent_response` | Timeout 45s, 1 retry (`config/initializers/scansolo_constants.rb`) |
+| Embeddings | `ScanSolo::Knowledge::EmbeddingService`, `scansolo_knowledge_embedding` = `text-embedding-3-small` | 1536-dim pgvector column |
+| Make | `ScanSolo::Make::OutboundRequestService` (HTTParty, 10s timeout), credentials `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` | Callback HMAC-SHA256 in `X-Make-Signature` |
+| Meta WhatsApp | Native Chatwoot WhatsApp channel; `ScanSolo::Messaging::NativeTemplateSender` | Templates mapped per stage/step (`scan_solo_template_mappings`) |
+| Object storage | `config/storage.yml`; MinIO in `docker-compose.scansolo.yaml` | Knowledge file uploads |
 
 ### Macro flow: inbound message to AI reply
 
 ```
-Message (incoming, persisted)
-   |
-   v
-AsyncDispatcher --message_created--> ScanSolo::ConversationListener
-   |  scansolo_enabled? no -> stop
-   |  PipelineOpportunity#record_customer_interaction!
-   |  InboundMessageTransitionRule (novo_lead -> em_contato)
-   v
-ScanSolo::AiTurnJob (queue: medium)
-   v
-TurnOrchestrator
-   +-> AiTurn.create! (unique message_id)   dup -> stop
-   +-> EligibilityGuard (ai_active?)       no  -> suppressed
-   +-> AiAgentConfig.published_for         none/disabled -> suppressed
-   +-> ContextAssembler (history, contact, pipeline, RAG)
-   +-> InputGuardrail (forbidden_subjects) hit -> suppressed
-   +-> ModelInvoker (RubyLLM)              error -> failed
-   +-> OutputValidator (claims)            hit -> failed
-   v
-transaction { stage_transition actions ; ResponseSender -> outgoing Message ; turn succeeded }
+WhatsApp webhook -> Message persisted -> AsyncDispatcher(message_created)
+        |
+        v
+ScanSolo::ConversationListener --Eligibility false--> (no-op)
+        | eligible
+        +--> OpportunityBootstrapService / InboundMessageTransitionRule
+        +--> OptOut::KeywordMatcher -> OptOut::MarkService
+        v
+ScanSolo::AiTurnJob [queue medium, Redis mutex per conversation, TTL 3 min]
+        v
+TurnOrchestrator: AiTurn(pending) -> precheck -> ContextAssembler -> InputGuardrail
+        -> PromptBuilder -> ModelInvoker -> OutputValidator
+        v
+ConversationExtension.with_lock: recheck -> Actions::Registry(each action) -> ResponseSender
+        v
+AiTurn terminal: succeeded | suppressed | failed  -> ReplyCompletenessDetector (RF-28)
 ```
 
-### Macro flow: cadence due attempts
+### Macro flow: cadence dispatch
 
 ```
-sidekiq-cron */5 * * * *
-   v
-ScanSolo::CadenceDueAttemptJob (queue: scheduled_jobs)
-   v  CadenceAttempt.scheduled where scheduled_at <= now
-process_attempt!  (row lock FOR UPDATE)
-   +-> not scheduled / enrollment not active -> skip
-   +-> outside 09:00-20:00 America/Sao_Paulo -> reschedule next_in_window
-   +-> TemplateAvailabilityGuard blocked     -> record_skipped!
-   +-> NativeTemplateSender                  -> record_sent!
-   +-> exception                             -> record_failed!
-   v
-AttemptEvidenceRecorder advances enrollment current_step / next_attempt_at / completed
+sidekiq-cron */5 -> ScanSolo::CadenceDueAttemptJob [scheduled_jobs]
+        v
+CadenceAttempt.scheduled & scheduled_at <= now  (lock FOR UPDATE, 1 per enrollment per run)
+        v
+Cadence::AttemptPrecheck -> cancel | defer | send
+        |                          |        v
+        v                          v   SendingWindow 09-20 Sao_Paulo? no -> reschedule next window
+  LifecycleService.cancel!   record_blocked!   yes -> NativeTemplateSender(origin cadence) -> dispatched
+                                                        v
+                                        DeliveryReconciler (message_updated) -> sent
 ```
 
-### Macro flow: Make inbound callback
+### Macro flow: proposal via Make
 
 ```
-POST /webhooks/scan_solo/make  (Rack::Attack throttle)
-   v
-CallbackVerifier: HMAC sig -> JSON parse -> JSON schema -> MakeRequest match
-   +-> invalid_signature                -> 401, nothing persisted
-   +-> correlation_id already recorded  -> 200, no reapply
-   +-> other rejection                  -> MakeCallback(applied: false) + 422
-   +-> valid                            -> MakeCallback(applied: true) + MakeRequest completed|failed + 200
+proposal_generate action / POST .../proposals/generate
+        v
+Proposal::GenerateService -> ProposalVersion(generating)
+        v (after commit)
+MakeProvider -> Make::OutboundRequestService -> MakeRequest(pending->sent) -> HTTP POST Make
+        v
+Make -> POST /webhooks/scan_solo/make (X-Make-Signature)
+        v
+CallbackVerifier: HMAC -> JSON -> schema -> matching MakeRequest
+        v
+CallbackApplicationService -> MakeCallback row -> ProposalVersion generated|sent|failed
 ```
 
 ## Related documents
 
-- [`project_overview.md`](project_overview.md) — purpose, consumers, end-to-end flow
-- [`domain_rules.md`](domain_rules.md) — rules implemented by each service
-- [`data_model.md`](data_model.md) — scan_solo_* tables and invariants
-- [`dependencies.md`](dependencies.md) — external services and shared infrastructure
+- [`project_overview.md`](project_overview.md) — purpose and end-to-end flow
+- [`tech_stack.md`](tech_stack.md) — versions of Rails, Vue, Sidekiq, pgvector
+- [`data_model.md`](data_model.md) — `scan_solo_*` tables
+- [`dependencies.md`](dependencies.md) — external services and infrastructure

@@ -19,7 +19,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
 
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente ScanSolo', enabled: true, allowed_inbox_ids: [inbox.id], required_qualification_fields: %w[budget])
+    draft.update!(name: 'Agente ScanSolo', enabled: true, allowed_inbox_ids: [inbox.id], required_qualification_fields: %w[Metragem])
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
@@ -41,6 +41,125 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
                                       model_reference: 'scansolo-mock-llm')
       expect(turn.input_tokens).to be_positive
       expect(turn.latency_ms).not_to be_nil
+    end
+  end
+
+  describe 'lead state RF-05 / RF-11a: attempts with one regeneration' do
+    let(:calls) { [] }
+    let(:responses) { [] }
+    let(:provider) do
+      lambda do |**kwargs|
+        calls << kwargs[:payload]
+        ScanSolo::TestMode::MockLlmProvider.call(**kwargs, **responses.fetch(calls.size - 1))
+      end
+    end
+
+    def attach_pdf(name)
+      attachment = message.attachments.new(account_id: account.id, file_type: :file)
+      attachment.file.attach(io: Rails.root.join("spec/fixtures/files/scansolo/#{name}").open, filename: name, content_type: 'application/pdf')
+      attachment.save!
+    end
+
+    def private_notes
+      conversation.messages.where(private: true).pluck(:content)
+    end
+
+    before { opportunity.lead_state.update!(fields: { 'cidade_uf' => { 'value' => 'Rio de Janeiro / RJ', 'status' => 'confirmado' } }) }
+
+    it 'makes 1 model call for an approved reply' do
+      responses << {}
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(calls.size).to eq(1)
+      expect(turn).to be_succeeded
+      expect(turn.context_snapshot).not_to have_key('output_regeneration')
+      expect(ai_replies.count).to eq(1)
+    end
+
+    it 'regenerates once after confirmed_field_question and keeps only the 2nd attempt' do
+      responses << { fixture_asked_fields: ['cidade_uf'],
+                     fixture_actions: [{ 'action_id' => 'private_note', 'params' => { 'content' => 'primeira' } }] }
+      responses << { fixture_actions: [{ 'action_id' => 'private_note', 'params' => { 'content' => 'segunda' } }] }
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(calls.size).to eq(2)
+      expect(calls.last.to_json).to include('confirmed_field_question')
+      expect(turn).to be_succeeded
+      expect(turn.context_snapshot['output_regeneration']).to eq('first_attempt_violation' => 'confirmed_field_question')
+      expect(ai_replies.count).to eq(1)
+      expect(private_notes).to eq(['segunda'])
+      expect(ScanSolo::AgentActionExecution.count).to eq(1)
+    end
+
+    it 'fails with the 2nd violation and 0 changes after 2 rejections' do
+      attach_pdf('lead_state_company.pdf')
+      responses << { fixture_asked_fields: ['cidade_uf'] }
+      responses << { fixture_asked_fields: %w[bairro area cargo] }
+
+      expect { described_class.call(message: message, llm_provider: provider) }
+        .not_to(change { [opportunity.lead_state.reload.fields, ScanSolo::LeadStateEvent.count] })
+
+      expect(calls.size).to eq(2)
+      expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: question_limit')
+      expect(ai_replies.count).to eq(0)
+    end
+
+    it 'fails a price claim without regenerating' do
+      responses << { fixture_response: 'O serviço custa R$ 5000' }
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(calls.size).to eq(1)
+      expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: price')
+      expect(ai_replies.count).to eq(0)
+    end
+
+    it 'succeeds with a corrupt PDF and records the reason in the snapshot (RF-20)' do
+      attach_pdf('lead_state_corrupt.pdf')
+      responses << {}
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(turn).to be_succeeded
+      expect(turn.context_snapshot['attachment_extraction'].sole).to include('file_name' => 'lead_state_corrupt.pdf', 'extracted' => false)
+      expect(turn.context_snapshot['attachment_extraction'].sole['reason']).to start_with('extraction_error: ')
+    end
+
+    it 'writes the PDF fields as inferido before the reply' do
+      attach_pdf('lead_state_company.pdf')
+      responses << {}
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(opportunity.lead_state.reload.fields['cnpj']).to include('value' => '12.345.678/0001-90', 'status' => 'inferido')
+      expect(ScanSolo::LeadStateEvent.where(key: 'cnpj').sole.created_at).to be <= ai_replies.sole.created_at
+    end
+
+    it 'fails with 0 changes on an invalid intent' do
+      attach_pdf('lead_state_company.pdf')
+      responses << { fixture_actions: [{ 'action_id' => 'lead_state_update', 'params' => { 'intent' => 'inexistente' } }] }
+
+      expect { described_class.call(message: message, llm_provider: provider) }
+        .not_to(change { [opportunity.lead_state.reload.attributes, ScanSolo::LeadStateEvent.count] })
+
+      expect(turn).to be_failed
+      expect(ai_replies.count).to eq(0)
+    end
+
+    it 'suppresses with 0 changes when the recheck finds the conversation human-controlled' do
+      attach_pdf('lead_state_company.pdf')
+      handing_over = lambda do |**kwargs|
+        ScanSolo::ConversationExtension.resolve_for(conversation).update!(ai_control_state: :human_active)
+        ScanSolo::TestMode::MockLlmProvider.call(**kwargs)
+      end
+
+      expect { described_class.call(message: message, llm_provider: handing_over) }
+        .not_to(change { [opportunity.lead_state.reload.fields, ScanSolo::LeadStateEvent.count] })
+
+      expect(turn).to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
+      expect(turn.context_snapshot['attachment_extraction'].sole).to include('extracted' => true)
     end
   end
 
@@ -158,7 +277,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     end
 
     it 'cancels every scheduled attempt once all required fields are present' do
-      contact.update!(custom_attributes: { 'budget' => '5000' })
+      opportunity.lead_state.update!(fields: { 'metragem' => { 'value' => '5000', 'status' => 'confirmado' } })
 
       described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
 

@@ -4,7 +4,7 @@ require 'rails_helper'
 
 # RF-12..RF-17: model-requested actions run only through
 # ScanSolo::Actions::Registry, after the pre-send recheck and in the same
-# transaction as the reply.
+# attempt savepoint as the reply (ScanSolo::AiTurn::AttemptRunner).
 RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:inbox) { create(:inbox, account: account) }
@@ -16,12 +16,12 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
   end
   let(:message) do
     create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, sender: contact,
-                     content: 'Meu orçamento é 5000')
+                     content: 'A metragem é 5000')
   end
 
   let(:one_of_each) do
     [
-      { 'action_id' => 'qualification_field', 'params' => { 'fields' => { 'budget' => '5000' } } },
+      { 'action_id' => 'qualification_field', 'params' => { 'fields' => { 'metragem' => '5000' } } },
       { 'action_id' => 'stage_transition', 'params' => { 'target_stage' => 'qualificado' } },
       { 'action_id' => 'private_note', 'params' => { 'content' => 'Cliente com orçamento definido' } },
       { 'action_id' => 'cadence_signal', 'params' => { 'signal' => 'partial_reply' } },
@@ -32,7 +32,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
 
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente ScanSolo', enabled: true, allowed_inbox_ids: [inbox.id], required_qualification_fields: %w[budget])
+    draft.update!(name: 'Agente ScanSolo', enabled: true, allowed_inbox_ids: [inbox.id], required_qualification_fields: %w[Metragem])
     ScanSolo::AiAgent::PublishService.new(account: account).call
     allow(ScanSolo::Proposal::Integration).to receive_messages(configured?: true, provider!: ScanSolo::Proposal::MockProvider)
   end
@@ -87,7 +87,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     end
 
     it 'issues the proposal provider request once the turn commits' do
-      contact.update!(custom_attributes: { 'budget' => '5000' })
+      opportunity.lead_state.update!(fields: { 'metragem' => { 'value' => '5000', 'status' => 'confirmado' } })
 
       run_turn([{ 'action_id' => 'proposal_generate', 'params' => {} }])
 
@@ -97,7 +97,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     it 'never issues the proposal provider request when the turn rolls back' do
       allow(ScanSolo::Proposal::MockProvider).to receive(:request_generation)
       allow(ScanSolo::AiTurn::ResponseSender).to receive(:call).and_raise(ActiveRecord::RecordInvalid)
-      contact.update!(custom_attributes: { 'budget' => '5000' })
+      opportunity.lead_state.update!(fields: { 'metragem' => { 'value' => '5000', 'status' => 'confirmado' } })
 
       run_turn([{ 'action_id' => 'proposal_generate', 'params' => {} }])
 
@@ -160,7 +160,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     it 'cancels every remaining attempt when the action records the last required field' do
       enrollment = travel_to(1.hour.ago) { ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: definition) }
 
-      run_turn([{ 'action_id' => 'qualification_field', 'params' => { 'fields' => { 'budget' => '5000' } } }])
+      run_turn([{ 'action_id' => 'qualification_field', 'params' => { 'fields' => { 'metragem' => '5000' } } }])
 
       expect(enrollment.attempts.scheduled.count).to eq(0)
     end

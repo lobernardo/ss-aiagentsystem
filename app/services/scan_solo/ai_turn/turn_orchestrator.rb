@@ -1,10 +1,10 @@
 # Sole entry point for a canonical guarded AI turn, called by
 # ScanSolo::AiTurnJob (which holds the per-conversation Redis mutex, RF-11)
 # once the triggering message is already persisted natively. Sequences:
-# turn lookup/creation (RF-09) -> eligibility (RF-10) -> context and
-# retrieval (RF-05, RF-46) -> input guardrail -> model invocation ->
-# output validation (RF-06) -> locked pre-send recheck (RF-10) -> actions ->
-# approved-response send -> reply-completeness cadence rule (RF-28).
+# turn lookup/creation (RF-09) -> eligibility (RF-10) -> attachment/link
+# reading (lead state RF-17..RF-20) -> context and retrieval (RF-05, RF-46)
+# -> input guardrail -> up to 2 attempts -> reply-completeness cadence rule
+# (RF-28).
 #
 # Turn states are always terminal at the end of a run (RF-07): a terminal
 # turn is never reprocessed and a `pending` turn without a response resumes
@@ -12,25 +12,27 @@
 # row exists marks it `failed` with the exception class and redacted message
 # and reports it with the correlation id.
 #
-# Model-requested actions (RF-12, RF-13) run exclusively through
-# ScanSolo::Actions::Registry, after the recheck and in the same transaction
-# as the outgoing message, each keyed by the turn correlation id and its
-# position; the conversation/opportunity ids come from the turn, never from
-# the model. An action that was not offered to the model, is unregistered or
-# fails schema validation raises, which rolls back every earlier action and
-# fails the turn with 0 messages (all-or-nothing).
+# Attempts (lead state RF-05, RF-11a): each one makes a single model call,
+# outside any lock or transaction, then takes the ScanSolo::ConversationExtension
+# row lock and rechecks eligibility (flag, allowlist, no active bot,
+# published+enabled config), `ai_active`, no human reply after the trigger,
+# the trigger still being the latest incoming message, and the turn still
+# `pending` (the stale sweeper may have failed it). Only then
+# ScanSolo::AiTurn::AttemptRunner writes the extractions, runs the actions,
+# validates the reply against the updated lead state and sends it, rolling
+# the attempt back when the validator blocks. The same eligibility checks run
+# once before the first model call so a turn that could never be sent costs
+# no model invocation.
 #
-# The pre-send recheck runs inside the send transaction under the
-# ScanSolo::ConversationExtension row lock: eligibility (flag, allowlist, no
-# active bot, published+enabled config), `ai_active`, no human reply after the
-# trigger, the trigger still being the latest incoming message, and the turn
-# still `pending` (the stale sweeper may have failed it). The same checks run
-# once before the model call so a turn that could never be sent costs no
-# model invocation.
+# A 1st-attempt violation in OutputValidator::REGENERABLE_VIOLATIONS is kept
+# in `context_snapshot['output_regeneration']` and the model is called once
+# more with it; a 2nd rejection, or any other violation, fails the turn with
+# 0 messages. An action exception rolls every change of the turn back and
+# fails it (all-or-nothing). The attachment extraction evidence (RF-20) is
+# in `context_snapshot['attachment_extraction']` whatever the outcome.
 class ScanSolo::AiTurn::TurnOrchestrator
   ELIGIBILITY_REASONS = %w[inbox_has_active_bot config_unavailable].freeze
-
-  TURN_SCOPED_PARAMS = ScanSolo::AiTurn::PromptBuilder::TURN_SCOPED_PARAMS
+  MAX_ATTEMPTS = 2
 
   def self.call(message:, llm_provider: nil)
     new(message: message, llm_provider: llm_provider).call
@@ -66,38 +68,50 @@ class ScanSolo::AiTurn::TurnOrchestrator
     return suppress!(turn, reason) if reason
 
     config = ScanSolo::AiAgentConfig.published_for(message.account)
-    result = generate_validated_response(turn, config)
-    send_response(turn, config, result) if result.present?
-  rescue StandardError => e
-    record_exception!(turn, e)
-  end
-
-  def generate_validated_response(turn, config)
-    context = ScanSolo::AiTurn::ContextAssembler.call(message: message, config: config,
-                                                      attachment_reading: ScanSolo::AiTurn::AttachmentReader.call(message: message))
-    evidence = context[:knowledge_context][:chunks].map { |chunk| chunk.slice(:source_id, :source_title, :chunk_id, :similarity_score) }
-    turn.update!(context_snapshot: context, knowledge_evidence: evidence)
+    attachment_reading = ScanSolo::AiTurn::AttachmentReader.call(message: message)
+    context = assemble_context!(turn, config, attachment_reading)
 
     guardrail_outcome = ScanSolo::AiTurn::InputGuardrail.call(config: config, content: message.content)
     turn.update!(guardrail_outcome: guardrail_outcome)
     return suppress!(turn, 'input guardrail blocked: forbidden subject') if guardrail_outcome[:blocked]
 
-    payload = ScanSolo::AiTurn::PromptBuilder.call(config: config, context: context, offered_actions: guardrail_outcome[:allowed_actions])
-    invoke_and_validate(turn, config, payload)
+    run_attempts(turn, config, context, guardrail_outcome[:allowed_actions], attachment_reading.updates)
+  rescue StandardError => e
+    record_exception!(turn, e)
   end
 
-  def invoke_and_validate(turn, config, payload)
-    result = ScanSolo::AiTurn::ModelInvoker.call(config: config, payload: payload, llm_provider: llm_provider)
-    return fail!(turn, result.failure_reason) if result.failed?
-
-    validation = ScanSolo::AiTurn::OutputValidator.call(content: result.content, restricted_information: config.restricted_information)
-    return fail!(turn, "output validation blocked: #{validation[:violation]}") if validation[:blocked]
-
-    result
+  def assemble_context!(turn, config, attachment_reading)
+    context = ScanSolo::AiTurn::ContextAssembler.call(message: message, config: config, attachment_reading: attachment_reading)
+    evidence = context[:knowledge_context][:chunks].map { |chunk| chunk.slice(:source_id, :source_title, :chunk_id, :similarity_score) }
+    turn.update!(context_snapshot: context.merge(attachment_extraction: attachment_reading.evidence), knowledge_evidence: evidence)
+    context
   end
 
-  def send_response(turn, config, result)
+  def run_attempts(turn, config, context, offered_actions, pending_updates)
+    previous_violation = nil
+
+    MAX_ATTEMPTS.times do |attempt|
+      payload = ScanSolo::AiTurn::PromptBuilder.call(config: config, context: context, offered_actions: offered_actions,
+                                                     previous_violation: previous_violation)
+      result = ScanSolo::AiTurn::ModelInvoker.call(config: config, payload: payload, llm_provider: llm_provider)
+      return fail!(turn, result.failure_reason) if result.failed?
+
+      outcome = send_response(turn, config, result, pending_updates)
+      break unless outcome&.status == :blocked
+
+      previous_violation = outcome.violation.to_s
+      regenerable = attempt.zero? && ScanSolo::AiTurn::OutputValidator::REGENERABLE_VIOLATIONS.include?(outcome.violation)
+      return fail!(turn, "output validation blocked: #{previous_violation}") unless regenerable
+
+      turn.update!(context_snapshot: turn.context_snapshot.merge('output_regeneration' => { 'first_attempt_violation' => previous_violation }))
+    end
+  end
+
+  # Returns the AttemptRunner result, or nil when the turn is no longer
+  # pending or the recheck suppressed it.
+  def send_response(turn, config, result, pending_updates)
     reason = nil
+    outcome = nil
     extension = ScanSolo::ConversationExtension.resolve_for(conversation)
 
     extension.with_lock do
@@ -107,11 +121,12 @@ class ScanSolo::AiTurn::TurnOrchestrator
       reason = ineligibility_reason(extension)
       next if reason
 
-      evidence = execute_actions(turn, result.actions)
-      ScanSolo::AiTurn::ResponseSender.call(message: message, config: config, result: result, turn: turn, action_evidence: evidence)
+      outcome = ScanSolo::AiTurn::AttemptRunner.call(turn: turn, message: message, config: config, result: result, opportunity: opportunity,
+                                                     pending_updates: pending_updates)
     end
 
     suppress!(turn, reason) if reason
+    outcome
   end
 
   def ineligibility_reason(extension)
@@ -159,29 +174,6 @@ class ScanSolo::AiTurn::TurnOrchestrator
     turn.reload.update!(invocation_status: :failed,
                         failure_reason: "#{error.class}: #{ScanSolo::AiTurn::PromptRedactor.call(error.message)}")
     ChatwootExceptionTracker.new(error, account: message.account, tags: { scansolo_correlation_id: turn.correlation_id }).capture_exception
-  end
-
-  def execute_actions(turn, requested_actions)
-    offered = turn.guardrail_outcome['allowed_actions']
-
-    requested_actions.each_with_index.map do |action, index|
-      action_id = action['action_id'].to_s
-      raise ScanSolo::Actions::Executor::UnregisteredActionError, action_id unless offered.include?(action_id)
-
-      outcome = ScanSolo::Actions::Registry.call(
-        action_id: action_id, params: action_params(action_id, action['params']), turn: turn,
-        correlation_id: turn.correlation_id, idempotency_key: "#{turn.correlation_id}:#{index}:#{action_id}"
-      )
-      result = outcome.side_effect_result
-      { action_id: action_id, index: index, execution_id: outcome.execution.id, result: result.is_a?(Hash) ? result : result.class.name }
-    end
-  end
-
-  def action_params(action_id, params)
-    scoped_ids = { 'conversation_id' => conversation.id, 'opportunity_id' => opportunity&.id }
-    declared = ScanSolo::Actions::Registry.handler_for(action_id)::SCHEMA['properties'].keys
-
-    params.to_h.stringify_keys.except(*TURN_SCOPED_PARAMS).merge(scoped_ids.slice(*declared))
   end
 
   def opportunity

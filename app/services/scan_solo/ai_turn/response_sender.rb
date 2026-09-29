@@ -4,7 +4,7 @@
 # and the turn's evidence update happen inside one transaction so the
 # persisted usage/evidence record and the delivered message content can
 # never diverge (RF-43's "persisted content is identical to what was sent").
-# Called from inside ScanSolo::AiTurn::TurnOrchestrator's own transaction, so
+# Called from inside ScanSolo::AiTurn::AttemptRunner's savepoint, so
 # action_evidence (already executed by the time this runs, RF-44) commits or
 # rolls back atomically with the send. The message is tagged
 # `scansolo_origin: 'ai'` so the listener never treats it as a human reply

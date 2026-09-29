@@ -4,16 +4,17 @@ require 'rails_helper'
 
 RSpec.describe ScanSolo::Handoff::HandoffService do
   let(:account) { create(:account, scansolo_enabled: true) }
-  let(:contact) { create(:contact, account: account, custom_attributes: { 'budget' => '5000', 'objections' => 'preço alto' }) }
+  let(:contact) { create(:contact, account: account, custom_attributes: { 'objections' => 'preço alto' }) }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let!(:opportunity) do
     ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
   end
   let(:agent) { create(:user, account: account, role: :agent) }
+  let(:writer) { ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state) }
 
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente', enabled: true, required_qualification_fields: %w[budget],
+    draft.update!(name: 'Agente', enabled: true, required_qualification_fields: ['Área'],
                   allowed_inbox_ids: [conversation.inbox_id])
     ScanSolo::AiAgent::PublishService.new(account: account).call
     create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact,
@@ -22,6 +23,7 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
 
   describe '.call' do
     it 'creates exactly one private note with all nine required elements', :aggregate_failures do
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil)
       described_class.call(conversation: conversation, reason: 'Cliente pediu para falar com humano', actor: agent)
 
       notes = conversation.messages.where(private: true)
@@ -31,7 +33,7 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
       expect(content).to include('Motivo da transferência: Cliente pediu para falar com humano')
       expect(content).to include('Resumo:')
       expect(content).to include('Objetivo do cliente:')
-      expect(content).to include('Campos de qualificação coletados: budget: 5000')
+      expect(content).to include('Campos de qualificação coletados: Área: 800 m²')
       expect(content).to include('Objeções: preço alto')
       expect(content).to include('Etapa do pipeline: Em Qualificação')
       expect(content).to include('Status da proposta: não aplicável')
@@ -39,7 +41,7 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
       expect(content).to include('Próximo passo recomendado:')
     end
 
-    context 'with config v2 and data under native and alternative keys (RF-16)' do
+    context 'with config v2, data confirmed in the lead state and data only in the Contact (RF-16; lead state RF-08)' do
       let(:contact) do
         create(:contact, account: account, email: 'lead@example.com',
                          custom_attributes: { 'cidade_uf' => 'Rio/RJ', 'objections' => 'preço alto' })
@@ -49,9 +51,11 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
         draft = ScanSolo::AiAgentConfig.draft_for!(account)
         draft.update!(required_qualification_fields: ['Objetivo do serviço', 'Cidade / UF', 'Prazo desejado', 'E-mail'])
         ScanSolo::AiAgent::PublishService.new(account: account).call
+        writer.apply_field!(key: 'email', value: 'lead@example.com', status: 'confirmado', source_message_id: nil)
+        writer.apply_field!(key: 'prazo_desejado', value: 'amanhã', status: 'confirmado', source_message_id: nil)
       end
 
-      it 'lists the resolver-satisfied fields in config order and keeps the other eight lines unchanged' do
+      it 'lists only the confirmed fields in config order and keeps the other eight lines unchanged' do
         described_class.call(conversation: conversation, reason: 'transferência', actor: agent)
 
         expect(conversation.messages.where(private: true).last.content.lines(chomp: true)).to eq(
@@ -59,7 +63,7 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
             'Motivo da transferência: transferência',
             'Resumo: Cliente: Quero saber mais sobre o produto',
             'Objetivo do cliente: não informado',
-            'Campos de qualificação coletados: Cidade / UF: Rio/RJ, E-mail: lead@example.com',
+            'Campos de qualificação coletados: Prazo desejado: amanhã, E-mail: lead@example.com',
             'Objeções: preço alto',
             'Etapa do pipeline: Em Qualificação',
             'Status da proposta: não aplicável',

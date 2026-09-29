@@ -22,6 +22,11 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
     let(:path) { "/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities/#{opportunity.id}/proposals/generate" }
 
     it 'generates a proposal version (RF-73/RF-75)' do
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(required_qualification_fields: ['Área'])
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+                                 .apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil)
+
       post path, params: { correlation_id: SecureRandom.uuid }, headers: agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:success)

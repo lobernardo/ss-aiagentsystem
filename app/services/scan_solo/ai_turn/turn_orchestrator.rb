@@ -73,7 +73,8 @@ class ScanSolo::AiTurn::TurnOrchestrator
   end
 
   def generate_validated_response(turn, config)
-    context = ScanSolo::AiTurn::ContextAssembler.call(message: message, config: config)
+    context = ScanSolo::AiTurn::ContextAssembler.call(message: message, config: config,
+                                                      attachment_reading: ScanSolo::AiTurn::AttachmentReader.call(message: message))
     evidence = context[:knowledge_context][:chunks].map { |chunk| chunk.slice(:source_id, :source_title, :chunk_id, :similarity_score) }
     turn.update!(context_snapshot: context, knowledge_evidence: evidence)
 

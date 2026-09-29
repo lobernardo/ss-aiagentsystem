@@ -24,6 +24,16 @@ RAILS_ENV=test bundle exec rspec \
   spec/services/scan_solo/actions/registry_spec.rb \
   spec/services/scan_solo/ai_turn/input_guardrail_spec.rb \
   spec/services/scan_solo/actions/qualification_field_action_spec.rb \
-  spec/services/scan_solo/lead_state/completion_service_spec.rb
+  spec/services/scan_solo/lead_state/completion_service_spec.rb \
+  spec/services/scan_solo/ai_turn/context_assembler_spec.rb \
+  spec/services/scan_solo/ai_turn/output_validator_spec.rb \
+  spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_spec.rb \
+  spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_lead_state_spec.rb \
+  spec/services/scan_solo/qualification/consumer_consistency_spec.rb \
+  spec/services/scan_solo/cadence/reply_completeness_detector_spec.rb \
+  spec/services/scan_solo/proposal/generate_service_spec.rb \
+  spec/services/scan_solo/proposal/make_provider_spec.rb \
+  spec/services/scan_solo/handoff/handoff_service_spec.rb \
+  spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb
 
 TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage

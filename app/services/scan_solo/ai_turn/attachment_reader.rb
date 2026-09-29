@@ -26,6 +26,18 @@ class ScanSolo::AiTurn::AttachmentReader
 
   def self.call(message:) = new(message: message).call
 
+  def self.urls(content)
+    content.to_s.scan(URL_PATTERN).map { |url| url.sub(/[.,;:!?)\]]+\z/, '') }
+  end
+
+  def self.pdf?(attachment)
+    attachment.file? && attachment.file.attached? && attachment.file.content_type == 'application/pdf'
+  end
+
+  def self.location_link(attachment)
+    attachment.external_url.presence || "https://www.google.com/maps?q=#{attachment.coordinates_lat},#{attachment.coordinates_long}"
+  end
+
   def initialize(message:)
     @message = message
     @updates = []
@@ -34,7 +46,7 @@ class ScanSolo::AiTurn::AttachmentReader
 
   def call
     message.attachments.sort_by(&:id).each { |attachment| read_attachment(attachment) }
-    urls = message.content.to_s.scan(URL_PATTERN).map { |url| url.sub(/[.,;:!?)\]]+\z/, '') }
+    urls = self.class.urls(message.content)
     urls.grep(MAP_URL_PATTERN).each { |url| updates << { key: 'link_local', value: url, source_attachment_id: nil } }
 
     Result.new(updates: updates, evidence: evidence, urls: urls)
@@ -47,7 +59,7 @@ class ScanSolo::AiTurn::AttachmentReader
   def read_attachment(attachment)
     reason = if attachment.location?
                read_location(attachment)
-             elsif pdf?(attachment)
+             elsif self.class.pdf?(attachment)
                read_pdf(attachment)
              else
                'unsupported_type'
@@ -58,14 +70,8 @@ class ScanSolo::AiTurn::AttachmentReader
   end
 
   def read_location(attachment)
-    link = attachment.external_url.presence ||
-           "https://www.google.com/maps?q=#{attachment.coordinates_lat},#{attachment.coordinates_long}"
-    updates << { key: 'link_local', value: link, source_attachment_id: attachment.id }
+    updates << { key: 'link_local', value: self.class.location_link(attachment), source_attachment_id: attachment.id }
     nil
-  end
-
-  def pdf?(attachment)
-    attachment.file? && attachment.file.attached? && attachment.file.content_type == 'application/pdf'
   end
 
   # Third-party PDFs can break the parser in many ways; any error only

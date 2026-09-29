@@ -1,7 +1,7 @@
 # RF-65: deterministic field-completeness detection only -- reuses RF-16's
 # "all required fields satisfied" rule as reported by
-# ScanSolo::Qualification::FieldResolver (native contact fields and
-# alias/normalized custom attribute keys count, RF-13), never an NLP/intent
+# ScanSolo::Qualification::FieldResolver (satisfied = confirmado no estado do
+# lead; data only in the Contact does not count), never an NLP/intent
 # classifier. A full reply (every required qualification field for the
 # opportunity's stage now satisfied) stops/recalculates every pending
 # cadence attempt; a partial reply cancels only the immediate pending send,

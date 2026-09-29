@@ -14,9 +14,11 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
     ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: cadence_definition)
   end
 
+  let(:writer) { ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state) }
+
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente', enabled: true, required_qualification_fields: %w[budget timeline])
+    draft.update!(name: 'Agente', enabled: true, required_qualification_fields: ['Área', 'Prazo desejado'])
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
@@ -24,8 +26,11 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
     described_class.call(opportunity: opportunity)
   end
 
-  describe 'full customer reply (all required fields satisfied)' do
-    before { contact.update!(custom_attributes: { 'budget' => '1000', 'timeline' => '30 dias' }) }
+  describe 'full customer reply (all required fields confirmed in the lead state)' do
+    before do
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil)
+      writer.apply_field!(key: 'prazo_desejado', value: '30 dias', status: 'confirmado', source_message_id: nil)
+    end
 
     it 'stops/recalculates the full pending schedule' do
       result = call
@@ -37,8 +42,8 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
     end
   end
 
-  describe 'partial customer reply (at least one required field missing)' do
-    before { contact.update!(custom_attributes: { 'budget' => '1000' }) }
+  describe 'partial customer reply (at least one required field not confirmed)' do
+    before { writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil) }
 
     it 'cancels only the immediate pending send, leaving the rest of the schedule scheduled' do
       remaining_attempts = enrollment.attempts.order(:scheduled_at).drop(1)
@@ -46,7 +51,7 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
       result = call
 
       expect(result).to be_partial
-      expect(result.missing_fields).to eq(['timeline'])
+      expect(result.missing_fields).to eq(['Prazo desejado'])
       expect(enrollment.reload).to be_active
 
       first_attempt = enrollment.attempts.order(:scheduled_at).first
@@ -55,31 +60,14 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
     end
   end
 
-  describe 'fields satisfied through native values and aliases (RF-13)' do
-    let(:contact) { create(:contact, account: account, email: 'lead@example.com') }
-
-    before do
-      draft = ScanSolo::AiAgentConfig.draft_for!(account)
-      draft.update!(required_qualification_fields: ['E-mail', 'Cidade / UF', 'Prazo desejado'])
-      ScanSolo::AiAgent::PublishService.new(account: account).call
-    end
-
-    it 'is complete and cancels every scheduled attempt when the remaining fields are satisfied only via native/alias' do
-      contact.update!(custom_attributes: { 'cidade_uf' => 'Rio/RJ', 'prazo' => 'amanhã' })
+  describe 'satisfied = confirmado in the lead state (lead state RF-08)' do
+    it 'keeps a field that is only in the Contact or only inferido as missing' do
+      contact.update!(custom_attributes: { 'prazo' => 'amanhã' })
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'inferido', source_message_id: nil)
 
       result = call
 
-      expect(result).to be_complete
-      expect(enrollment.reload).to be_cancelled
-      expect(enrollment.attempts.pluck(:result).uniq).to eq(['cancelled'])
-    end
-
-    it 'cancels only the earliest scheduled attempt when one field is still unsatisfied' do
-      contact.update!(custom_attributes: { 'cidade' => 'Rio/RJ' })
-
-      result = call
-
-      expect(result.missing_fields).to eq(['Prazo desejado'])
+      expect(result.missing_fields).to eq(['Área', 'Prazo desejado'])
       expect(enrollment.reload).to be_active
       expect(enrollment.attempts.order(:scheduled_at).map(&:result)).to eq(%w[cancelled scheduled scheduled])
     end

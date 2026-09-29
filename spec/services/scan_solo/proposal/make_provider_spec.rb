@@ -143,5 +143,14 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
       expect(qualification).not_to have_key('integracao_seguranca')
       expect(qualification.values).to all(be_present)
     end
+
+    it 'prefers the lead state value over the Contact and keeps the key set present-only (lead state RF-08)' do
+      writer = ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+      writer.apply_field!(key: 'area', value: '1.200 m²', status: 'confirmado', source_message_id: nil)
+      writer.apply_field!(key: 'profundidade', value: '3 m', status: 'confirmado', source_message_id: nil)
+
+      expect(qualification).to eq(expected_qualification.merge('area' => '1.200 m²', 'profundidade' => '3 m'))
+      expect(qualification.keys - ScanSolo::Qualification::FieldResolver::MAKE_KEYS).to be_empty
+    end
   end
 end

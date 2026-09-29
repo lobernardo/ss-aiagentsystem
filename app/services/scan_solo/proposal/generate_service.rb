@@ -1,8 +1,10 @@
 # RF-73/RF-74/RF-75/RF-76: `proposal.generate` is the sole path that
 # creates a ScanSolo::ProposalVersion. Rejects the request outright -- no
-# record created -- when ScanSolo::Qualification::FieldResolver reports any
-# required qualification field unsatisfied, the same field-completeness rule
-# ScanSolo::Cadence::ReplyCompletenessDetector uses for RF-16 (RF-74/RF-14).
+# record created -- when ScanSolo::Qualification::FieldResolver's proposal
+# gate reports a required qualification field (satisfied = confirmado no
+# estado do lead). With the qualification `concluida` only `faltante` fields
+# block; while `em_andamento` any field not `confirmado` blocks (lead state
+# RF-08; RF-74/RF-14).
 # Requests generation exclusively through the registered provider (the mock
 # provider outside production, RF-83) and never writes value/currency/
 # artifact_url itself -- only ScanSolo::Proposal::CallbackHandler, invoked

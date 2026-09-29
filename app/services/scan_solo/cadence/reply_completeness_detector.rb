@@ -43,7 +43,7 @@ class ScanSolo::Cadence::ReplyCompletenessDetector
 
   def missing_fields
     config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
-    ScanSolo::Qualification::FieldResolver.call(contact: opportunity.contact, config: config).missing_labels
+    ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config).missing_labels
   end
 
   def cancel_immediate_pending!

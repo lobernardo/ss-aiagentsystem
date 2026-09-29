@@ -14,6 +14,8 @@ RAILS_ENV=test bundle exec rspec \
   spec/models/scan_solo/lead_state_event_spec.rb \
   spec/services/scan_solo/qualification/field_resolver_spec.rb \
   spec/services/scan_solo/ai_turn/model_invoker_spec.rb \
-  spec/services/scan_solo/test_mode/mock_llm_provider_spec.rb
+  spec/services/scan_solo/test_mode/mock_llm_provider_spec.rb \
+  spec/services/scan_solo/lead_state/writer_spec.rb \
+  spec/services/scan_solo/ai_turn/attachment_reader_spec.rb
 
 TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage

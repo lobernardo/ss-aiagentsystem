@@ -22,7 +22,7 @@ class ScanSolo::Proposal::MakeProvider
   def self.request(proposal_version:, correlation_id:, action:, actor:, retry_count:)
     opportunity = proposal_version.proposal.opportunity
     config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
-    qualification = ScanSolo::Qualification::FieldResolver.call(contact: opportunity.contact, config: config).make_qualification
+    qualification = ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config).make_qualification
 
     ScanSolo::Make::OutboundRequestService.call(
       account: opportunity.account,

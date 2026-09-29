@@ -11,7 +11,11 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
   let(:labels) { ['Nome', 'E-mail', 'Telefone', 'Cidade / UF'] }
   let(:config) { ScanSolo::AiAgentConfig.new(required_qualification_fields: labels) }
   let(:contact) { create(:contact, account: account, name: '', email: nil, phone_number: nil, custom_attributes: {}) }
-  let(:resolver) { described_class.call(contact: contact, config: config) }
+  let(:conversation) { create(:conversation, account: account, contact: contact) }
+  let(:opportunity) { ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation) }
+  let!(:lead_state) { ScanSolo::LeadState.find_or_create_by!(opportunity: opportunity) }
+  let(:writer) { ScanSolo::LeadState::Writer.new(lead_state: lead_state) }
+  let(:resolver) { described_class.call(opportunity: opportunity.reload, config: config) }
 
   def field(label)
     resolver.fields.find { |candidate| candidate.label == label }
@@ -86,40 +90,81 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
     end
   end
 
-  describe 'RF-01/RF-02: native contact fields' do
-    it 'satisfies "Nome" from contact.name with origin native' do
+  describe 'lead state RF-08: satisfied if and only if confirmado' do
+    it 'reads "Nome" from contact.name without satisfying it' do
       contact.update!(name: 'Leonardo')
 
-      expect(field('Nome').to_h).to eq(label: 'Nome', canonical_key: 'nome', value: 'Leonardo', origin: 'native', satisfied: true)
+      expect(field('Nome').to_h).to eq(label: 'Nome', canonical_key: 'nome', value: 'Leonardo', origin: 'native', status: 'faltante',
+                                       classification: 'obrigatorio', satisfied: false)
     end
 
-    it 'satisfies "E-mail" and "Telefone" from the native columns' do
+    it 'does not satisfy a native name that is inferido in the lead state' do
+      contact.update!(name: 'Milena (WhatsApp)')
+      writer.apply_field!(key: 'nome', value: 'Milena (WhatsApp)', status: 'inferido', source_message_id: nil)
+
+      expect(field('Nome')).to have_attributes(value: 'Milena (WhatsApp)', status: 'inferido', satisfied: false)
+      expect(resolver.missing_labels).to include('Nome')
+    end
+
+    it 'prefers and satisfies a confirmado lead state value over the native column' do
+      contact.update!(name: 'Milena (WhatsApp)')
+      writer.apply_field!(key: 'nome', value: 'Milena Souza', status: 'confirmado', source_message_id: 1)
+
+      expect(field('Nome')).to have_attributes(value: 'Milena Souza', origin: 'lead_state', status: 'confirmado', satisfied: true)
+      expect(resolver.collected).to eq('Nome' => 'Milena Souza')
+    end
+
+    it 'reads "E-mail" and "Telefone" from the native columns' do
       contact.update!(email: 'a@b.com', phone_number: '+5521999990000')
 
-      expect(field('E-mail')).to have_attributes(value: 'a@b.com', origin: 'native', satisfied: true)
-      expect(field('Telefone')).to have_attributes(value: '+5521999990000', origin: 'native', satisfied: true)
+      expect(field('E-mail')).to have_attributes(value: 'a@b.com', origin: 'native', satisfied: false)
+      expect(field('Telefone')).to have_attributes(value: '+5521999990000', origin: 'native', satisfied: false)
     end
 
     it 'falls back to custom_attributes when the native value is blank' do
       contact.update!(custom_attributes: { 'Nome' => 'Ana' })
 
-      expect(field('Nome')).to have_attributes(value: 'Ana', origin: 'custom_attribute', satisfied: true)
+      expect(field('Nome')).to have_attributes(value: 'Ana', origin: 'custom_attribute', satisfied: false)
+    end
+
+    it 'ignores a faltante lead state entry when reading the value' do
+      contact.update!(custom_attributes: { 'cidade_uf' => 'Rio/RJ' })
+      lead_state.update!(fields: { 'cidade_uf' => { 'value' => nil, 'status' => 'faltante' } })
+
+      expect(field('Cidade / UF')).to have_attributes(value: 'Rio/RJ', origin: 'custom_attribute', status: 'faltante')
     end
 
     it 'reports an unsatisfied field with no value and no origin' do
-      expect(field('Nome')).to have_attributes(value: nil, origin: nil, satisfied: false)
+      expect(field('Nome')).to have_attributes(value: nil, origin: nil, status: 'faltante', satisfied: false)
       expect(field('Cidade / UF')).not_to be_satisfied
       expect(resolver.missing_labels).to eq(labels)
       expect(resolver.collected).to eq({})
     end
 
     it 'keeps config order in fields, missing_labels and collected' do
-      contact.update!(name: 'Leonardo', custom_attributes: { 'cidade_uf' => 'Rio/RJ' })
+      writer.apply_field!(key: 'nome', value: 'Leonardo', status: 'confirmado', source_message_id: 1)
+      writer.apply_field!(key: 'cidade_uf', value: 'Rio/RJ', status: 'confirmado', source_message_id: 1)
 
       expect(resolver.fields.map(&:label)).to eq(labels)
       expect(resolver.required_canonical_keys).to eq(%w[nome email telefone cidade_uf])
       expect(resolver.missing_labels).to eq(%w[E-mail Telefone])
       expect(resolver.collected).to eq('Nome' => 'Leonardo', 'Cidade / UF' => 'Rio/RJ')
+    end
+
+    it 'fails loudly when the opportunity has no lead state' do
+      lead_state.destroy!
+
+      expect { described_class.call(opportunity: opportunity.reload, config: config) }.to raise_error(NoMethodError)
+    end
+  end
+
+  describe '.contact_value' do
+    it 'reads the native column first, then custom_attributes by precedence' do
+      contact.update!(name: 'Leonardo', custom_attributes: { 'cidade' => 'Rio', 'cidade_uf' => 'Rio/RJ' })
+
+      expect(described_class.contact_value(contact: contact, canonical_key: 'nome')).to eq('Leonardo')
+      expect(described_class.contact_value(contact: contact, canonical_key: 'cidade_uf')).to eq('Rio/RJ')
+      expect(described_class.contact_value(contact: contact, canonical_key: 'cnpj')).to be_nil
     end
   end
 
@@ -153,38 +198,52 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
     context 'with config v2 labels and values stored under the Make canonical keys' do
       let(:labels) { config_v2_labels }
 
-      it 'satisfies every config v2 label' do
-        contact.update!(custom_attributes: {
-                          'tipo_intervencao' => 'sondagem', 'cidade_uf' => 'Rio/RJ', 'endereco_obra' => 'Rua A, 1', 'area' => '800 m²',
-                          'profundidade' => '10 m', 'prazo_desejado' => 'amanhã', 'integracao_seguranca' => 'sim',
-                          'empresa' => 'ACME', 'email' => 'x@acme.com'
-                        })
+      let(:values) do
+        {
+          'tipo_intervencao' => 'sondagem', 'cidade_uf' => 'Rio/RJ', 'endereco_obra' => 'Rua A, 1', 'area' => '800 m²',
+          'profundidade' => '10 m', 'prazo_desejado' => 'amanhã', 'integracao_seguranca' => 'sim',
+          'empresa' => 'ACME', 'email' => 'x@acme.com'
+        }
+      end
+
+      it 'reads every config v2 label from custom attributes' do
+        contact.update!(custom_attributes: values)
+
+        expect(resolver.fields.map(&:value)).to eq(values.values_at(*resolver.required_canonical_keys))
+        expect(resolver.fields.map(&:origin).uniq).to eq(['custom_attribute'])
+        expect(resolver.missing_labels).to eq(labels)
+      end
+
+      it 'satisfies every config v2 label confirmed in the lead state' do
+        values.each { |key, value| writer.apply_field!(key: key, value: value, status: 'confirmado', source_message_id: 1) }
 
         expect(resolver.missing_labels).to be_empty
-        expect(resolver.fields.map(&:origin).uniq).to eq(['custom_attribute'])
         expect(field('Área ou extensão').value).to eq('800 m²')
       end
 
-      it 'satisfies a label from a custom attribute with different accent and case' do
+      it 'reads a label from a custom attribute with different accent and case' do
         contact.update!(custom_attributes: { 'AREA OU EXTENSAO' => '500 m²', 'endereco' => 'Rua B' })
 
-        expect(field('Área ou extensão')).to have_attributes(value: '500 m²', satisfied: true)
-        expect(field('Endereço da obra')).to have_attributes(value: 'Rua B', satisfied: true)
+        expect(field('Área ou extensão')).to have_attributes(value: '500 m²', origin: 'custom_attribute')
+        expect(field('Endereço da obra')).to have_attributes(value: 'Rua B', origin: 'custom_attribute')
       end
     end
   end
 
   describe 'RF-05: labels outside the alias map' do
-    let(:labels) { ['Orçamento'] }
+    let(:labels) { %w[Orçamento budget] }
 
-    it 'uses the normalized label as canonical key and matches a normalized custom attribute' do
+    it 'uses the normalized label as canonical key and reads a normalized custom attribute' do
       contact.update!(custom_attributes: { 'orcamento' => '50k' })
 
-      expect(field('Orçamento')).to have_attributes(canonical_key: 'orcamento', value: '50k', origin: 'custom_attribute', satisfied: true)
+      expect(field('Orçamento')).to have_attributes(canonical_key: 'orcamento', value: '50k', origin: 'custom_attribute')
     end
 
-    it 'is unsatisfied without a matching custom attribute' do
-      expect(field('Orçamento')).not_to be_satisfied
+    it 'is never satisfied outside the catalog (lead state RF-15 fail-closed)' do
+      contact.update!(custom_attributes: { 'orcamento' => '50k', 'budget' => '10k' })
+
+      expect(resolver.fields.map { |f| [f.status, f.satisfied?] }).to eq([['faltante', false], ['faltante', false]])
+      expect(resolver.missing_labels).to eq(%w[Orçamento budget])
     end
   end
 
@@ -227,11 +286,61 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
       )
       expect(resolver.make_qualification.keys).to all(match(/\A[a-z0-9_]+\z/))
     end
+
+    it 'prefers present lead state values, confirmado or inferido' do
+      contact.update!(name: 'Milena (WhatsApp)', custom_attributes: { 'area' => '500 m²' })
+      writer.apply_field!(key: 'nome', value: 'Milena Souza', status: 'confirmado', source_message_id: 1)
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'inferido', source_message_id: 1)
+
+      expect(resolver.make_qualification).to eq('area' => '800 m²', 'nome' => 'Milena Souza')
+    end
+  end
+
+  describe 'RF-08 proposal gate: #proposal_gate_missing_labels' do
+    let(:labels) { ['Área'] }
+
+    it 'accepts an inferido required field once qualification is concluida' do
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'inferido', source_message_id: nil)
+      writer.complete!(at: Time.current)
+
+      expect(resolver.proposal_gate_missing_labels).to eq([])
+      expect(resolver.missing_labels).to eq(['Área'])
+    end
+
+    it 'blocks on a faltante required field once qualification is concluida' do
+      writer.complete!(at: Time.current)
+
+      expect(resolver.proposal_gate_missing_labels).to eq(['Área'])
+    end
+
+    it 'blocks on an inferido required field while qualification is em_andamento' do
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'inferido', source_message_id: nil)
+
+      expect(resolver.proposal_gate_missing_labels).to eq(['Área'])
+    end
+
+    it 'passes a confirmado required field while qualification is em_andamento' do
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: 1)
+
+      expect(resolver.proposal_gate_missing_labels).to eq([])
+    end
+
+    context 'with a required label outside the catalog' do
+      let(:labels) { ['budget'] }
+
+      it 'blocks a concluida qualification' do
+        contact.update!(custom_attributes: { 'budget' => '10k' })
+        writer.complete!(at: Time.current)
+
+        expect(resolver.proposal_gate_missing_labels).to eq(['budget'])
+      end
+    end
   end
 
   describe 'RF-06: determinism' do
     it 'resolves without LLM, HTTP or message reads, returning equal results on repeated calls' do
       contact.update!(name: 'Leonardo', custom_attributes: { 'cidade' => 'Rio' })
+      writer.apply_field!(key: 'email', value: 'a@b.com', status: 'confirmado', source_message_id: 1)
       allow(ScanSolo::TestMode::MockLlmProvider).to receive(:call).and_raise('LLM called')
       allow(RubyLLM).to receive(:chat).and_raise('LLM called')
       allow(Net::HTTP).to receive(:start).and_raise('HTTP called')
@@ -241,8 +350,8 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
 
       results = ActiveSupport::Notifications.subscribed(callback, 'sql.active_record') do
         Array.new(2) do
-          resolved = described_class.call(contact: contact, config: config)
-          [resolved.fields.map(&:to_h), resolved.make_qualification]
+          resolved = described_class.call(opportunity: opportunity.reload, config: config)
+          [resolved.fields.map(&:to_h), resolved.make_qualification, resolved.proposal_gate_missing_labels]
         end
       end
 

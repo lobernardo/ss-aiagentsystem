@@ -43,12 +43,12 @@ class ScanSolo::Actions::QualificationFieldAction
   end
 
   def call
-    opportunity = ScanSolo::PipelineOpportunity.find_by!(conversation_id: params[:conversation_id])
+    @opportunity = ScanSolo::PipelineOpportunity.find_by!(conversation_id: params[:conversation_id])
     @contact = opportunity.contact
     @config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
 
     write_fields!
-    transition_stage!(opportunity)
+    transition_stage!
 
     {
       opportunity_id: opportunity.id, contact_id: contact.id, updated_fields: updated_fields,
@@ -58,7 +58,7 @@ class ScanSolo::Actions::QualificationFieldAction
 
   private
 
-  attr_reader :params, :actor, :contact, :config, :updated_fields, :not_applied_fields, :unrecognized_fields,
+  attr_reader :params, :actor, :opportunity, :contact, :config, :updated_fields, :not_applied_fields, :unrecognized_fields,
               :accepted_keys, :native_fields, :custom_values
 
   def write_fields!
@@ -69,7 +69,7 @@ class ScanSolo::Actions::QualificationFieldAction
   end
 
   def required_keys
-    @required_keys ||= ScanSolo::Qualification::FieldResolver.call(contact: contact, config: config).required_canonical_keys
+    @required_keys ||= ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config).required_canonical_keys
   end
 
   def assign_field(key, value)
@@ -109,7 +109,7 @@ class ScanSolo::Actions::QualificationFieldAction
 
   # Native keys accepted outside the published required list never drive a
   # transition (RF-12).
-  def transition_stage!(opportunity)
+  def transition_stage!
     if opportunity.em_contato? && accepted_keys.intersect?(required_keys)
       ScanSolo::Pipeline::StageTransitionService.new(opportunity: opportunity, target_stage: :em_qualificacao, actor: actor).call
     elsif opportunity.em_qualificacao? && all_required_fields_satisfied?
@@ -118,7 +118,7 @@ class ScanSolo::Actions::QualificationFieldAction
   end
 
   def all_required_fields_satisfied?
-    resolver = ScanSolo::Qualification::FieldResolver.call(contact: contact, config: config)
+    resolver = ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config)
     resolver.fields.present? && resolver.missing_labels.empty?
   end
 end

@@ -1,18 +1,24 @@
-# RF-01..RF-06, RF-21: the single reader of the "qualification field
-# satisfied?" rule. For each entry of the published
+# RF-01..RF-06, RF-21; lead state RF-04, RF-08, RF-15: the single reader of
+# the "qualification field satisfied?" rule. For each entry of the published
 # `required_qualification_fields` (in config order) it reports the config
-# label, its canonical key, the current value, the origin (`native` |
-# `custom_attribute`) and whether it is satisfied.
+# label, its canonical key, the current value and its origin
+# (`lead_state` | `native` | `custom_attribute`), the lead state status and
+# whether it is satisfied.
+#
+# A field is satisfied if and only if its canonical key is `confirmado` in
+# the opportunity's lead state; a label outside the RF-02 catalog is never
+# satisfied (fail-closed, status `faltante`). The value comes from the lead
+# state when it is not `faltante`, then from the native contact column
+# (`nome`/`email`/`telefone`), then from `custom_attributes`.
 #
 # Labels and `custom_attributes` keys are compared by their normalized form
 # (trim, case, accents and `_ - space /` separators ignored) and mapped
 # through the frozen canonical alias table; a label with no alias uses its
-# normalized form as canonical key. `nome`/`email`/`telefone` read the native
-# contact column first and fall back to `custom_attributes` when it is blank.
+# normalized form as canonical key.
 #
-# Deterministic by design: only the config, the contact's native fields and
-# `custom_attributes` are read -- never messages, an LLM or HTTP -- and
-# nothing is written.
+# Deterministic by design: only the config, the lead state, the contact's
+# native fields and `custom_attributes` are read -- never messages, an LLM or
+# HTTP -- and nothing is written.
 class ScanSolo::Qualification::FieldResolver
   # Lead state RF-02: closed catalog in qualification question order.
   CATALOG = [
@@ -98,7 +104,7 @@ class ScanSolo::Qualification::FieldResolver
   # RF-15: the fixed canonical key set of the Make `qualification` object.
   MAKE_KEYS = %w[empresa endereco_obra cidade_uf tipo_intervencao area profundidade prazo_desejado email nome telefone].freeze
 
-  Field = Struct.new(:label, :canonical_key, :value, :origin, :satisfied, keyword_init: true) do
+  Field = Struct.new(:label, :canonical_key, :value, :origin, :status, :classification, :satisfied, keyword_init: true) do
     def satisfied?
       satisfied
     end
@@ -117,12 +123,44 @@ class ScanSolo::Qualification::FieldResolver
     CANONICAL_BY_SPELLING.fetch(normalized, normalized)
   end
 
-  def self.call(contact:, config:)
-    new(contact: contact, config: config)
+  def self.call(opportunity:, config:)
+    new(opportunity: opportunity, config: config)
   end
 
-  def initialize(contact:, config:)
-    @contact = contact
+  # Native column first, then `custom_attributes` by RF-21 precedence.
+  def self.contact_value(contact:, canonical_key:)
+    contact_resolution(contact, canonical_key, nil).first
+  end
+
+  def self.contact_resolution(contact, canonical, label)
+    native = NATIVE[canonical] && contact.public_send(NATIVE[canonical])
+    return [native, 'native'] if native.present?
+
+    key = contact.custom_attributes
+                 .select { |candidate, value| value.present? && canonical_key(candidate) == canonical }
+                 .keys.min_by { |candidate| precedence(candidate, canonical, label) }
+    key ? [contact.custom_attributes[key], 'custom_attribute'] : [nil, nil]
+  end
+
+  # RF-21: exact canonical key > exact config label > alias-table order >
+  # lexicographic.
+  def self.precedence(key, canonical, label)
+    spellings = SPELLINGS.fetch(canonical, [])
+    rank = if key == canonical
+             0
+           elsif key == label
+             1
+           else
+             2 + (spellings.index(normalize(key)) || spellings.size)
+           end
+    [rank, key]
+  end
+  private_class_method :precedence
+
+  def initialize(opportunity:, config:)
+    @contact = opportunity.contact
+    @lead_state = opportunity.lead_state
+    @state_fields = lead_state.fields
     @labels = Array(config&.required_qualification_fields)
   end
 
@@ -130,7 +168,9 @@ class ScanSolo::Qualification::FieldResolver
     @fields ||= labels.map do |label|
       canonical = self.class.canonical_key(label)
       value, origin = resolve(canonical, label)
-      Field.new(label: label, canonical_key: canonical, value: value, origin: origin, satisfied: origin.present?)
+      status = status_for(canonical)
+      Field.new(label: label, canonical_key: canonical, value: value, origin: origin, status: status, classification: 'obrigatorio',
+                satisfied: status == 'confirmado')
     end
   end
 
@@ -146,6 +186,15 @@ class ScanSolo::Qualification::FieldResolver
     fields.map(&:canonical_key)
   end
 
+  # RF-08 proposal gate: a `concluida` qualification blocks only on required
+  # fields still `faltante` (labels outside the catalog included); while
+  # `em_andamento` every required field not `confirmado` blocks.
+  def proposal_gate_missing_labels
+    return missing_labels unless lead_state.concluida?
+
+    fields.select { |field| field.status == 'faltante' }.map(&:label)
+  end
+
   # RF-15: all 10 canonical keys are evaluated whether or not the config
   # requires them; only present values are sent.
   def make_qualification
@@ -158,35 +207,18 @@ class ScanSolo::Qualification::FieldResolver
 
   private
 
-  attr_reader :contact, :labels
+  attr_reader :contact, :lead_state, :state_fields, :labels
+
+  def status_for(canonical)
+    return 'faltante' unless CATALOG_KEYS.include?(canonical)
+
+    state_fields.dig(canonical, 'status') || 'faltante'
+  end
 
   def resolve(canonical, label)
-    return [nil, nil] if contact.blank?
+    entry = state_fields[canonical]
+    return [entry['value'], 'lead_state'] if entry && entry['status'] != 'faltante'
 
-    native = NATIVE[canonical] && contact.public_send(NATIVE[canonical])
-    return [native, 'native'] if native.present?
-
-    key = custom_attribute_key(canonical, label)
-    key ? [contact.custom_attributes[key], 'custom_attribute'] : [nil, nil]
-  end
-
-  def custom_attribute_key(canonical, label)
-    contact.custom_attributes
-           .select { |key, value| value.present? && self.class.canonical_key(key) == canonical }
-           .keys.min_by { |key| precedence(key, canonical, label) }
-  end
-
-  # RF-21: exact canonical key > exact config label > alias-table order >
-  # lexicographic.
-  def precedence(key, canonical, label)
-    spellings = SPELLINGS.fetch(canonical, [])
-    rank = if key == canonical
-             0
-           elsif key == label
-             1
-           else
-             2 + (spellings.index(self.class.normalize(key)) || spellings.size)
-           end
-    [rank, key]
+    self.class.contact_resolution(contact, canonical, label)
   end
 end

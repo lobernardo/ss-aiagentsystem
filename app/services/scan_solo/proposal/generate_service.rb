@@ -48,6 +48,6 @@ class ScanSolo::Proposal::GenerateService
 
   def missing_required_fields
     config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
-    ScanSolo::Qualification::FieldResolver.call(contact: opportunity.contact, config: config).missing_labels
+    ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config).proposal_gate_missing_labels
   end
 end

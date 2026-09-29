@@ -74,7 +74,7 @@ class ScanSolo::AiTurn::ContextAssembler
     opportunity = ScanSolo::PipelineOpportunity.find_by(conversation_id: conversation.id)
     return NOT_APPLICABLE if opportunity.blank?
 
-    resolver = ScanSolo::Qualification::FieldResolver.call(contact: opportunity.contact, config: config)
+    resolver = ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config)
 
     {
       available: true,

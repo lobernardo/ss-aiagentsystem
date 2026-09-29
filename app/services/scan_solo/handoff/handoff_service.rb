@@ -103,10 +103,12 @@ class ScanSolo::Handoff::HandoffService
   end
 
   # RF-16: the resolver's satisfied fields as `<config label>: <value>` in
-  # config order.
+  # config order; `nenhum` without an opportunity.
   def qualification_fields
+    return 'nenhum' if opportunity.blank?
+
     config = ScanSolo::AiAgentConfig.published_for(conversation.account)
-    collected = ScanSolo::Qualification::FieldResolver.call(contact: contact, config: config).collected
+    collected = ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config).collected
     return 'nenhum' if collected.blank?
 
     collected.map { |field, value| "#{field}: #{value}" }.join(', ')

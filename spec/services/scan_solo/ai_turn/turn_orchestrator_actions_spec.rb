@@ -67,16 +67,16 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
       expect { run_turn(one_of_each) }.not_to change(ScanSolo::AgentActionExecution, :count)
     end
 
-    it 'offers the five base ids plus proposal_generate only while the proposal integration is configured' do
+    it 'offers the six base ids plus proposal_generate only while the proposal integration is configured' do
       run_turn([])
       offered = ScanSolo::TestMode::MockLlmProvider.last_payload[:schema][:schema][:properties][:actions][:items][:properties][:action_id][:enum]
-      expect(offered).to eq(%w[qualification_field stage_transition private_note proposal_generate cadence_signal human_handoff])
+      expect(offered).to eq(%w[qualification_field stage_transition private_note proposal_generate cadence_signal human_handoff lead_state_update])
 
       allow(ScanSolo::Proposal::Integration).to receive(:configured?).and_return(false)
       next_message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, sender: contact)
       run_turn([], target: next_message)
       offered = ScanSolo::TestMode::MockLlmProvider.last_payload[:schema][:schema][:properties][:actions][:items][:properties][:action_id][:enum]
-      expect(offered).to eq(%w[qualification_field stage_transition private_note cadence_signal human_handoff])
+      expect(offered).to eq(%w[qualification_field stage_transition private_note cadence_signal human_handoff lead_state_update])
     end
 
     it 'always acts on the turn conversation, ignoring ids chosen by the model' do

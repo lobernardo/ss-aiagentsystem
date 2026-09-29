@@ -27,6 +27,69 @@ RSpec.describe Rake::Task do # rubocop:disable RSpec/SpecFilePathFormat
     end
   end
 
+  describe 'scansolo:backfill_lead_states' do
+    subject(:task) { described_class['scansolo:backfill_lead_states'] }
+
+    let(:account) { create(:account) }
+    let(:ana) { create(:contact, account: account, name: 'Ana', email: nil, phone_number: nil, custom_attributes: { 'area' => '800 m²' }) }
+    let(:opportunities) do
+      %w[novo_lead em_contato em_qualificacao qualificado proposta_enviada negociacao ganho perdido].index_with do |stage|
+        contact = stage == 'negociacao' ? ana : create(:contact, account: account)
+        conversation = create(:conversation, account: account, contact: contact)
+        ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: stage)
+      end
+    end
+    let(:backfilled_at) { Time.zone.parse('2026-09-29 12:00:00') }
+
+    def run_task
+      task.reenable
+      travel_to(backfilled_at) { task.invoke }
+    end
+
+    # Opportunities that existed before the lead state table.
+    before do
+      opportunities
+      ScanSolo::LeadStateEvent.delete_all
+      ScanSolo::LeadState.delete_all
+    end
+
+    it 'creates exactly one seeded lead state per opportunity, never confirmado (RF-01a)' do
+      expect { run_task }.to output("Lead states created: 8\n").to_stdout
+
+      states = opportunities.values.map { |opportunity| ScanSolo::LeadState.where(opportunity_id: opportunity.id).sole }
+      expect(states.flat_map { |state| state.fields.values }.pluck('status')).not_to include('confirmado')
+      expect(states).to all(satisfy { |state| state.fields.size == 34 })
+    end
+
+    it 'concludes the states at or past qualificado from the stage alone, without stage or audit events' do
+      expect { run_task }.to output.to_stdout
+                                   .and(not_change(ScanSolo::PipelineStageEvent, :count))
+                                   .and(not_change(ScanSolo::AuditEvent, :count))
+
+      negotiation = opportunities['negociacao'].reload
+      expect(negotiation.lead_state).to have_attributes(qualification_status: 'concluida', qualification_completed_at: backfilled_at,
+                                                        next_action: 'aguardar_cliente', next_action_source_message_id: nil)
+      expect(negotiation.lead_state.fields['nome']).to include('value' => 'Ana', 'status' => 'inferido')
+      expect(negotiation.stage).to eq('negociacao')
+      expect(opportunities.slice('qualificado', 'proposta_enviada', 'ganho', 'perdido').values.map { |opportunity| opportunity.reload.lead_state })
+        .to all(be_concluida)
+      opportunities.slice('novo_lead', 'em_contato', 'em_qualificacao').each_value do |opportunity|
+        expect(opportunity.reload.lead_state).to have_attributes(qualification_status: 'em_andamento', next_action: nil)
+      end
+    end
+
+    it 'creates nothing and changes no state or event on a second run, and never writes to contacts' do
+      expect { run_task }.to output.to_stdout
+      snapshot = -> { [ScanSolo::LeadState.order(:id).map(&:attributes), ScanSolo::LeadStateEvent.order(:id).map(&:attributes)] }
+      before_second_run = snapshot.call
+
+      expect { run_task }.to output("Lead states created: 0\n").to_stdout
+      expect(snapshot.call).to eq(before_second_run)
+      expect(ana.reload.custom_attributes).to eq('area' => '800 m²')
+      expect(ana.name).to eq('Ana')
+    end
+  end
+
   describe 'scansolo:smoke' do
     subject(:task) { described_class['scansolo:smoke'] }
 

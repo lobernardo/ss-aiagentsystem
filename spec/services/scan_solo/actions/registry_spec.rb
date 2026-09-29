@@ -16,7 +16,7 @@ RSpec.describe ScanSolo::Actions::Registry do
 
       %w[
         qualification_field stage_transition private_note proposal_generate
-        proposal_approve proposal_send cadence_signal human_handoff
+        proposal_approve proposal_send cadence_signal human_handoff lead_state_update
       ].each do |action_id|
         action = ScanSolo::AgentAction.find_by(action_id: action_id)
 
@@ -39,6 +39,17 @@ RSpec.describe ScanSolo::Actions::Registry do
 
       expect(result.pending).to be false
       expect(opportunity.reload.stage).to eq('qualificado')
+    end
+
+    it 'self-registers and executes the lead_state_update action with the turn message as origin' do
+      message = create(:message, account: account, conversation: conversation, message_type: :incoming)
+      turn = ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid)
+
+      described_class.call(action_id: 'lead_state_update', params: { opportunity_id: opportunity.id, intent: 'orcamento' },
+                           correlation_id: turn.correlation_id, idempotency_key: SecureRandom.uuid, turn: turn)
+
+      expect(ScanSolo::AgentAction.find_by!(action_id: 'lead_state_update').classification).to eq('automatic')
+      expect(opportunity.lead_state.reload.events.find_by!(subject: 'intent').source_message_id).to eq(message.id)
     end
 
     it 'executes the private_note action, creating a private message on the conversation' do

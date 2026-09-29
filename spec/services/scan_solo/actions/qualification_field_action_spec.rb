@@ -4,6 +4,9 @@ require 'rails_helper'
 
 RSpec.describe ScanSolo::Actions::QualificationFieldAction do
   let(:account) { create(:account, scansolo_enabled: true) }
+  let(:message) { create(:message, account: account, conversation: conversation, message_type: :incoming) }
+  let(:turn) { ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid) }
+  let(:lead_state) { opportunity.lead_state.reload }
   let(:contact) { create(:contact, account: account) }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
 
@@ -24,7 +27,12 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
   end
 
   def call(fields:)
-    described_class.call(params: { conversation_id: conversation.id, fields: fields })
+    described_class.call(params: { conversation_id: conversation.id, fields: fields }, turn: turn)
+  end
+
+  def invoke(fields)
+    ScanSolo::Actions::Registry.call(action_id: 'qualification_field', params: { conversation_id: conversation.id, fields: fields },
+                                     correlation_id: turn.correlation_id, idempotency_key: SecureRandom.uuid, turn: turn)
   end
 
   describe 'RF-15: qualification interaction begins' do
@@ -42,19 +50,70 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
     end
   end
 
-  describe 'RF-16: all required qualification fields satisfied' do
-    before { opportunity.update!(stage: :em_qualificacao) }
+  describe 'lead state RF-21: completion is not this action' do
+    let(:required_fields) { ['Área ou extensão', 'Cidade / UF'] }
 
-    it 'auto-transitions to qualificado once every required field is satisfied' do
-      call(fields: { budget: '1000', timeline: '30 dias' })
-
-      expect(opportunity.reload.stage).to eq('qualificado')
-    end
-
-    it 'leaves the stage unchanged when one required field is still missing' do
-      call(fields: { budget: '1000' })
+    it 'moves em_contato to em_qualificacao on a required catalog key and never to qualificado' do
+      call(fields: { area: '800 m²', cidade_uf: 'Rio/RJ' })
 
       expect(opportunity.reload.stage).to eq('em_qualificacao')
+      expect(opportunity.stage_events.pluck(:to_stage)).to eq(['em_qualificacao'])
+    end
+
+    it 'keeps em_qualificacao when every required field becomes confirmado' do
+      opportunity.update!(stage: :em_qualificacao)
+
+      call(fields: { area: '800 m²', cidade_uf: 'Rio/RJ' })
+
+      expect(opportunity.reload.stage).to eq('em_qualificacao')
+      expect(opportunity.stage_events).to be_empty
+    end
+  end
+
+  describe 'lead state RF-06/RF-07/RF-08: writes to the lead state and mirrors on the contact' do
+    let(:required_fields) { ['Área ou extensão', 'Cidade / UF'] }
+    let(:contact) { create(:contact, account: account, name: 'Milena (WhatsApp)', email: nil, phone_number: nil, custom_attributes: {}) }
+
+    it 'writes a stated value as confirmado with the turn message as origin and mirrors it in custom_attributes' do
+      result = invoke({ area: '800 m²' }).side_effect_result
+
+      expect(lead_state.fields['area']).to include('value' => '800 m²', 'status' => 'confirmado', 'source_message_id' => message.id)
+      expect(contact.reload.custom_attributes['area']).to eq('800 m²')
+      expect(result[:state_changes]).to eq([{ key: 'area', outcome: :applied }])
+    end
+
+    it 'corrects the name in the lead state and keeps the native contact name' do
+      result = call(fields: { nome: 'Milena Souza' })
+
+      expect(lead_state.fields['nome']).to include('value' => 'Milena Souza', 'status' => 'confirmado')
+      expect(lead_state.events.where(key: 'nome').order(:id).last)
+        .to have_attributes(previous_value: 'Milena (WhatsApp)', previous_status: 'inferido', new_value: 'Milena Souza')
+      expect(contact.reload.name).to eq('Milena (WhatsApp)')
+      expect(result[:not_applied_fields]).to eq([{ field: 'nome', reason: 'native_already_present' }])
+    end
+
+    it 'writes a model-deduced value as inferido over a faltante field' do
+      invoke({ cidade_uf: { value: 'RJ', status: 'inferido' } })
+
+      expect(lead_state.fields['cidade_uf']).to include('value' => 'RJ', 'status' => 'inferido')
+    end
+
+    it 'keeps a confirmado value against an inferido one and reports confirmed_value_kept' do
+      invoke({ cidade_uf: 'Rio/RJ' })
+
+      result = invoke({ cidade_uf: { value: 'RJ', status: 'inferido' } }).side_effect_result
+
+      expect(lead_state.fields['cidade_uf']).to include('value' => 'Rio/RJ', 'status' => 'confirmado')
+      expect(contact.reload.custom_attributes['cidade_uf']).to eq('Rio/RJ')
+      expect(result[:not_applied_fields]).to eq([{ field: 'cidade_uf', reason: 'confirmed_value_kept' }])
+    end
+
+    it 'rejects an entry that is neither a string nor a closed {value, status} object' do
+      [{ x: { value: 1 } }, { area: { value: '800 m²' } }, { area: { value: '800 m²', status: 'faltante' } },
+       { area: { value: '800 m²', status: 'confirmado', note: 'x' } }].each do |fields|
+        expect { invoke(fields) }.to(raise_error { |error| expect(error.class.name).to eq('ScanSolo::Actions::Executor::InvalidParamsError') })
+      end
+      expect(lead_state.fields['area']['status']).to eq('faltante')
     end
   end
 
@@ -79,12 +138,15 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
       end
     end
 
+    # The turn's inbound message touches the contact on creation.
+    before { turn }
+
     it 'persists every accepted field of the call in a single contact update' do
       fields = { nome: 'Leonardo', cidade_uf: 'Rio/RJ', area: '800 m²', prazo_desejado: 'amanhã' }
 
       ActiveSupport::Notifications.subscribed(count_contact_updates, 'sql.active_record') { call(fields: fields) }
 
-      collected = ScanSolo::Qualification::FieldResolver.call(contact: contact.reload, config: ScanSolo::AiAgentConfig.published_for(account))
+      collected = ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity.reload, config: ScanSolo::AiAgentConfig.published_for(account))
                                                         .collected
       expect(collected).to include('Nome' => 'Leonardo', 'Cidade / UF' => 'Rio/RJ', 'Área ou extensão' => '800 m²',
                                    'Prazo desejado' => 'amanhã')
@@ -109,7 +171,7 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
       call(fields: { 'Cidade / UF': 'Macaé/RJ' })
 
       expect(contact.reload.custom_attributes).to eq('Cidade / UF' => 'Niterói/RJ', 'cidade_uf' => 'Macaé/RJ')
-      expect(ScanSolo::Qualification::FieldResolver.call(contact: contact, config: ScanSolo::AiAgentConfig.published_for(account))
+      expect(ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity.reload, config: ScanSolo::AiAgentConfig.published_for(account))
                                                     .collected['Cidade / UF']).to eq('Macaé/RJ')
     end
 
@@ -121,6 +183,7 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
 
         expect(contact.reload.name).to eq('Milena (WhatsApp)')
         expect(result[:not_applied_fields]).to eq([{ field: 'nome', reason: 'native_already_present' }])
+        expect(lead_state.fields['nome']).to include('value' => 'Milena Souza', 'status' => 'confirmado')
       end
 
       it 'writes the name when the native value is blank' do
@@ -151,7 +214,7 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
     it 'does not persist the key and reports it in the result and in the audit event' do
       execution = ScanSolo::Actions::Registry.call(
         action_id: 'qualification_field', params: { conversation_id: conversation.id, fields: { cidade_uf: 'Rio/RJ', cor_favorita: 'azul' } },
-        correlation_id: 'corr-1', idempotency_key: 'idem-1'
+        correlation_id: 'corr-1', idempotency_key: 'idem-1', turn: turn
       )
 
       expect(contact.reload.custom_attributes).to eq('cidade_uf' => 'Rio/RJ')
@@ -167,12 +230,13 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
 
     before { opportunity.update!(stage: :em_qualificacao) }
 
-    it 'moves to qualificado once when the only missing field is satisfied by a native value' do
+    it 'confirms a field that was only inferido from the contact without any stage transition' do
       call(fields: { email: 'lead@example.com' })
       call(fields: { cidade_uf: 'Niterói/RJ' })
 
-      expect(opportunity.reload.stage).to eq('qualificado')
-      expect(opportunity.stage_events.where(to_stage: 'qualificado').count).to eq(1)
+      expect(lead_state.fields.values_at('email', 'cidade_uf').pluck('status')).to eq(%w[confirmado confirmado])
+      expect(contact.reload.custom_attributes['cidade_uf']).to eq('Niterói/RJ')
+      expect(opportunity.reload.stage).to eq('em_qualificacao')
     end
 
     it 'leaves the stage unchanged while a required field is missing and the proposal gate still rejects' do

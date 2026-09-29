@@ -38,4 +38,20 @@ RSpec.describe ScanSolo::Pipeline::OpportunityBootstrapService do
     expect(ScanSolo::CadenceEnrollment.count).to eq(1)
     expect(ScanSolo::AuditEvent.where(event_type: 'pipeline.opportunity_created').count).to eq(1)
   end
+
+  context 'with a contact that only has its WhatsApp profile name (lead state RF-01)' do
+    let(:contact) { create(:contact, account: account, name: 'Milena (WhatsApp)', email: nil, phone_number: nil, custom_attributes: {}) }
+
+    it 'creates one lead state with the 34 catalog fields and keeps it single on a second bootstrap' do
+      first = described_class.call(message: message)
+      described_class.call(message: message)
+
+      lead_state = ScanSolo::LeadState.where(opportunity_id: first.opportunity.id).sole
+      expect(lead_state.fields.size).to eq(34)
+      expect(lead_state.fields['nome']).to include('value' => 'Milena (WhatsApp)', 'status' => 'inferido')
+      expect(lead_state.fields.values.count { |field| field['status'] == 'faltante' && field['value'].nil? }).to eq(33)
+      expect(lead_state).to be_em_andamento
+      expect(ScanSolo::LeadState.count).to eq(1)
+    end
+  end
 end

@@ -62,6 +62,9 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
     perdido: 7
   }
 
+  # Lead state RF-01: every opportunity has its lead state from creation on.
+  after_create { ScanSolo::LeadState::InitializeService.call(opportunity: self) }
+
   # One opportunity per conversation is enforced by the unique index only, so
   # ScanSolo::Pipeline::OpportunityBootstrapService's create_or_find_by! can
   # converge concurrent creators on the same row (RF-22).

@@ -25,7 +25,9 @@ class ScanSolo::LeadState < ApplicationRecord
 
   enum qualification_status: { em_andamento: 0, concluida: 1 }
 
-  validates :opportunity_id, uniqueness: true
+  # One state per opportunity is enforced by the unique index only, so
+  # ScanSolo::LeadState::InitializeService's create_or_find_by! converges
+  # concurrent creators on the same row.
   validates :intent, inclusion: { in: INTENTS }, allow_nil: true
   validates :next_action, inclusion: { in: NEXT_ACTIONS }, allow_nil: true
 end

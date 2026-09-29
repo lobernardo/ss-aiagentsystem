@@ -2,7 +2,7 @@ require 'rails_helper'
 
 RSpec.describe ScanSolo::LeadState::Writer do
   let(:account) { create(:account) }
-  let(:contact) { create(:contact, account: account) }
+  let(:contact) { create(:contact, account: account, name: '') }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let(:opportunity) { ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation) }
   let(:lead_state) { ScanSolo::LeadState.find_or_create_by!(opportunity: opportunity) }
@@ -70,7 +70,7 @@ RSpec.describe ScanSolo::LeadState::Writer do
 
     it 'ignores a blank value' do
       expect(writer.apply_field!(key: 'area', value: '  ', status: 'confirmado', source_message_id: first_message.id)).to eq(:ignored)
-      expect(lead_state.reload.fields).to eq({})
+      expect(lead_state.reload.fields['area']).to include('value' => nil, 'status' => 'faltante')
       expect(lead_state.events).to be_empty
     end
 

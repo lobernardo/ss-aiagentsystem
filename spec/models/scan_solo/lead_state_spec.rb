@@ -5,12 +5,13 @@ RSpec.describe ScanSolo::LeadState do
   let(:contact) { create(:contact, account: account) }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let(:opportunity) { ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation) }
-  let(:state) { described_class.create!(opportunity: opportunity) }
+  let(:state) { opportunity.lead_state }
 
-  it 'persists one state per opportunity with empty data and qualification in progress' do
-    expect(state.reload).to have_attributes(intent: nil, next_action: nil, fields: {}, authorized_actions: [], qualification_status: 'em_andamento')
+  it 'persists one state per opportunity with qualification in progress' do
+    expect(state.reload).to have_attributes(intent: nil, next_action: nil, authorized_actions: [], qualification_status: 'em_andamento')
     expect(opportunity.reload.lead_state).to eq(state)
-    expect(described_class.new(opportunity: opportunity)).not_to be_valid
+    expect { described_class.create!(opportunity: opportunity) }
+      .to(raise_error { |error| expect(error.class.name).to eq('ActiveRecord::RecordNotUnique') })
   end
 
   it 'requires an opportunity' do

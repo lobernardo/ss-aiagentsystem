@@ -30,7 +30,9 @@ class ScanSolo::AiTurn::PromptBuilder
     'private_note' => 'criar uma nota interna para a equipe',
     'cadence_signal' => 'sinalizar um evento de follow-up; use opt_out quando o cliente pedir para não receber mais mensagens',
     'human_handoff' => 'transferir a conversa para um atendente humano',
-    'proposal_generate' => 'solicitar a geração da proposta comercial'
+    'proposal_generate' => 'solicitar a geração da proposta comercial',
+    'lead_state_update' => 'registrar a intenção do cliente, a próxima ação, uma ação que o cliente pediu ou autorizou ' \
+                           'e se há risco de interpretação'
   }.freeze
 
   def self.call(config:, context:, offered_actions:)

@@ -13,7 +13,8 @@ class ScanSolo::Actions::Registry
     'proposal_approve' => ScanSolo::Actions::ProposalActions::Approve,
     'proposal_send' => ScanSolo::Actions::ProposalActions::Send,
     'cadence_signal' => ScanSolo::Actions::CadenceSignalAction,
-    'human_handoff' => ScanSolo::Actions::HandoffAction
+    'human_handoff' => ScanSolo::Actions::HandoffAction,
+    'lead_state_update' => ScanSolo::Actions::LeadStateUpdateAction
   }.freeze
 
   # Idempotent bulk sync of every handler's classification/schema into

@@ -27,6 +27,13 @@ RSpec.describe ScanSolo::AiTurn::InputGuardrail do
       expect(outcome[:forbidden_subject_hit]).to eq('concorrente XPTO')
     end
 
+    it 'registers and offers lead_state_update on every turn (lead state CT-03)' do
+      expect(described_class::ALL_ACTIONS).to include('lead_state_update')
+      expect(ScanSolo::Actions::Registry::HANDLERS).to include('lead_state_update' => ScanSolo::Actions::LeadStateUpdateAction)
+      expect(ScanSolo::AiTurn::PromptBuilder::ACTION_DESCRIPTIONS).to have_key('lead_state_update')
+      expect(described_class.call(config: config, content: 'ola')[:allowed_actions]).to include('lead_state_update')
+    end
+
     it 'never includes confirmation-only actions in the per-turn allowlist' do
       outcome = described_class.call(config: config, content: 'ola')
 

@@ -10,7 +10,7 @@
 class ScanSolo::AiTurn::InputGuardrail
   ALL_ACTIONS = %w[
     qualification_field stage_transition private_note proposal_generate
-    proposal_approve proposal_send cadence_signal human_handoff
+    proposal_approve proposal_send cadence_signal human_handoff lead_state_update
   ].freeze
 
   CONFIRMATION_ONLY_ACTIONS = %w[proposal_approve proposal_send].freeze

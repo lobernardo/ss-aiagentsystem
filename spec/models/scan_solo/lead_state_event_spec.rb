@@ -5,7 +5,7 @@ RSpec.describe ScanSolo::LeadStateEvent do
   let(:contact) { create(:contact, account: account) }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let(:opportunity) { ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation) }
-  let(:state) { ScanSolo::LeadState.create!(opportunity: opportunity) }
+  let(:state) { opportunity.lead_state }
   let(:event) { state.events.create!(subject: 'field', key: 'nome', new_value: 'Ana', new_status: 'confirmado') }
 
   it 'allows creating history with only a creation timestamp' do

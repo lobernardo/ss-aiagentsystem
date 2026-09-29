@@ -60,6 +60,7 @@ Rate limits (`config/initializers/rack_attack.rb`, per minute, env-overridable):
 
 - Response (`_pipeline_opportunity.json.jbuilder`): `id, account_id, contact_id, contact_name, conversation_id, owner_id, stage, last_customer_interaction_at, next_follow_up_at, created_at, updated_at, stage_history[{id, from_stage, to_stage, actor_type, actor_id, created_at}]`.
 - Errors: unknown stage (`"inventado"`) → 422; from `ganho`/`perdido` → 422; same `(target_stage, actor)` within 5s → 200 replay, no new history row.
+- `lead_state` (CT-01, additive): `GET`/`PATCH .../pipeline_opportunities/:id` and `POST .../stage_transitions` (replay included) also return `lead_state` (`_lead_state.json.jbuilder`, from `ScanSolo::LeadState::Projection`): `intent, qualification{status, completed_at}, next_action{value, recorded_at, source_message_id}|null, authorized_actions[{action, source_message_id, recorded_at}], blocks{identificacao, servico, local, escopo, execucao, comercial}[{key, label, value, status, classification, updated_at, source_message_id, source_attachment_id}], status{stage, confirmed_fields, missing_fields, next_action, owner_id, last_customer_interaction_at, next_follow_up_at}, history[]`. `GET .../pipeline_opportunities` (index) has no `lead_state`. Full schema: [`.spec/features/scansolo-agent-lead-state/openapi.yaml`](../../.spec/features/scansolo-agent-lead-state/openapi.yaml).
 
 ### Proposals
 

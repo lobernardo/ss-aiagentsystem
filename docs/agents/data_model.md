@@ -36,8 +36,10 @@
 |---|---|---|---|
 | `scan_solo_conversation_extensions` / `ConversationExtension` | `ai_control_state` enum `ai_active 0, handoff_requested 1, awaiting_human 2, human_active 3, paused 4, closed 5` | `belongs_to :conversation` | `conversation_id` unique; row lock serializes turn send |
 | `scan_solo_contact_extensions` / `ContactExtension` | `opted_out` default false, `opted_out_at`, `opted_out_source` | `belongs_to :contact` | `contact_id` unique |
-| `scan_solo_pipeline_opportunities` / `PipelineOpportunity` | `stage` enum `novo_lead 0 … perdido 7`, `owner_id`, `last_customer_interaction_at` | `belongs_to :account, :contact, :conversation, :owner (User)`; `has_many :stage_events, :cadence_enrollments`; `has_one :proposal` | `conversation_id` unique (1 opportunity per conversation) |
+| `scan_solo_pipeline_opportunities` / `PipelineOpportunity` | `stage` enum `novo_lead 0 … perdido 7`, `owner_id`, `last_customer_interaction_at` | `belongs_to :account, :contact, :conversation, :owner (User)`; `has_many :stage_events, :cadence_enrollments`; `has_one :proposal, :lead_state` | `conversation_id` unique (1 opportunity per conversation); `after_create` creates its lead state |
 | `scan_solo_pipeline_stage_events` / `PipelineStageEvent` | `from_stage`, `to_stage`, polymorphic `actor`, `created_at` only | `belongs_to :opportunity` | both stages ∈ opportunity stage keys |
+| `scan_solo_lead_states` / `LeadState` | `intent` (nullable, ∈ `INTENTS`), `qualification_status` enum `em_andamento 0, concluida 1`, `qualification_completed_at`, `next_action` (nullable, ∈ `NEXT_ACTIONS`), `next_action_recorded_at`, `next_action_source_message_id` (null only from the backfill), jsonb `authorized_actions` `[{action, source_message_id, recorded_at}]`, jsonb `fields` `{<34 catalog keys> => {value, status ∈ confirmado inferido faltante, updated_at, source_message_id, source_attachment_id}}` | `belongs_to :opportunity`; `has_many :events` | `opportunity_id` unique (1 state per opportunity); `faltante` ⇔ no value; written only by `LeadState::Writer` |
+| `scan_solo_lead_state_events` / `LeadStateEvent` | `subject` ∈ `field intent next_action`, `key`, `previous_value`, `previous_status`, `new_value`, `new_status`, `source_message_id`, `source_attachment_id`, `created_at` only | `belongs_to :lead_state` | append-only (`readonly?` once persisted); 1 event per change |
 
 #### AI turns and actions
 
@@ -77,6 +79,7 @@ Account 1-* AiAgentConfig(draft 1, published *)     Account 1-* TemplateMapping
 Conversation 1-1 ConversationExtension              Contact 1-1 ContactExtension
 Conversation 1-1 PipelineOpportunity *-1 Contact
 PipelineOpportunity 1-* PipelineStageEvent
+PipelineOpportunity 1-1 LeadState 1-* LeadStateEvent
 PipelineOpportunity 1-* CadenceEnrollment *-1 CadenceDefinition
 CadenceEnrollment 1-* CadenceAttempt *-0..1 Message
 PipelineOpportunity 1-0..1 Proposal 1-* ProposalVersion

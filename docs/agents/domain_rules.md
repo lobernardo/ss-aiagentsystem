@@ -51,24 +51,27 @@
 | Trigger no longer latest incoming message | `superseded` |
 | Forbidden subject in inbound content | `input guardrail blocked: forbidden subject` |
 
-- Output block → `failed` with `output validation blocked: <violation>`; exception → `failed` with `<ErrorClass>: <redacted message>` + `ChatwootExceptionTracker` tag `scansolo_correlation_id`.
+- Attempts (lead state RF-05, RF-11a): max 2 per turn (`MAX_ATTEMPTS`); 1 model call per attempt, outside any lock/transaction; the attempt's writes, actions, completion and reply run in `ScanSolo::AiTurn::AttemptRunner` under the pre-send lock (see [Lead state](#lead-state)).
+- Output block → `failed` with `output validation blocked: <violation>` (after the regeneration, for a regenerable violation); exception → `failed` with `<ErrorClass>: <redacted message>` + `ChatwootExceptionTracker` tag `scansolo_correlation_id`.
 - After the turn: if an active cadence enrollment predates the trigger message, run `ReplyCompletenessDetector` (skipped for `superseded` turns).
 
 ### Prompt construction
 
 `ScanSolo::AiTurn::PromptBuilder`:
 
-- pt-BR system message; section order: `Regras fixas de atendimento` → agent rules → hours → limits → transfer criteria → restricted info → playbook → required fields → contact → opportunity → knowledge → memory → actions → response format.
-- Fixed continuity rules are code constants (`CONTINUITY_RULES`), not config: never re-ask known info; answer the current intent first, then ask ≤1 missing field; greet only in the first reply.
+- pt-BR system message; section order: `Regras fixas de atendimento` → agent rules → hours → limits → transfer criteria → restricted info → playbook → required fields → contact → opportunity → `Estado do lead` → `Resumo dos dados` → knowledge → memory → actions → response format (→ `Correção obrigatória` on a regenerated attempt).
+- Fixed continuity rules are code constants (`CONTINUITY_RULES`), not config: never re-ask known info; answer the current intent first, then ask at most 2 fields, only among the eligible (missing) ones; a direct customer question is answered before any qualification question (RF-13); greet only in the first reply; never ask again to confirm an action already asked for or authorized (RF-24); list the asked keys in `asked_fields`.
+- `Estado do lead` (`ScanSolo::AiTurn::LeadStatePrompt`, from `ContextAssembler#lead_state_context` = `LeadState::Projection` + `summary_allowed`): stage, qualification status, intent + exactly 1 script line (`INTENT_SCRIPTS`), next action, authorized actions, confirmed fields, inferred fields `(inferido)`, required fields not confirmed, eligible keys in order — `nenhum` + "não faça perguntas de qualificação" once `concluida` (RF-22).
+- `Resumo dos dados`: full data summary allowed only when a stage event, the completion or a next action was recorded after the last AI reply (RF-25); otherwise not allowed, except when the reply itself produces one of those events.
 - `service_hours` is instruction only; AI answers 24/7.
-- History: last 20 `chat` messages, oldest first (`ContextAssembler::RECENT_MESSAGE_LIMIT`, `order(created_at: :desc).limit(20).reverse`); `customer` → `user`, `agent` → `assistant`.
-- Output schema `scansolo_turn`: `{reply: string, actions: [{action_id ∈ offered, params}]}`.
+- History: last 20 `chat` messages, oldest first (`ContextAssembler::RECENT_MESSAGE_LIMIT`, `order(created_at: :desc).limit(20).reverse`); `customer` → `user`, `agent` → `assistant`. Each entry describes its attachments (`[Anexo PDF: <file>, extração: sim|não]`, `[Anexo localização: lat, long, link]`, …) and URLs (`[Links: …]`); only a message with no text and no attachment becomes `[mensagem sem texto]` (RF-16).
+- Output schema `scansolo_turn` (CT-02): `{reply: string, actions: [{action_id ∈ offered, params}], asked_fields: string[], summary: boolean}`, all 4 required; a missing `asked_fields`/`summary` or a non-boolean `summary` → `ModelInvoker::InvalidOutputError`.
 - `conversation_id` / `opportunity_id` removed from the params schema shown to the model; orchestrator injects them from the turn.
 - Whole payload passes through `ScanSolo::AiTurn::PromptRedactor`.
 
 ### Input and output guardrails
 
-- `InputGuardrail`: case-insensitive substring match on `config.forbidden_subjects` blocks the turn. Offered actions = all 8 minus `proposal_approve`, `proposal_send`; minus `proposal_generate` when `Proposal::Integration.configured?` is false.
+- `InputGuardrail`: case-insensitive substring match on `config.forbidden_subjects` blocks the turn. Offered actions = all 9 minus `proposal_approve`, `proposal_send`; minus `proposal_generate` when `Proposal::Integration.configured?` is false.
 - `OutputValidator` blocks when:
 
 | Violation | Pattern |
@@ -78,6 +81,16 @@
 | `proposal_sent` | `/proposta (foi )?enviada\|enviei a proposta/i` |
 | `delivery_status` | `/pedido entregue\|entrega confirmada\|status da entrega/i` |
 
+- Lead state violations (RF-11, RF-12, RF-22), checked after the ones above against the projection of the state already changed by the attempt and the model's `asked_fields`, in order:
+
+| Violation | Rule |
+|---|---|
+| `qualification_closed` | qualification `concluida` and `asked_fields` not empty |
+| `question_limit` | more than 2 `asked_fields` (`QUESTION_LIMIT`) |
+| `confirmed_field_question` | a `confirmado` key in `asked_fields`, or a sentence ending in `?` containing (normalized) the label or a 2+-token alias of a `confirmado` field |
+| `field_not_missing` | an asked key outside the catalog or not `faltante` |
+
+- `REGENERABLE_VIOLATIONS` = those 4: a 1st-attempt block rolls the attempt back, stores `context_snapshot.output_regeneration.first_attempt_violation` and calls the model once more with the violation in `Correção obrigatória`; a 2nd block → `failed` with the 2nd violation. Any other violation fails at once, without regeneration (RF-11a, CT-04).
 - Claims pass only when `validated_claims[claim]` is set; orchestrator passes none, so any match blocks.
 
 ### Action registry and executor
@@ -94,50 +107,58 @@
 | `proposal_send` | `ProposalActions::Send` | requires_confirmation | `opportunity_id` |
 | `cadence_signal` | `CadenceSignalAction` | automatic | `opportunity_id`, `signal` ∈ `full_reply partial_reply stage_changed won lost opt_out manual_pause` |
 | `human_handoff` | `HandoffAction` | automatic | `conversation_id`, `reason` |
+| `lead_state_update` | `LeadStateUpdateAction` | automatic | `opportunity_id`, `intent` ∈ `LeadState::INTENTS`, `next_action` / `authorized_action` ∈ `LeadState::NEXT_ACTIONS`, `interpretation_risk` |
 
 - Every schema is closed (`additionalProperties: false`); `JSONSchemer` rejects extra keys → `InvalidParamsError`.
 - Unregistered / `disabled` / not-offered action → `UnregisteredActionError`; raises roll back all earlier actions and the reply (0 messages).
 - Repeat `idempotency_key` never re-runs an executed side effect; `requires_confirmation` stays `pending` until a call with `confirmed: true`.
 - Executed → `AuditEvent` `agent_action.<action_id>` linked on the execution row.
 - `.call` self-registers the action row in `scan_solo_agent_actions`.
+- `lead_state_update` (CT-03) only records through `LeadState::Writer`: a new next action or authorization runs no side effect (no proposal, handoff, e-mail or AI control change); `interpretation_risk` is returned as evidence only.
 - Extend: add handler class with `CLASSIFICATION` + `SCHEMA`, add to `HANDLERS`, `InputGuardrail::ALL_ACTIONS`, `PromptBuilder::ACTION_DESCRIPTIONS`.
 
 ### Qualification field resolution
 
-`ScanSolo::Qualification::FieldResolver` — only reader of "field satisfied?"; consumers: `QualificationFieldAction`, `ContextAssembler`, `ReplyCompletenessDetector`, `HandoffService`, `Proposal::MakeProvider` (and `GenerateService` per commit 34ed058791).
+`ScanSolo::Qualification::FieldResolver` — only reader of "field satisfied?"; consumers: `QualificationFieldAction`, `ContextAssembler`, `ReplyCompletenessDetector`, `HandoffService`, `Proposal::MakeProvider`, `Proposal::GenerateService`. None of them reads `lead_state.fields` directly.
 
+- Satisfied ⇔ the canonical key is `confirmado` in the opportunity's lead state (RF-08). A value only on the `Contact` (seeded `inferido`) never satisfies; `inferido` never counts.
+- Closed catalog `CATALOG` (RF-02): 34 keys in 6 blocks (`identificacao`, `servico`, `local`, `escopo`, `execucao`, `comercial`), in qualification question order, each with a pt-BR label.
 - Normalize: transliterate, trim, downcase, split on `space _ / -`, join `_`.
-- Canonical alias table (`ALIASES`):
-
-| Canonical | Accepted spellings |
-|---|---|
-| `nome` | Nome, nome completo, name |
-| `telefone` | Telefone, WhatsApp |
-| `email` | E-mail, email |
-| `tipo_intervencao` | Objetivo do serviço, tipo de intervenção, escopo |
-| `cidade_uf` | Cidade / UF, cidade |
-| `endereco_obra` | Endereço da obra, endereço |
-| `area` | Área ou extensão, área, area_total |
-| `profundidade` | Profundidade de interesse, profundidade |
-| `prazo_desejado` | Prazo desejado, prazo, urgência |
-| `empresa` | Empresa, razão social, company |
-| `integracao_seguranca` | Integração de segurança |
-
-- Label without alias → its normalized form is the canonical key.
-- `nome`/`email`/`telefone` read native `name`/`email`/`phone_number` first, fall back to `custom_attributes`.
+- `ALIASES`: every catalog key with its accepted spellings (catalog label included, e.g. `nome` ← Nome, nome completo, name, Contato; `area` ← Área ou extensão, área, area_total; `empresa` ← Empresa, razão social, company, Empresa / razão social); no normalized spelling maps to 2 keys. `"Prazo para proposta"` → `prazo_proposta` (≠ `prazo_desejado`), `"E-mail para envio"` → `email_envio_proposta` (≠ `email`).
+- A config label that does not resolve to a catalog key is required and never satisfied (fail-closed, status `faltante`): it blocks the completion and the proposal gate (RF-15, RNF-09).
+- Value precedence: lead state (when not `faltante`) → native `name`/`email`/`phone_number` for `nome`/`email`/`telefone` → `custom_attributes`.
+- `proposal_gate_missing_labels` (RF-08 gate, used by `GenerateService`): `em_andamento` → every required field not `confirmado`; `concluida` → only required fields still `faltante`.
 - Custom key precedence: exact canonical key > exact config label > alias-table order > lexicographic.
 - `make_qualification`: 10 `MAKE_KEYS` evaluated regardless of config; only present values sent.
 - Pure read: no messages, LLM, HTTP or writes.
-- Extend: add a row to `ALIASES` (and `MAKE_KEYS` if Make needs it).
+- Extend: add the key to `CATALOG` and `ALIASES` (and `MAKE_KEYS` if Make needs it).
 
 ### Qualification writes and auto-transition
 
 `ScanSolo::Actions::QualificationFieldAction`:
 
-- Native key → written only when column blank and valid; invalid value restored and reported (`not_applied_fields`); already present → `native_already_present`.
-- Required non-native key → written under canonical `custom_attributes` key; other keys → `unrecognized_fields`, never persisted.
+- Each field is a string (stated by the customer → `confirmado`) or `{value, status}` with `status` ∈ `confirmado inferido`.
+- Catalog key → written to the lead state through `LeadState::Writer` with the turn's message as origin: a new or corrected value becomes current and the previous one goes to history (RF-06); `inferido` over `confirmado` is kept and reported as `confirmed_value_kept` (RF-07).
+- Mirror on the Contact as before: native key → written only when column blank and valid; invalid value restored and reported (`not_applied_fields`); already present → `native_already_present`. Other applied keys merged under the canonical `custom_attributes` key.
+- A required config label outside the catalog is only mirrored; other keys → `unrecognized_fields`, never persisted.
 - 1 `contact.save!` per call.
-- `em_contato` + any accepted required key → `em_qualificacao`; `em_qualificacao` + all required satisfied → `qualificado`.
+- `em_contato` + any accepted required key → `em_qualificacao`. `qualificado` is reached only through `LeadState::CompletionService` (never by this action).
+
+### Lead state
+
+`ScanSolo::LeadState` (1 per `PipelineOpportunity`) + append-only `ScanSolo::LeadStateEvent`; `ScanSolo::LeadState::Writer` is the sole writer of both tables.
+
+- Birth (RF-01): `InitializeService` from the opportunity's `after_create`: 34 catalog fields `faltante`, then each value on the Contact (native column or `custom_attributes`) written `inferido`; qualification `em_andamento`. An existing state is never touched.
+- Field status (RF-07): customer statement → `confirmado`; model deduction, attachment, location or link → `inferido`; `inferido` never replaces `confirmado`. Every change of value/status, intent or next action appends exactly 1 event (`subject` ∈ `field intent next_action`); events are never updated or deleted (`readonly?`).
+- Classification (RF-15): `obrigatorio` iff the key comes from the published `required_qualification_fields`, else `complementar`, for any intent or stage. The intent only picks the default next action (`DEFAULT_NEXT_ACTION_BY_INTENT`) and 1 prompt script line.
+- Projection (`LeadState::Projection`, CT-01, read-only): 6 blocks, derived `status` block (`missing_fields` from `FieldResolver`), history, and eligible keys = `faltante` fields, required before complementary, in catalog order; none once `concluida`. Current-message extractions overlay in memory, so they are not eligible (RF-17).
+- Attachments and links (`AiTurn::AttachmentReader`, before the model call, no LLM/HTTP): location → `link_local`; PDF ≤ 10 MB and ≤ 10 pages → `cnpj`, `empresa`, `endereco_obra` via `pdf-reader` (no OCR); a map URL in the text → `link_local` with no attachment origin; no URL is ever fetched. Failures (`too_large`, `too_many_pages`, `no_extractable_text`, `extraction_error: <class>`, `unsupported_type`) go to `context_snapshot.attachment_extraction` (RF-20).
+- Attempt (`AiTurn::AttemptRunner`, in a savepoint under the pre-send lock): extractions written `inferido` → actions → `CompletionService` → `OutputValidator` on the reloaded projection → blocked: rollback (0 changes, 0 messages) / approved: `ResponseSender`.
+- Completion (RF-21, `LeadState::CompletionService`): the first time every required field is `confirmado` (an empty required list never concludes): qualification `concluida` (never reopens), stage → `qualificado` through `StageTransitionService` (`novo_lead`/`em_contato` pass through `em_qualificacao`, 1 `PipelineStageEvent` each; at or past `qualificado` keeps the stage), next action = the one recorded this turn or the intent default, 1 `AuditEvent` `lead_state.qualification_completed` with the turn correlation id.
+- While `concluida` (RF-22): no eligible field, any `asked_fields` → `qualification_closed`.
+- Authorizations (RF-24): `lead_state_update authorized_action` appends `{action, source_message_id, recorded_at}` once per action; the prompt lists it as already authorized.
+- Backfill (RF-01a, `rake scansolo:backfill_lead_states`, additive and idempotent): creates the missing states with the same seeding (never `confirmado`); stage ≥ `qualificado` (`qualificado proposta_enviada negociacao ganho perdido`) → `concluida` at the backfill instant + next action `aguardar_cliente` with null origin; earlier stages → `em_andamento`, no next action. No stage transition, `PipelineStageEvent`, `AuditEvent` or Contact write; a backfilled `concluida` state is never requalified (RF-22).
+- Proposal gate (RF-08, `GenerateService` via `FieldResolver#proposal_gate_missing_labels`): `em_andamento` blocks on any required field not `confirmado`; `concluida` blocks only on required fields still `faltante` (an `inferido` one passes).
 
 ### Pipeline stages
 

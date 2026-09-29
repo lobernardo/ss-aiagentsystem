@@ -8,6 +8,10 @@ require 'rails_helper'
 # and assertions are made only on what would reach the provider
 # (`MockLlmProvider.last_payload`) and on what the fixture `qualification_field`
 # action saved -- never on the mock's reply text.
+#
+# Lead state RF-08: a field is satisfied only when `confirmado` in the lead
+# state, so a name that only exists on the Contact (seeded `inferido`) stays
+# in the missing fields.
 RSpec.describe 'ScanSolo qualification continuity' do # rubocop:disable RSpec/DescribeClass
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:inbox) { create(:inbox, account: account) }
@@ -45,13 +49,13 @@ RSpec.describe 'ScanSolo qualification continuity' do # rubocop:disable RSpec/De
     block.lines(chomp: true).map { |line| line.delete_prefix('- ') }
   end
 
-  it 'sends the fixed rules, omits a native name from the missing fields and keeps a technical question in the history' do
+  it 'sends the fixed rules, keeps a native-only name missing (lead state RF-08) and a technical question in the history' do
     turn = run_turn('Boa tarde! Vocês conseguem escanear perto de um tubo de PVC enterrado?')
 
     expect(turn).to be_succeeded
     payload = ScanSolo::TestMode::MockLlmProvider.last_payload
     expect(payload[:system]).to include(*ScanSolo::AiTurn::PromptBuilder::CONTINUITY_RULES)
-    expect(payload_missing_fields).to eq(labels - ['Nome'])
+    expect(payload_missing_fields).to eq(labels)
     expect(payload[:messages]).to include(role: 'user', content: 'Boa tarde! Vocês conseguem escanear perto de um tubo de PVC enterrado?')
   end
 
@@ -60,7 +64,7 @@ RSpec.describe 'ScanSolo qualification continuity' do # rubocop:disable RSpec/De
 
     run_turn('Qual o próximo passo?')
 
-    expect(payload_missing_fields).to eq(labels - ['Nome', 'Cidade / UF', 'Área ou extensão'])
+    expect(payload_missing_fields).to eq(labels - ['Cidade / UF', 'Área ou extensão'])
     expect(opportunity.reload).to be_em_qualificacao
   end
 
@@ -71,7 +75,7 @@ RSpec.describe 'ScanSolo qualification continuity' do # rubocop:disable RSpec/De
     expect(contact.reload.custom_attributes).to include('prazo_desejado' => 'amanhã', 'cidade_uf' => 'Rio/RJ', 'area' => '800 m²')
 
     run_turn('Certo')
-    expect(payload_missing_fields).to eq(labels - ['Nome', 'Cidade / UF', 'Área ou extensão', 'Prazo desejado'])
+    expect(payload_missing_fields).to eq(labels - ['Cidade / UF', 'Área ou extensão', 'Prazo desejado'])
   end
 
   it 'does not prompt again for any satisfied field when the conversation returns to the AI after a handoff' do
@@ -83,7 +87,7 @@ RSpec.describe 'ScanSolo qualification continuity' do # rubocop:disable RSpec/De
     turn = run_turn('Voltei, pode continuar?')
 
     expect(turn).to be_succeeded
-    expect(payload_missing_fields).to eq(labels - ['Nome', 'Cidade / UF', 'Empresa'])
+    expect(payload_missing_fields).to eq(labels - ['Cidade / UF', 'Empresa'])
     expect(turn.context_snapshot['pipeline_context']['missing_fields']).to eq(payload_missing_fields)
   end
 

@@ -16,7 +16,7 @@ require 'rails_helper'
 # docs/architecture/SCANSOLO_ACCEPTANCE_TRACEABILITY.md (T77) for the full
 # item-by-item mapping to every automated test that covers it, including the
 # dedicated unit/request specs this suite deliberately does not duplicate.
-RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
+RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do # rubocop:disable RSpec/DescribeClass
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:contact) { create(:contact, account: account) }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
@@ -131,12 +131,10 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
   end
 
   describe 'item 7: AI handoff creates a private summary and suppresses further AI' do
-    let!(:opportunity) do
-      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
-    end
     let(:agent) { create(:user, account: account, role: :agent) }
 
     before do
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
       publish_agent_config!(required_qualification_fields: %w[budget])
       create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact)
     end
@@ -196,10 +194,11 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
     let(:cadence_definition) { ScanSolo::CadenceDefinition.create!(stage: 'em_qualificacao', version: 1, offsets: [24, 48]) }
     let!(:enrollment) { ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: cadence_definition) }
 
-    before { publish_agent_config!(required_qualification_fields: %w[budget]) }
+    before { publish_agent_config!(required_qualification_fields: ['Área']) }
 
     it 'stops the whole pending schedule once the customer supplies every required field' do
-      contact.update!(custom_attributes: { 'budget' => '1000' })
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+                                 .apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil)
 
       result = ScanSolo::Cadence::ReplyCompletenessDetector.call(opportunity: opportunity)
 
@@ -439,7 +438,7 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do
   end
 
   describe 'item 19: no production token/key/number is required for the test suite' do
-    it 'ran this whole suite without any production credential and made zero real outbound request' do
+    it 'ran this whole suite without any production credential and made zero real outbound request' do # rubocop:disable RSpec/NoExpectationExample
       scansolo_assert_no_production_credentials_present!
       scansolo_assert_zero_real_outbound_requests!
     end

@@ -53,4 +53,35 @@ RSpec.describe ScanSolo::PipelineOpportunity do
       expect(opportunity.reload.last_customer_interaction_at).to be_within(1.second).of(timestamp)
     end
   end
+
+  describe 'lead_source (RF-01)' do
+    it 'accepts nil, website and manual' do
+      [nil, 'website', 'manual'].each do |source|
+        expect(described_class.new(account: account, contact: contact, conversation: conversation, lead_source: source)).to be_valid
+      end
+    end
+
+    it 'rejects a value outside the vocabulary' do
+      record = described_class.new(account: account, contact: contact, conversation: conversation, lead_source: 'site')
+
+      expect(record).not_to be_valid
+      expect(record.errors[:lead_source]).to be_present
+    end
+  end
+
+  describe '#conversation_extension' do
+    it 'resolves through the shared conversation id' do
+      extension = ScanSolo::ConversationExtension.create!(conversation: conversation, ai_control_state: :awaiting_human)
+
+      expect(described_class.find(opportunity.id).conversation_extension).to eq(extension)
+    end
+  end
+
+  describe '#quote_request' do
+    it 'returns the opportunity request' do
+      quote_request = ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid)
+
+      expect(opportunity.reload.quote_request).to eq(quote_request)
+    end
+  end
 end

@@ -35,4 +35,14 @@ RSpec.describe ScanSolo::TemplateMapping do
     mapping.stage = 'ganho'
     expect(mapping).not_to be_valid
   end
+
+  it 'accepts the CT-09 slots only with a null step' do
+    %w[lead_manual_inicial proposta_acompanhamento].each do |slot|
+      mapping.assign_attributes(stage: slot, step: nil)
+      expect(mapping).to be_valid
+
+      mapping.step = 1
+      expect(mapping).not_to be_valid
+    end
+  end
 end

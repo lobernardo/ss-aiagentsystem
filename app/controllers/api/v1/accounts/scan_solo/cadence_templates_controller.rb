@@ -1,5 +1,5 @@
 # CT-03: template mapping and availability per cadence stage/step and for
-# the proposal send (`step: null`). Reads are open to every account user;
+# the CT-09 single-template slots (`step: null`). Reads are open to every account user;
 # writes are administrator-only (RF-48). The parameter sources, stage and
 # step are validated here so a malformed mapping returns 422 before it
 # reaches the upsert service.
@@ -24,7 +24,8 @@ class Api::V1::Accounts::ScanSolo::CadenceTemplatesController < Api::V1::Account
 
   def mapping_errors
     errors = []
-    errors << 'stage is not a cadence stage' unless ::ScanSolo::TemplateMapping::STAGES.include?(params[:stage])
+    stages = ::ScanSolo::TemplateMapping::STAGES | ::ScanSolo::TemplateMapping::SINGLE_TEMPLATES.keys
+    errors << 'stage is not a cadence stage or template slot' unless stages.include?(params[:stage])
     errors << 'step does not exist for this stage' unless valid_step?
     errors << 'params must be an array' unless params[:params].is_a?(Array)
     Array(params[:params]).each do |param|
@@ -33,10 +34,10 @@ class Api::V1::Accounts::ScanSolo::CadenceTemplatesController < Api::V1::Account
     errors
   end
 
-  # `step: null` is the proposal send row; any other step must exist in the stage's active definition.
+  # `step: null` is a single-template slot row; any other step must exist in the stage's active definition.
   def valid_step?
     step = params[:step]
-    return params[:stage] == 'proposta_enviada' if step.nil?
+    return ::ScanSolo::TemplateMapping::SINGLE_TEMPLATES.key?(params[:stage]) if step.nil?
 
     definition = ::ScanSolo::CadenceDefinition.current_for(params[:stage])
     step.is_a?(Integer) && definition.present? && step.between?(1, definition.attempt_count)

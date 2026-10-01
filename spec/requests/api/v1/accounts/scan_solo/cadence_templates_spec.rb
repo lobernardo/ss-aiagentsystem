@@ -31,12 +31,16 @@ RSpec.describe 'ScanSolo Cadence Templates API', type: :request do
                                         language: 'pt_BR', params: [{ 'source' => 'contact_first_name' }])
     end
 
-    it 'returns one row per active stage/step plus the proposal send row with availability and Meta status' do
+    it 'returns one row per active stage/step plus the CT-09 slot rows with availability and Meta status' do
       get path, headers: agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:ok)
       rows = response.parsed_body.index_by { |row| [row['stage'], row['step']] }
-      expect(rows.keys).to contain_exactly(['novo_lead', 1], ['novo_lead', 2], ['em_contato', 1], ['proposta_enviada', nil])
+      # CT-09 (RNF-11): the manual-lead and follow-up slots join the proposal send row.
+      expect(rows.keys).to contain_exactly(
+        ['novo_lead', 1], ['novo_lead', 2], ['em_contato', 1],
+        ['proposta_enviada', nil], ['lead_manual_inicial', nil], ['proposta_acompanhamento', nil]
+      )
 
       expect(rows[['novo_lead', 1]]).to include(
         'template_name' => 'scansolo_cadence_novo_lead_v1_step1', 'language' => 'pt_BR', 'mapped' => false,
@@ -50,6 +54,19 @@ RSpec.describe 'ScanSolo Cadence Templates API', type: :request do
       expect(rows[['em_contato', 1]]).to include('availability' => 'blocked', 'block_reason' => 'template_missing', 'meta_status' => nil)
       expect(rows[['proposta_enviada', nil]]).to include(
         'template_name' => 'scansolo_proposal_send', 'availability' => 'blocked', 'block_reason' => 'template_missing'
+      )
+    end
+
+    it 'lists the slot rows last, in CT-09 order, with their naming conventions' do
+      get path, headers: agent.create_new_auth_token, as: :json
+
+      slots = response.parsed_body.last(3)
+      expect(slots.pluck('stage', 'step', 'template_name', 'mapped')).to eq(
+        [
+          ['proposta_enviada', nil, 'scansolo_proposal_send', false],
+          ['lead_manual_inicial', nil, 'scansolo_lead_manual_inicial', false],
+          ['proposta_acompanhamento', nil, 'scansolo_proposta_acompanhamento', false]
+        ]
       )
     end
   end
@@ -83,6 +100,25 @@ RSpec.describe 'ScanSolo Cadence Templates API', type: :request do
       expect(response).to have_http_status(:ok)
       expect(response.parsed_body['step']).to be_nil
       expect(ScanSolo::TemplateMapping.find_by!(account: account, stage: 'proposta_enviada', step: nil).template_name).to eq('scansolo_boas_vindas')
+    end
+
+    it 'maps the post-proposal follow-up slot with step null' do
+      put path, params: payload.merge(stage: 'proposta_acompanhamento', step: nil, template_name: 'scansolo_acompanhamento'),
+                headers: admin.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to include('stage' => 'proposta_acompanhamento', 'step' => nil, 'template_name' => 'scansolo_acompanhamento',
+                                              'mapped' => true)
+    end
+
+    it 'rejects a step on a single-template slot and a null step on a cadence stage with 422' do
+      put path, params: payload.merge(stage: 'lead_manual_inicial', step: 1), headers: admin.create_new_auth_token, as: :json
+      expect(response).to have_http_status(:unprocessable_entity)
+
+      put path, params: payload.merge(step: nil), headers: admin.create_new_auth_token, as: :json
+      expect(response).to have_http_status(:unprocessable_entity)
+
+      expect(ScanSolo::TemplateMapping.count).to eq(0)
     end
 
     it 'rejects a non-allowlisted parameter source with 422' do

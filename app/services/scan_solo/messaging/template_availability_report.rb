@@ -1,13 +1,12 @@
 # RF-32/RF-33, UI-12: one row per (stage, step) of every active cadence
-# definition plus the proposal send row (`step: nil`), each with the
+# definition plus one row per CT-09 single-template slot (`step: nil`, in
+# ScanSolo::TemplateMapping::SINGLE_TEMPLATES order), each with the
 # resolved template (ScanSolo::Messaging::TemplateResolver) and its
 # availability evaluated by ScanSolo::Cadence::TemplateAvailabilityGuard
 # against the account's allowlisted WhatsApp inboxes. With several
 # allowlisted WhatsApp inboxes the first blocking one is reported, since a
 # send through it would be refused.
 class ScanSolo::Messaging::TemplateAvailabilityReport
-  PROPOSAL_STAGE = 'proposta_enviada'.freeze
-
   def self.call(account:)
     new(account: account).call
   end
@@ -28,7 +27,7 @@ class ScanSolo::Messaging::TemplateAvailabilityReport
       (1..definition.attempt_count).map { |step| row(stage, step) }
     end
 
-    cadence_rows + [row(PROPOSAL_STAGE, nil)]
+    cadence_rows + ScanSolo::TemplateMapping::SINGLE_TEMPLATES.keys.map { |stage| row(stage, nil) }
   end
 
   def row(stage, step)

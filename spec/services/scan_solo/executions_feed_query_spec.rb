@@ -39,11 +39,14 @@ RSpec.describe ScanSolo::ExecutionsFeedQuery do
     expect(feed.cadence_evidence.first.attempts).to contain_exactly(attempt)
   end
 
-  it 'returns one template availability row per stage step plus the proposal send' do
+  it 'returns one template availability row per stage step plus the CT-09 slot rows' do
     definition
 
     rows = feed.template_availability
-    expect(rows.pluck(:stage, :step)).to eq([['em_contato', 1], ['em_contato', 2], ['proposta_enviada', nil]])
+    # CT-09 (RNF-11): the manual-lead and follow-up slots join the proposal send row.
+    expect(rows.pluck(:stage, :step)).to eq(
+      [['em_contato', 1], ['em_contato', 2], ['proposta_enviada', nil], ['lead_manual_inicial', nil], ['proposta_acompanhamento', nil]]
+    )
     expect(rows.first).to include(:availability, :block_reason, :meta_status, :last_synced_at)
   end
 

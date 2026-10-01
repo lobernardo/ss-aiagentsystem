@@ -691,3 +691,89 @@ en:
         button: 'Resend confirmation email'
         sent: 'Confirmation email sent.'
         already_confirmed: 'User is already confirmed.'
+  scan_solo:
+    quote:
+      email:
+        subject: 'Solicitação de orçamento #%{opportunity_id} — %{name}'
+        sections:
+          identification: 'Identificação'
+          collected_data: 'Dados coletados'
+          instructions: 'Instruções de resposta'
+        identification:
+          opportunity: 'Oportunidade'
+          name: 'Nome'
+          company: 'Empresa'
+          phone: 'Telefone'
+          email: 'E-mail'
+          origin: 'Origem'
+          owner: 'Responsável'
+          stage: 'Etapa'
+          conversation_link: 'Conversa no WhatsApp'
+        not_informed: 'Não informado'
+        to_confirm: '(a confirmar)'
+        origin:
+          website: 'Site/WhatsApp'
+          manual: 'Comercial'
+          none: 'Não informada'
+        instructions: >-
+          Responda este e-mail preenchendo o bloco abaixo, mantendo cada rótulo no início da linha.
+          Valor total, prazo/cronograma, escopo/atividades e condições de pagamento são obrigatórios;
+          observações comerciais são opcionais. Informe o valor no formato R$ 12.500,00.
+      block:
+        start: '=== RESPOSTA DO ORÇAMENTO ==='
+        end: '=== FIM ==='
+        labels:
+          total_value: 'Valor total'
+          schedule: 'Prazo/cronograma'
+          scope: 'Escopo/atividades'
+          payment_terms: 'Condições de pagamento'
+          notes: 'Observações comerciais'
+      correction:
+        subject: 'Correção da solicitação de orçamento #%{opportunity_id}'
+        intro: 'Não foi possível ler a resposta do orçamento. Corrija os campos abaixo e responda este e-mail com o bloco preenchido.'
+        field_problem: '%{label}: ausente ou inválido'
+      customer_notice: 'Recebi todas as informações, obrigado! Nosso comercial já está preparando seu orçamento. Assim que estiver pronto, envio por aqui.'
+      resend:
+        notice: 'Reenvio da solicitação de orçamento.'
+        errors:
+          quote_request_closed: 'A solicitação de orçamento já foi respondida.'
+          quote_request_not_eligible: 'A oportunidade não tem solicitação de orçamento elegível para reenvio.'
+          quote_inbox_misconfigured: 'O inbox de e-mail de orçamento não está configurado corretamente.'
+    negotiation:
+      standard_reply: 'Vou verificar isso com nosso comercial. Só um momento.'
+      email:
+        subject: 'Pedido de negociação #%{opportunity_id} — %{name}'
+        labels:
+          name: 'Nome'
+          company: 'Empresa'
+          phone: 'Telefone'
+          opportunity: 'Oportunidade'
+          stage: 'Etapa'
+          conversation_link: 'Conversa no Chatwoot'
+          request_summary: 'Resumo do pedido'
+          proposal: 'Proposta vigente'
+          current_value: 'Valor vigente'
+          recent_messages: 'Últimas mensagens'
+        proposal_details: 'Versão %{version_number}, número %{proposal_number}, status %{status}, PDF: %{document_url}'
+        no_proposal: 'sem proposta'
+        senders:
+          customer: 'Cliente'
+          agent: 'Atendimento'
+    amount_in_words:
+      units: ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove']
+      teens: ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove']
+      tens: ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa']
+      hundreds: ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos', 'seiscentos', 'setecentos', 'oitocentos', 'novecentos']
+      one_hundred: 'cem'
+      thousand: 'mil'
+      million:
+        one: 'milhão'
+        other: 'milhões'
+      connector: 'e'
+      currency_preposition: 'de'
+      currency:
+        one: 'real'
+        other: 'reais'
+      cents:
+        one: 'centavo'
+        other: 'centavos'

@@ -50,7 +50,8 @@ RSpec.describe 'ScanSolo migrations' do
     # check) must also cover this migration, since it is the one ScanSolo migration
     # that touches a pre-existing Community table (accounts) rather than creating a
     # new scan_solo_* table -- RF-95/RNF-04 apply to it exactly the same way.
-    expect(scansolo_migration_files.length).to eq(30)
+    # scansolo-operacao-centralizada T01 (RNF-11) added 5 additive migrations.
+    expect(scansolo_migration_files.length).to eq(35)
   end
 
   it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do

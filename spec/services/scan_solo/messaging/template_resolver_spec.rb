@@ -77,4 +77,63 @@ RSpec.describe ScanSolo::Messaging::TemplateResolver do
 
     expect(described_class.definition_for(account: account, stage: 'em_contato', step: 1).name).to eq('scansolo_cadence_em_contato_v2_step1')
   end
+
+  describe 'single-template slots (CT-09)' do
+    it 'resolves the manual lead initial template by convention when unmapped' do
+      template = described_class.call(account: account, stage: 'lead_manual_inicial', step: nil, opportunity: opportunity)
+
+      expect(template).not_to be_mapped
+      expect(template.name).to eq('scansolo_lead_manual_inicial')
+    end
+
+    it 'resolves the manual lead initial template from its mapping' do
+      ScanSolo::TemplateMapping.create!(account: account, stage: 'lead_manual_inicial', step: nil, template_name: 'scansolo_ola_comercial',
+                                        language: 'pt_BR', params: [{ 'source' => 'contact_first_name' }])
+
+      template = described_class.call(account: account, stage: 'lead_manual_inicial', step: nil, opportunity: opportunity)
+
+      expect(template).to be_mapped
+      expect(template.name).to eq('scansolo_ola_comercial')
+      expect(template.processed_params).to eq('body' => { '1' => 'Maria' })
+    end
+
+    it 'resolves the post-proposal follow-up by convention when unmapped' do
+      expect(described_class.definition_for(account: account, stage: 'proposta_acompanhamento', step: nil).name)
+        .to eq('scansolo_proposta_acompanhamento')
+    end
+  end
+
+  describe 'document header (CT-09 b, RF-29)' do
+    let(:document) { { url: 'http://0.0.0.0:3000/rails/active_storage/blobs/redirect/abc/SS-2026-000001.pdf', name: 'SS-2026-000001.pdf' } }
+
+    before do
+      ScanSolo::TemplateMapping.create!(account: account, stage: 'proposta_enviada', step: nil, template_name: 'scansolo_proposta',
+                                        language: 'pt_BR', params: [{ 'source' => 'contact_first_name' }])
+    end
+
+    it 'adds the native document header next to the body' do
+      template = described_class.call(account: account, stage: 'proposta_enviada', step: nil, opportunity: opportunity, document: document)
+
+      expect(template.processed_params).to eq(
+        'body' => { '1' => 'Maria' },
+        'header' => { 'media_url' => document[:url], 'media_type' => 'document', 'media_name' => 'SS-2026-000001.pdf' }
+      )
+    end
+
+    it 'adds only the header when the template has no body params' do
+      ScanSolo::TemplateMapping.find_by!(account: account, stage: 'proposta_enviada').update!(params: [])
+
+      template = described_class.call(account: account, stage: 'proposta_enviada', step: nil, opportunity: opportunity, document: document)
+
+      expect(template.processed_params).to eq(
+        'header' => { 'media_url' => document[:url], 'media_type' => 'document', 'media_name' => 'SS-2026-000001.pdf' }
+      )
+    end
+
+    it 'keeps processed_params unchanged without a document' do
+      template = described_class.call(account: account, stage: 'proposta_enviada', step: nil, opportunity: opportunity)
+
+      expect(template.processed_params).to eq('body' => { '1' => 'Maria' })
+    end
+  end
 end

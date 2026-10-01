@@ -26,19 +26,31 @@ class ScanSolo::TemplateMapping < ApplicationRecord
 
   PARAM_SOURCES = %w[contact_name contact_first_name agent_name stage_label static].freeze
   STAGES = %w[novo_lead em_contato em_qualificacao proposta_enviada].freeze
+  # CT-09: single-template slots (`step: nil`) and their naming conventions --
+  # the proposal send (b), the manual lead's initial template (a) and the
+  # post-proposal follow-up (c).
+  SINGLE_TEMPLATES = {
+    'proposta_enviada' => 'scansolo_proposal_send',
+    'lead_manual_inicial' => 'scansolo_lead_manual_inicial',
+    'proposta_acompanhamento' => 'scansolo_proposta_acompanhamento'
+  }.freeze
 
   belongs_to :account
 
-  validates :stage, inclusion: { in: STAGES }, uniqueness: { scope: %i[account_id step] }
+  validates :stage, inclusion: { in: STAGES | SINGLE_TEMPLATES.keys }, uniqueness: { scope: %i[account_id step] }
   validates :template_name, :language, presence: true
   validates :step, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
-  validate :proposal_step
+  validate :step_matches_stage
   validate :parameter_sources
 
   private
 
-  def proposal_step
-    errors.add(:step, 'is required for cadence stages') if step.nil? && stage != 'proposta_enviada'
+  def step_matches_stage
+    if step.nil?
+      errors.add(:step, 'is required for cadence stages') unless SINGLE_TEMPLATES.key?(stage)
+    elsif STAGES.exclude?(stage)
+      errors.add(:step, 'must be null for single-template slots')
+    end
   end
 
   def parameter_sources

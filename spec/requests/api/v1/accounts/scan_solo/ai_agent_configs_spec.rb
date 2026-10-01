@@ -139,4 +139,95 @@ RSpec.describe 'ScanSolo AI Agent Config API', type: :request do
       expect(response).to have_http_status(:forbidden)
     end
   end
+
+  describe 'commercial settings (RF-54)' do
+    let(:quote_inbox) { create(:channel_email, account: account).inbox }
+    let(:commercial_user) { create(:user, account: account, role: :agent) }
+    let(:headers) { agent.create_new_auth_token }
+
+    it 'starts with the initial commercial recipient in the draft and the published snapshot' do
+      post "#{base_path}/publish", headers: headers, as: :json
+
+      expect(response.parsed_body['quote_recipient_email']).to eq('comercial@scansolo.com.br')
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).quote_recipient_email).to eq('comercial@scansolo.com.br')
+    end
+
+    it 'saves the 3 fields in the draft and publishes them' do
+      payload = { quote_inbox_id: quote_inbox.id, commercial_user_id: commercial_user.id, quote_recipient_email: 'luciano@scansolo.com.br' }
+
+      put "#{base_path}/draft", params: payload, headers: headers, as: :json
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body).to include(payload.stringify_keys)
+
+      post "#{base_path}/publish", headers: headers, as: :json
+      expect(response.parsed_body).to include(payload.stringify_keys)
+
+      get base_path, headers: headers, as: :json
+      expect(response.parsed_body['draft']).to include(payload.stringify_keys)
+      expect(response.parsed_body['published']).to include(payload.stringify_keys)
+    end
+
+    it 'keeps the published recipient until the edited draft is published' do
+      put "#{base_path}/draft", params: { quote_recipient_email: 'luciano@scansolo.com.br' }, headers: headers, as: :json
+      post "#{base_path}/publish", headers: headers, as: :json
+
+      put "#{base_path}/draft", params: { quote_recipient_email: 'outro@scansolo.com.br' }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(ScanSolo::AiAgentConfig.published_for(account).quote_recipient_email).to eq('luciano@scansolo.com.br')
+    end
+
+    it 'rejects an empty or malformed commercial recipient' do
+      ['', 'comercial', 'comercial@', nil].each do |email|
+        put "#{base_path}/draft", params: { quote_recipient_email: email }, headers: headers, as: :json
+        expect(response).to have_http_status(:unprocessable_entity)
+      end
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).quote_recipient_email).to eq('comercial@scansolo.com.br')
+    end
+
+    it 'rejects a commercial user from another account' do
+      put "#{base_path}/draft", params: { commercial_user_id: create(:user).id }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).commercial_user_id).to be_nil
+    end
+
+    it 'rejects a quote inbox that is not an email inbox of this account' do
+      stub_request(:post, 'https://waba.360dialog.io/v1/configs/webhook')
+      whatsapp_inbox = create(:channel_whatsapp, account: account, sync_templates: false).inbox
+      foreign_email_inbox = create(:channel_email).inbox
+
+      [whatsapp_inbox.id, foreign_email_inbox.id].each do |inbox_id|
+        put "#{base_path}/draft", params: { quote_inbox_id: inbox_id }, headers: headers, as: :json
+        expect(response).to have_http_status(:unprocessable_entity)
+      end
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).quote_inbox_id).to be_nil
+    end
+
+    it 'rejects a quote inbox inside the effective allowlist' do
+      put "#{base_path}/draft", params: { allowed_inbox_ids: [quote_inbox.id] }, headers: headers, as: :json
+      put "#{base_path}/draft", params: { quote_inbox_id: quote_inbox.id }, headers: headers, as: :json
+      expect(response).to have_http_status(:unprocessable_entity)
+
+      put "#{base_path}/draft", params: { quote_inbox_id: quote_inbox.id, allowed_inbox_ids: [] }, headers: headers, as: :json
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body).to include('quote_inbox_id' => quote_inbox.id, 'allowed_inbox_ids' => [])
+    end
+
+    it 'rejects an allowlist that would include the quote inbox' do
+      put "#{base_path}/draft", params: { quote_inbox_id: quote_inbox.id }, headers: headers, as: :json
+
+      put "#{base_path}/draft", params: { allowed_inbox_ids: [quote_inbox.id] }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).allowed_inbox_ids).to eq([])
+    end
+
+    it 'still accepts require_proposal_approval' do
+      put "#{base_path}/draft", params: { require_proposal_approval: false }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['require_proposal_approval']).to be(false)
+    end
+  end
 end

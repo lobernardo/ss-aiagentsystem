@@ -50,12 +50,14 @@ RSpec.describe 'ScanSolo attachment upload path reuse audit' do
     expect(ScanSolo::KnowledgeSource.reflect_on_attachment(:file)).to be_present
   end
 
-  it 'is the only ScanSolo model declaring an ActiveStorage attachment, and it is the only .attach( call in the layer' do
+  it 'declares ActiveStorage attachments only on the known ScanSolo models, with a single .attach( call in the layer' do
     model_files = Dir.glob(Rails.root.join('app/models/scan_solo/**/*.rb'))
     attaching_models = model_files.select { |file| File.read(file).match?(/has_one_attached|has_many_attached/) }
 
+    # scansolo-operacao-centralizada RF-29 (RNF-11): the delivered proposal PDF is
+    # stored through ActiveStorage on ScanSolo::ProposalVersion#document.
     expect(attaching_models.map { |file| relative_to_root(file) })
-      .to eq(['app/models/scan_solo/knowledge_source.rb'])
+      .to contain_exactly('app/models/scan_solo/knowledge_source.rb', 'app/models/scan_solo/proposal_version.rb')
 
     attach_call_sites = scansolo_app_files.each_with_object({}) do |file, memo|
       count = File.read(file).scan('.attach(').size

@@ -21,3 +21,6 @@ json.require_proposal_approval resource.require_proposal_approval
 json.updated_at resource.updated_at
 json.allowed_inbox_ids resource.allowed_inbox_ids
 json.opt_out_keywords resource.opt_out_keywords
+json.quote_inbox_id resource.quote_inbox_id
+json.commercial_user_id resource.commercial_user_id
+json.quote_recipient_email resource.quote_recipient_email

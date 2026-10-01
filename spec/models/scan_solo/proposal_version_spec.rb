@@ -77,4 +77,41 @@ RSpec.describe ScanSolo::ProposalVersion do
       expect(version.approval_required?).to be false
     end
   end
+
+  describe '#proposal_number (RF-26)' do
+    it 'assigns a distinct SS-YYYY-NNNNNN number to each version on creation' do
+      v1 = proposal.versions.create!
+      v2 = proposal.versions.create!
+
+      expect(v1.reload.proposal_number).to match(/\ASS-#{v1.created_at.year}-\d{6}\z/)
+      expect(v2.reload.proposal_number).to match(/\ASS-#{v2.created_at.year}-\d{6}\z/)
+      expect(v1.proposal_number).not_to eq(v2.proposal_number)
+      expect(v1.proposal_number).to eq(format('SS-%<year>d-%<id>06d', year: v1.created_at.year, id: v1.id))
+    end
+  end
+
+  describe '#document_url (RF-29)' do
+    it 'is the Chatwoot-served blob URL once the PDF is attached' do
+      version = proposal.versions.create!
+      version.update_column(:artifact_url, 'https://make.example.com/proposal.pdf') # rubocop:disable Rails/SkipsModelValidations
+      version.document.attach(io: Rails.root.join('spec/fixtures/files/sample.pdf').open, filename: 'proposta.pdf',
+                              content_type: 'application/pdf')
+
+      expect(version.document_url).to start_with(ENV.fetch('FRONTEND_URL'))
+      expect(version.document_url).not_to eq(version.artifact_url)
+    end
+
+    it 'is nil without a document' do
+      expect(proposal.versions.create!.document_url).to be_nil
+    end
+  end
+
+  describe '#quote_request' do
+    it 'links the version generated from a quote request' do
+      quote_request = ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid)
+      version = proposal.versions.create!(quote_request: quote_request)
+
+      expect(quote_request.reload.proposal_version).to eq(version)
+    end
+  end
 end

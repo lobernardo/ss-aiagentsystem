@@ -51,6 +51,7 @@ class ScanSolo::AiAgentConfig < ApplicationRecord
     instructions service_rules qualification_playbook required_qualification_fields
     restricted_information forbidden_subjects transfer_criteria response_limits service_hours
     require_proposal_approval allowed_inbox_ids opt_out_keywords
+    quote_inbox_id commercial_user_id quote_recipient_email
   ].freeze
 
   belongs_to :account

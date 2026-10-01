@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_09_29_000002) do
+ActiveRecord::Schema[7.2].define(version: 2026_10_01_000005) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1482,6 +1482,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_29_000002) do
     t.boolean "require_proposal_approval", default: true, null: false
     t.jsonb "allowed_inbox_ids", default: [], null: false
     t.jsonb "opt_out_keywords", default: ["PARAR", "SAIR", "STOP"], null: false
+    t.bigint "quote_inbox_id"
+    t.bigint "commercial_user_id"
+    t.string "quote_recipient_email", default: "comercial@scansolo.com.br", null: false
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_draft", unique: true, where: "(status = 0)"
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_id"
     t.index ["published_version_id"], name: "index_scan_solo_ai_agent_configs_on_published_version_id"
@@ -1679,10 +1682,12 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_29_000002) do
     t.datetime "last_customer_interaction_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "lead_source"
     t.index ["account_id"], name: "index_scan_solo_pipeline_opportunities_on_account_id"
     t.index ["contact_id"], name: "index_scan_solo_pipeline_opportunities_on_contact_id"
     t.index ["conversation_id"], name: "index_scan_solo_pipeline_opportunities_on_conversation_id", unique: true
     t.index ["owner_id"], name: "index_scan_solo_pipeline_opportunities_on_owner_id"
+    t.check_constraint "lead_source::text = ANY (ARRAY['website'::character varying, 'manual'::character varying]::text[])", name: "scan_solo_pipeline_opportunities_lead_source_check"
   end
 
   create_table "scan_solo_pipeline_stage_events", force: :cascade do |t|
@@ -1717,11 +1722,17 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_29_000002) do
     t.bigint "sent_message_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "proposal_number"
+    t.datetime "valid_until"
+    t.bigint "follow_up_message_id"
+    t.bigint "quote_request_id"
     t.index ["approved_by_type", "approved_by_id"], name: "idx_on_approved_by_type_approved_by_id_0a2d8f1dd3"
     t.index ["generate_correlation_id"], name: "index_scan_solo_proposal_versions_on_generate_correlation_id", unique: true
     t.index ["proposal_id", "version_number"], name: "index_scan_solo_proposal_versions_on_proposal_and_number", unique: true
     t.index ["proposal_id"], name: "index_scan_solo_proposal_versions_on_current", unique: true, where: "(is_current = true)"
     t.index ["proposal_id"], name: "index_scan_solo_proposal_versions_on_proposal_id"
+    t.index ["proposal_number"], name: "index_scan_solo_proposal_versions_on_proposal_number", unique: true
+    t.index ["quote_request_id"], name: "index_scan_solo_proposal_versions_on_quote_request_id", unique: true
     t.index ["send_correlation_id"], name: "index_scan_solo_proposal_versions_on_send_correlation_id", unique: true
     t.index ["sent_message_id"], name: "index_scan_solo_proposal_versions_on_sent_message_id"
   end
@@ -1733,6 +1744,43 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_29_000002) do
     t.datetime "updated_at", null: false
     t.index ["current_version_id"], name: "index_scan_solo_proposals_on_current_version_id"
     t.index ["opportunity_id"], name: "index_scan_solo_proposals_on_opportunity_id", unique: true
+  end
+
+  create_table "scan_solo_quote_replies", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "message_id", null: false
+    t.bigint "conversation_id"
+    t.bigint "quote_request_id"
+    t.integer "kind"
+    t.integer "status", default: 0, null: false
+    t.bigint "resolved_by_id"
+    t.datetime "resolved_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "status"], name: "index_scan_solo_quote_replies_on_account_id_and_status"
+    t.index ["message_id"], name: "index_scan_solo_quote_replies_on_message_id", unique: true
+    t.index ["quote_request_id"], name: "index_scan_solo_quote_replies_on_quote_request_id"
+    t.index ["resolved_by_id"], name: "index_scan_solo_quote_replies_on_resolved_by_id"
+  end
+
+  create_table "scan_solo_quote_requests", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "opportunity_id", null: false
+    t.bigint "email_conversation_id"
+    t.bigint "request_message_id"
+    t.bigint "reply_message_id"
+    t.bigint "customer_notice_message_id"
+    t.integer "status", default: 0, null: false
+    t.string "correlation_id", null: false
+    t.jsonb "commercial", default: {}, null: false
+    t.datetime "sent_at"
+    t.datetime "replied_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_scan_solo_quote_requests_on_account_id"
+    t.index ["correlation_id"], name: "index_scan_solo_quote_requests_on_correlation_id", unique: true
+    t.index ["email_conversation_id"], name: "index_scan_solo_quote_requests_on_email_conversation_id", unique: true
+    t.index ["opportunity_id"], name: "index_scan_solo_quote_requests_on_opportunity_id", unique: true
   end
 
   create_table "scan_solo_template_mappings", force: :cascade do |t|
@@ -1936,7 +1984,11 @@ ActiveRecord::Schema[7.2].define(version: 2026_09_29_000002) do
   add_foreign_key "scan_solo_lead_states", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_make_requests", "accounts"
   add_foreign_key "scan_solo_proposal_versions", "scan_solo_proposals", column: "proposal_id"
+  add_foreign_key "scan_solo_proposal_versions", "scan_solo_quote_requests", column: "quote_request_id"
   add_foreign_key "scan_solo_proposals", "scan_solo_pipeline_opportunities", column: "opportunity_id"
+  add_foreign_key "scan_solo_quote_replies", "scan_solo_quote_requests", column: "quote_request_id"
+  add_foreign_key "scan_solo_quote_replies", "users", column: "resolved_by_id"
+  add_foreign_key "scan_solo_quote_requests", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_template_mappings", "accounts"
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).

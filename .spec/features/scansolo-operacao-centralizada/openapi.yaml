@@ -1,0 +1,1217 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Operação Centralizada — REST contract delta (CT-01, CT-02, CT-08, CT-10, CT-11, CT-12, RF-54, CT-09 slots)
+  version: "1.7.0"
+  description: >
+    Delta over `.spec/features/scansolo-chatwoot-platform/openapi.yaml` (v1.1.0),
+    `.spec/features/scansolo-production-complete/openapi.yaml` (v1.2.0) and
+    `.spec/features/scansolo-agent-lead-state/openapi.yaml` (v1.5.0). Only operations NEW or
+    CHANGED by SPEC `scansolo-operacao-centralizada` v1.2 are listed; every other path of
+    the prior contracts stays valid and unchanged. Base path verified at
+    `config/routes.rb:462-463` (`namespace :scan_solo`). Every endpoint keeps the
+    `BaseController` 404 gate when `Account#scansolo_enabled?` is false and the
+    ScanSolo Pundit 403.
+
+    v1.7.0 (SPEC v1.3): CT-02 `initial_template_failure` gains `status` and the detail gains
+    `quote_request_resend_available`; NEW CT-12 (manual quote-request resend, admin);
+    config gains `quote_recipient_email` (RF-54, 3 fields); CT-11 becomes a two-step exit.
+
+    DEACTIVATED (CT-11, RF-55 Etapa 1): `POST /accounts/{account_id}/scan_solo/proposals/{proposal_id}/approve`
+    and `POST /accounts/{account_id}/scan_solo/proposals/{proposal_id}/send` still exist and
+    keep their v1.2.0 contract, but no screen or new flow calls them. They are removed (404)
+    only in Etapa 2, after a verification task records evidence of non-use (frontend, jobs,
+    integrations incl. Make, history); if any dependency is found they stay deactivated.
+    Historical versions keep `status: approved`, `approved_at` and `approval_required` in every
+    read endpoint (RNF-10).
+
+    PRE-EXISTING DRIFT (not introduced here): v1.1.0 `PipelineOpportunity.required`
+    lists `stale`, which `_pipeline_opportunity.json.jbuilder` never emitted; this delta
+    documents the emitted shape and does not require `stale`.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: app.scansolo.local
+
+security:
+  - userApiKey: []
+
+x-deactivated-paths:
+  - path: /accounts/{account_id}/scan_solo/proposals/{proposal_id}/approve
+    method: post
+    status: deactivated (no caller); removal conditional on recorded non-use evidence (CT-11, RF-55 Etapa 2)
+    reason: no second approval; Make generates, Chatwoot sends.
+  - path: /accounts/{account_id}/scan_solo/proposals/{proposal_id}/send
+    method: post
+    status: deactivated (no caller); removal conditional on recorded non-use evidence (CT-11, RF-55 Etapa 2)
+    reason: delivery is automatic after the generate callback (RF-29).
+
+paths:
+  /accounts/{account_id}/scan_solo/pipeline_opportunities:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listPipelineOpportunities
+      summary: Kanban list with origin, commercial status and human-control flag (CT-02; RF-01, RF-33, UI-02, RNF-06)
+      description: >
+        CHANGED. Each item gains `lead_source`, `company`, `service`, `city_uf`,
+        `ai_control_state`, `quote_request_status` and `proposal_status`. The number of
+        SQL queries does not depend on the number of opportunities (RNF-06): associations
+        are preloaded and `next_follow_up_at` is computed in one grouped query.
+        COMPAT: additive; existing fields unchanged. `lead_state` is still NOT part of the index.
+      responses:
+        '200':
+          description: Opportunities of the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PipelineOpportunity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createPipelineOpportunity
+      summary: Manual lead — "Novo lead" (CT-01; RF-04, RF-05, RF-06, RF-07, RF-09, RF-10, UI-01)
+      description: >
+        NEW. Finds the account Contact by E.164 phone, then by e-mail (never duplicates),
+        reuses the contact's open WhatsApp conversation without opportunity in the chosen
+        allowlisted inbox or creates one, and creates a `novo_lead` opportunity with
+        `lead_source: manual` in one transaction (`ScanSolo::Pipeline::ManualLeadService`).
+        After commit, the approved initial template is sent through
+        `ScanSolo::Messaging::NativeTemplateSender` (RF-07); a blocked or failed template
+        keeps the records and is reported in `initial_template_failure` (RF-08). Cadence
+        `novo_lead` step 1 is recorded `skipped` (consumed by the initial template, RF-10).
+        `inbox_id` may be omitted only when exactly one WhatsApp inbox is in the published
+        `allowed_inbox_ids`. Any user of the account may call it (`PipelineOpportunityPolicy#create?`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualLeadInput'
+      responses:
+        '201':
+          description: Opportunity created; body = show representation + `contact_created`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualLeadCreated'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: >
+            Rejected before any write (0 contacts, conversations, opportunities, messages).
+            Format errors are checked at the request boundary; `contact_opted_out`,
+            `contact_conflict` and `opportunity_exists` by the service (RF-05, RF-09).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualLeadRejection'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    get:
+      operationId: showPipelineOpportunity
+      summary: Lead screen data (CT-02; RF-01, RF-08, RF-33, RF-45, UI-04)
+      description: >
+        CHANGED (lead-state v1.5.0 + this delta). Adds the list fields of
+        `PipelineOpportunity` plus `quote_request`, `proposal` (current version),
+        `initial_template_failure` (`{ reason, status, occurred_at }`, RF-08) and
+        `quote_request_resend_available` (RF-56). `PATCH /pipeline_opportunities/{id}` and
+        `POST /pipeline_opportunities/{id}/stage_transitions` render this same shape
+        (`render :show`), so they gain the same additive fields.
+        COMPAT: additive.
+      responses:
+        '200':
+          description: Opportunity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}/quote_request/resend:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    post:
+      operationId: resendQuoteRequest
+      summary: Manual, audited, idempotent quote-request resend — administrators only (CT-12; RF-56, UI-07)
+      description: >
+        NEW. No body. Resends the quote-request e-mail (CT-03) through the quote inbox to the
+        commercial recipient of the configuration published at resend time. An open request
+        (`awaiting_reply`/`correction_requested`) is reused — same request, same e-mail
+        conversation, same `correlation_id`; never a second request (RF-15). Without a
+        request, only when the automatic dispatch failed by configuration (audit
+        `quote_request.misconfigured`) and the qualification is still `concluida` with next
+        action `proposta`, the single allowed request is created. Concurrent resends are
+        serialized. Each accepted resend records one `AuditEvent` `quote_request.resent`
+        (actor, recipient, correlation id). The request status does not change and the
+        customer notice (RF-53) is never repeated.
+      responses:
+        '200':
+          description: Resend accepted (e-mail created after commit).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteRequestResendResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: >
+            `quote_request_closed` (request already `replied`); `quote_request_not_eligible`
+            (no request and not the RF-56 case 2); `quote_inbox_misconfigured` (published
+            config still invalid — RF-14 audit + exception also recorded).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteRequestResendRejection'
+
+  /accounts/{account_id}/scan_solo/quote_replies:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listPendingQuoteReplies
+      summary: Quote replies pending a manual decision (CT-08; RF-19, RF-23, UI-05)
+      description: >
+        NEW. `unmatched` = e-mail received in the quote inbox outside any quote-request or
+        negotiation-notification conversation (RF-19); `late_reply` = new reply in the
+        conversation of a request already `replied` (RF-23), with its originating request.
+        Allowed to administrators and to agents that are members of the configured quote
+        inbox (`QuoteReplyPolicy`).
+      parameters:
+        - name: status
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [pending]
+      responses:
+        '200':
+          description: Pending replies, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QuoteReply'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: "`status` missing or not `pending`."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/quote_replies/{id}/link:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    post:
+      operationId: linkQuoteReply
+      summary: Link an unmatched reply to an open quote request (CT-08; RF-20)
+      description: >
+        NEW. Only `kind: unmatched` + `status: pending` replies, only to a request in
+        `awaiting_reply` or `correction_requested`. The message is then processed exactly
+        like a reply in the request thread (RF-17/RF-18): valid block → request `replied`
+        and one generation request (RF-24); invalid → `correction_requested` and the
+        correction e-mail goes to the request's own conversation. One `AuditEvent`
+        `quote_reply.linked` records actor and time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteReplyLinkRequest'
+      responses:
+        '200':
+          description: Linked; resulting status of the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteReplyLinkResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Reply or quote request not found in the account (or account not ScanSolo-enabled).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+        '422':
+          description: >
+            `already_linked` (reply already linked); `quote_request_closed` (reply is a
+            `late_reply` or discarded, or the target request is `replied`);
+            `quote_request_id` missing or not an integer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteReplyRejection'
+
+  /accounts/{account_id}/scan_solo/quote_replies/{id}/discard:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    post:
+      operationId: discardQuoteReply
+      summary: Discard a late reply (CT-08; RF-23)
+      description: >
+        NEW. Only `kind: late_reply`. Removes it from the pending list and records one
+        `AuditEvent` `quote_reply.discarded` with the actor; the quote request and the
+        current proposal version are untouched. Discarding an `unmatched` reply is
+        rejected with 422 `not_discardable` (PLAN decision for the small open point).
+      responses:
+        '200':
+          description: Discarded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteReplyDiscardResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: "`already_discarded` or `not_discardable` (reply is `unmatched`)."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteReplyRejection'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{opportunity_id}/proposals/generate:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: opportunity_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: generateProposal
+      summary: proposal.generate — only for a validated quote reply (RF-25)
+      description: >
+        CHANGED. Generation now requires the opportunity's quote request in `replied`
+        without a version yet (one `ProposalVersion` per validated reply, RNF-02);
+        otherwise 422 and no version. The normal path is automatic (validated reply →
+        generation, RF-24); this endpoint only covers a validated reply whose generation
+        was not created. The request body is unchanged.
+        COMPAT: tightening mandated by RF-25.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalCorrelationRequest'
+      responses:
+        '200':
+          description: Generation requested; version is `generating`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: >
+            No validated quote reply, reply already used, required qualification fields
+            incomplete, or `proposal_integration_not_configured`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/proposals:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listProposals
+      summary: Proposals with versions and the opportunity's quote request status (UI-05, UI-06)
+      description: >
+        CHANGED (v1.2.0 + this delta). `Proposal` gains `quote_request_status`;
+        `ProposalVersion` gains `proposal_number`, `valid_until` and `document_url`.
+        Historical `approved`/legacy `sent` versions keep every field. COMPAT: additive.
+      responses:
+        '200':
+          description: Proposals of the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Proposal'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      operationId: showProposal
+      summary: Show a proposal (same additive fields as the list)
+      responses:
+        '200':
+          description: Proposal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/retry:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: retryProposal
+      summary: Retry a failed proposal operation — delivery retry without Make (CT-10; RF-32)
+      description: >
+        CHANGED semantics. For a current version `failed` after a successful generate
+        callback (`value` present — delivery failure: `artifact_download_failed`, template
+        guard reason or native `external_error`), resends only the WhatsApp proposal
+        template with the PDF already stored in ActiveStorage, redoing only the download
+        when no PDF is stored; no `MakeRequest` is created and the dead-letter threshold
+        does not apply. Other failures keep `ScanSolo::Proposal::RetryPolicy` (generate
+        retry with `timeout`/`network_error`/`provider_unavailable`, dead letter needs
+        `confirm_reprocess: true`). Administrator only.
+        COMPAT: the old send-stage retry through Make `proposal.send` is gone (RF-55).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposal_version_id, confirm_reprocess]
+              additionalProperties: false
+              properties:
+                proposal_version_id:
+                  type: integer
+                  format: int64
+                confirm_reprocess:
+                  type: boolean
+      responses:
+        '200':
+          description: >
+            Retry requested; a delivery retry returns the version `generated` (the native
+            message is pending provider acceptance), a generate retry returns `generating`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Non-retryable reason, dead letter without confirmation, or integration not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: showAiAgentConfig
+      summary: Config with the three RF-54 fields
+      description: >
+        CHANGED. Draft and published representations gain `quote_inbox_id`,
+        `commercial_user_id` (both null after the migration) and `quote_recipient_email`
+        (`comercial@scansolo.com.br` after the migration, RNF-05).
+        `require_proposal_approval` is still returned (column preserved, RNF-10; the UI no
+        longer shows its toggle, UI-06). COMPAT: additive.
+      responses:
+        '200':
+          description: Draft/published pair and model list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [draft, published, available_models]
+                properties:
+                  draft:
+                    $ref: '#/components/schemas/AiAgentConfigCommercialSettings'
+                  published:
+                    oneOf:
+                      - $ref: '#/components/schemas/AiAgentConfigCommercialSettings'
+                      - type: "null"
+                  available_models:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/draft:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    put:
+      operationId: updateAiAgentConfigDraft
+      summary: Draft update accepts the three RF-54 fields (administrator only)
+      description: >
+        CHANGED. Accepts `quote_inbox_id` (an inbox of the account with
+        `channel_type: Channel::Email` that is NOT in the effective `allowed_inbox_ids`)
+        `commercial_user_id` (a user of the account) and `quote_recipient_email` (required,
+        valid e-mail); `allowed_inbox_ids` that would
+        contain the draft's `quote_inbox_id` is rejected. Both fields are copied by
+        publish (`AiAgentConfig::FIELDS`) and read only from the published config. Every
+        other field of `AiAgentConfigInput` (v1.2.0), including `require_proposal_approval`,
+        is still accepted. COMPAT: additive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiAgentConfigCommercialSettingsInput'
+      responses:
+        '200':
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfigCommercialSettings'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Inbox not e-mail / in the allowlist / of another account, user outside the account, or recipient blank/malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/cadence_templates:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listCadenceTemplates
+      summary: Template rows including the single-template slots (CT-09; RF-07, RF-29, RF-31)
+      description: >
+        CHANGED. Besides one row per cadence (stage, step) and the proposal row
+        (`proposta_enviada`, `step: null`), adds one row per new slot with `step: null`:
+        `lead_manual_inicial` (initial template of the manual lead, CT-09 a) and
+        `proposta_acompanhamento` (post-proposal follow-up, CT-09 c). Unmapped slots show
+        the conventions `scansolo_lead_manual_inicial` / `scansolo_proposta_acompanhamento`.
+        COMPAT: additive rows; `stage` enum extended.
+      responses:
+        '200':
+          description: Template rows.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CadenceTemplateRow'
+    put:
+      operationId: upsertCadenceTemplate
+      summary: Create or replace a template mapping, slots included (administrator only)
+      description: >
+        CHANGED. `step: null` is accepted for `proposta_enviada`, `lead_manual_inicial`
+        and `proposta_acompanhamento`; cadence stages still require a step of the active
+        definition.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CadenceTemplateInput'
+      responses:
+        '200':
+          description: The updated row, availability re-evaluated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CadenceTemplateRow'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Unknown stage/slot, step not allowed, or non-allowlisted param source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+components:
+  securitySchemes:
+    userApiKey:
+      type: apiKey
+      in: header
+      name: api_access_token
+      description: Existing Chatwoot session/API-token auth, unchanged.
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ResourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    Forbidden:
+      description: Authenticated but denied by the ScanSolo Pundit policy.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    NotFound:
+      description: Resource not found in the account, or account not ScanSolo-enabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+
+  schemas:
+    ScanSoloError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    PipelineStage:
+      type: string
+      enum: [novo_lead, em_contato, em_qualificacao, qualificado, proposta_enviada, negociacao, ganho, perdido]
+
+    LeadSource:
+      description: >
+        RF-01. `website` = "Site/WhatsApp" (card "SITE"), `manual` = "Comercial" (card
+        "COMERCIAL"), `null` = "Não informada". Never affects cadence.
+      type: [string, "null"]
+      enum: [website, manual, null]
+
+    AiControlState:
+      type: string
+      enum: [ai_active, handoff_requested, awaiting_human, human_active, paused, closed]
+      description: RF-46 — the same 6 states; `ai_active` when the conversation has no extension row yet.
+
+    QuoteRequestStatus:
+      type: string
+      enum: [awaiting_reply, correction_requested, replied]
+
+    ProposalVersionStatus:
+      type: string
+      enum: [generating, generated, approved, sent, failed]
+      description: "`approved` only on historical versions (RF-55, RNF-10)."
+
+    StageHistoryEntry:
+      type: object
+      required: [id, from_stage, to_stage, actor_type, actor_id, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        from_stage:
+          oneOf:
+            - $ref: '#/components/schemas/PipelineStage'
+            - type: "null"
+        to_stage:
+          $ref: '#/components/schemas/PipelineStage'
+        actor_type:
+          type: [string, "null"]
+        actor_id:
+          type: [integer, "null"]
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+
+    PipelineOpportunity:
+      type: object
+      description: CT-02 list item (also the base of the detail).
+      required:
+        - id
+        - account_id
+        - contact_id
+        - contact_name
+        - conversation_id
+        - owner_id
+        - stage
+        - last_customer_interaction_at
+        - next_follow_up_at
+        - created_at
+        - updated_at
+        - stage_history
+        - lead_source
+        - company
+        - service
+        - city_uf
+        - ai_control_state
+        - quote_request_status
+        - proposal_status
+      properties:
+        id:
+          type: integer
+          format: int64
+        account_id:
+          type: integer
+          format: int64
+        contact_id:
+          type: integer
+          format: int64
+        contact_name:
+          type: [string, "null"]
+        conversation_id:
+          type: integer
+          format: int64
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        last_customer_interaction_at:
+          type: [string, "null"]
+          format: date-time
+          description: Null for a manual lead until the customer replies (RF-06).
+        next_follow_up_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        stage_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/StageHistoryEntry'
+        lead_source:
+          $ref: '#/components/schemas/LeadSource'
+        company:
+          type: [string, "null"]
+          description: Lead-state `empresa` value when its status is not `faltante` (UI-02).
+        service:
+          type: [string, "null"]
+          description: Lead-state `tipo_servico` value when not `faltante` (UI-02).
+        city_uf:
+          type: [string, "null"]
+          description: Lead-state `cidade_uf` value when not `faltante` (UI-02).
+        ai_control_state:
+          $ref: '#/components/schemas/AiControlState'
+        quote_request_status:
+          oneOf:
+            - $ref: '#/components/schemas/QuoteRequestStatus'
+            - type: "null"
+        proposal_status:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalVersionStatus'
+            - type: "null"
+          description: Status of the current version; `generated` is never presented as sent (RF-33).
+
+    QuoteRequestSummary:
+      type: object
+      required: [id, status, sent_at, replied_at, email_conversation_id]
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/QuoteRequestStatus'
+        sent_at:
+          type: [string, "null"]
+          format: date-time
+        replied_at:
+          type: [string, "null"]
+          format: date-time
+        email_conversation_id:
+          type: [integer, "null"]
+          format: int64
+
+    CurrentProposalSummary:
+      type: object
+      required: [version_number, proposal_number, status, value, currency, valid_until, document_url, failure_reason]
+      properties:
+        version_number:
+          type: integer
+        proposal_number:
+          type: [string, "null"]
+          description: Rails-generated `SS-<YYYY>-<NNNNNN>`, unique (RF-26); null on legacy versions.
+        status:
+          $ref: '#/components/schemas/ProposalVersionStatus'
+        value:
+          type: [number, "null"]
+        currency:
+          type: [string, "null"]
+        valid_until:
+          type: [string, "null"]
+          format: date-time
+          description: Persisted from the generate callback (RF-26).
+        document_url:
+          type: [string, "null"]
+          format: uri
+          description: PDF stored in the Chatwoot ActiveStorage (RF-29); never the Make `artifact_url`.
+        failure_reason:
+          type: [string, "null"]
+
+    InitialTemplateFailure:
+      type: object
+      description: >
+        RF-08 / UI-04 — latest failure of the manual lead's initial template, derived from
+        the audit trail (CT-02 v1.3).
+      required: [reason, status, occurred_at]
+      properties:
+        reason:
+          type: string
+          description: Template guard reason (e.g. `template_missing`) when `blocked`, or the native `external_error` when `failed`.
+        status:
+          type: string
+          enum: [blocked, failed]
+        occurred_at:
+          type: string
+          format: date-time
+
+    PipelineOpportunityDetail:
+      allOf:
+        - $ref: '#/components/schemas/PipelineOpportunity'
+        - type: object
+          required: [lead_state, quote_request, proposal, initial_template_failure, quote_request_resend_available]
+          properties:
+            lead_state:
+              $ref: '../scansolo-agent-lead-state/openapi.yaml#/components/schemas/LeadState'
+            quote_request:
+              oneOf:
+                - $ref: '#/components/schemas/QuoteRequestSummary'
+                - type: "null"
+            proposal:
+              oneOf:
+                - $ref: '#/components/schemas/CurrentProposalSummary'
+                - type: "null"
+            initial_template_failure:
+              oneOf:
+                - $ref: '#/components/schemas/InitialTemplateFailure'
+                - type: "null"
+            quote_request_resend_available:
+              type: boolean
+              description: True when CT-12 would accept a resend (RF-56); drives UI-07 together with the admin role.
+
+    ManualLeadInput:
+      type: object
+      required: [name, phone_number]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+        phone_number:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: E.164, same rule as the Chatwoot `Contact` model.
+        email:
+          type: string
+          format: email
+        company:
+          type: string
+          description: Stored on a NEW contact as `custom_attributes.empresa` (seeded `inferido` in the lead state).
+        owner_id:
+          type: integer
+          format: int64
+          description: A user of the account.
+        inbox_id:
+          type: integer
+          format: int64
+          description: >
+            A WhatsApp inbox in the published `allowed_inbox_ids`; optional only when there
+            is exactly one such inbox.
+
+    ManualLeadCreated:
+      allOf:
+        - $ref: '#/components/schemas/PipelineOpportunityDetail'
+        - type: object
+          required: [contact_created]
+          properties:
+            contact_created:
+              type: boolean
+
+    ManualLeadRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - missing_name
+            - invalid_phone
+            - invalid_email
+            - invalid_owner
+            - invalid_inbox
+            - contact_opted_out
+            - contact_conflict
+            - opportunity_exists
+        opportunity_id:
+          type: integer
+          format: int64
+          description: Present only with `opportunity_exists` (RF-09) — the non-terminal opportunity of the contact.
+
+    QuoteRequestResendResult:
+      type: object
+      required: [quote_request_id, status, correlation_id, recipient, resent_at]
+      properties:
+        quote_request_id:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/QuoteRequestStatus'
+        correlation_id:
+          type: string
+          description: The request's own correlation id (unchanged by a resend).
+        recipient:
+          type: string
+          format: email
+          description: Published `quote_recipient_email` used for this resend.
+        resent_at:
+          type: string
+          format: date-time
+
+    QuoteRequestResendRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [quote_request_closed, quote_request_not_eligible, quote_inbox_misconfigured]
+
+    QuoteReply:
+      type: object
+      required: [id, conversation_id, message_id, sender_email, subject, received_at, excerpt, kind, quote_request_id]
+      properties:
+        id:
+          type: integer
+          format: int64
+        conversation_id:
+          type: integer
+          format: int64
+          description: E-mail conversation in the quote inbox.
+        message_id:
+          type: integer
+          format: int64
+        sender_email:
+          type: [string, "null"]
+          format: email
+        subject:
+          type: [string, "null"]
+        received_at:
+          type: string
+          format: date-time
+        excerpt:
+          type: string
+          maxLength: 200
+        kind:
+          type: string
+          enum: [unmatched, late_reply]
+        quote_request_id:
+          type: [integer, "null"]
+          format: int64
+          description: Originating request for `late_reply` (RF-23); null for `unmatched`.
+
+    QuoteReplyLinkRequest:
+      type: object
+      required: [quote_request_id]
+      additionalProperties: false
+      properties:
+        quote_request_id:
+          type: integer
+          format: int64
+
+    QuoteReplyLinkResult:
+      type: object
+      required: [quote_request_id, status]
+      properties:
+        quote_request_id:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/QuoteRequestStatus'
+
+    QuoteReplyDiscardResult:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [discarded]
+
+    QuoteReplyRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [already_linked, quote_request_closed, already_discarded, not_discardable, invalid_quote_request_id]
+
+    ProposalCorrelationRequest:
+      type: object
+      required: [correlation_id]
+      properties:
+        correlation_id:
+          type: string
+          minLength: 1
+
+    ProposalVersion:
+      type: object
+      description: >
+        v1.2.0 `ProposalVersion` + `proposal_number`, `valid_until`, `document_url`.
+        `artifact_url` stays the Make download source (RF-48), not sent to the customer.
+      required:
+        - id
+        - proposal_id
+        - version_number
+        - status
+        - is_current
+        - value
+        - currency
+        - artifact_url
+        - failure_reason
+        - correlation_id
+        - approved_at
+        - approval_required
+        - sent_at
+        - retry_count
+        - dead_letter
+        - proposal_number
+        - valid_until
+        - document_url
+      properties:
+        id:
+          type: integer
+          format: int64
+        proposal_id:
+          type: integer
+          format: int64
+        version_number:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ProposalVersionStatus'
+        is_current:
+          type: boolean
+        value:
+          type: [number, "null"]
+        currency:
+          type: [string, "null"]
+        artifact_url:
+          type: [string, "null"]
+          format: uri
+        failure_reason:
+          type: [string, "null"]
+          description: >
+            Adds `artifact_download_failed`, template guard reasons and native
+            `external_error` for delivery failures (RF-32, RF-30).
+        correlation_id:
+          type: string
+        approved_at:
+          type: [string, "null"]
+          format: date-time
+        approval_required:
+          type: boolean
+          description: Read from the preserved `require_proposal_approval` column; no flow consults it (RF-28).
+        sent_at:
+          type: [string, "null"]
+          format: date-time
+          description: Send-callback time of legacy versions; null in the new flow.
+        retry_count:
+          type: integer
+          minimum: 0
+        dead_letter:
+          type: boolean
+        proposal_number:
+          type: [string, "null"]
+        valid_until:
+          type: [string, "null"]
+          format: date-time
+        document_url:
+          type: [string, "null"]
+          format: uri
+
+    Proposal:
+      type: object
+      required: [id, opportunity_id, owner_id, contact_name, integration_state, current_version_id, versions, quote_request_status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        contact_name:
+          type: [string, "null"]
+        integration_state:
+          type: string
+          enum: [configured, blocked]
+        current_version_id:
+          type: [integer, "null"]
+          format: int64
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalVersion'
+        quote_request_status:
+          oneOf:
+            - $ref: '#/components/schemas/QuoteRequestStatus'
+            - type: "null"
+          description: UI-05 — status of the opportunity's quote request.
+
+    AiAgentConfigCommercialSettingsInput:
+      type: object
+      description: >
+        Only the fields added by this delta; the request also accepts every property of
+        v1.2.0 `AiAgentConfigInput` (unchanged, including `require_proposal_approval`).
+      properties:
+        quote_inbox_id:
+          type: [integer, "null"]
+          format: int64
+          description: RF-54 (1) — e-mail inbox for quote requests, outside the allowlist.
+        commercial_user_id:
+          type: [integer, "null"]
+          format: int64
+          description: RF-54 (2) — optional commercial user for negotiation assignment (RF-38).
+        quote_recipient_email:
+          type: string
+          format: email
+          minLength: 3
+          description: >
+            RF-54 (3) — commercial recipient of quote-request (RF-12), negotiation (RF-37) and
+            resend (RF-56) e-mails; initial value `comercial@scansolo.com.br`; required.
+
+    AiAgentConfigCommercialSettings:
+      type: object
+      description: >
+        Fields added by this delta to v1.2.0 `AiAgentConfig` (all v1.2.0 fields are still
+        returned, unchanged).
+      required: [id, status, quote_inbox_id, commercial_user_id, quote_recipient_email, require_proposal_approval]
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [draft, published]
+        quote_inbox_id:
+          type: [integer, "null"]
+          format: int64
+        commercial_user_id:
+          type: [integer, "null"]
+          format: int64
+        quote_recipient_email:
+          type: string
+          format: email
+        require_proposal_approval:
+          type: boolean
+          description: Preserved; the UI no longer shows its toggle and no flow consults it (RF-28, RF-55, RNF-10).
+
+    TemplateStage:
+      type: string
+      enum: [novo_lead, em_contato, em_qualificacao, proposta_enviada, lead_manual_inicial, proposta_acompanhamento]
+      description: >
+        Cadence stages (with step) plus single-template slots (`step: null`):
+        `proposta_enviada` = proposal template (CT-09 b, document header),
+        `lead_manual_inicial` (CT-09 a), `proposta_acompanhamento` (CT-09 c).
+
+    TemplateParam:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: string
+          enum: [contact_name, contact_first_name, agent_name, stage_label, static]
+        value:
+          type: string
+
+    CadenceTemplateInput:
+      type: object
+      required: [stage, step, template_name, language, params]
+      properties:
+        stage:
+          $ref: '#/components/schemas/TemplateStage'
+        step:
+          type: [integer, "null"]
+          minimum: 1
+        template_name:
+          type: string
+          minLength: 1
+        language:
+          type: string
+          minLength: 2
+        params:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateParam'
+
+    CadenceTemplateRow:
+      type: object
+      required: [stage, step, template_name, language, params, mapped, availability, block_reason, meta_status, last_synced_at]
+      properties:
+        stage:
+          $ref: '#/components/schemas/TemplateStage'
+        step:
+          type: [integer, "null"]
+        template_name:
+          type: string
+        language:
+          type: string
+        params:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateParam'
+        mapped:
+          type: boolean
+        availability:
+          type: string
+          enum: [available, blocked]
+        block_reason:
+          type: [string, "null"]
+          enum: [template_missing, language_unavailable, template_rejected, template_paused, template_pending, template_disabled, params_mismatch, null]
+        meta_status:
+          type: [string, "null"]
+        last_synced_at:
+          type: [string, "null"]
+          format: date-time

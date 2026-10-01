@@ -90,6 +90,62 @@ RSpec.describe Rake::Task do # rubocop:disable RSpec/SpecFilePathFormat
     end
   end
 
+  describe 'scansolo:backfill_lead_source' do
+    subject(:task) { described_class['scansolo:backfill_lead_source'] }
+
+    let(:account) { create(:account) }
+    let(:agent) { create(:user, account: account, role: :agent) }
+    let(:opportunities) do
+      {
+        incoming_first: [:incoming, nil],
+        agent_first: [:outgoing, agent],
+        bot_first: [:outgoing, create(:agent_bot, account: account)],
+        no_messages: nil
+      }.transform_values do |first_message|
+        contact = create(:contact, account: account)
+        conversation = create(:conversation, account: account, contact: contact)
+        if first_message
+          message_type, sender = first_message
+          create(:message, account: account, conversation: conversation, message_type: message_type, sender: sender || contact,
+                           created_at: 2.hours.ago)
+          create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact, created_at: 1.hour.ago)
+        end
+        ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_contato)
+      end
+    end
+
+    def run_task
+      task.reenable
+      task.invoke
+    end
+
+    before do
+      opportunities
+      travel 1.day
+    end
+
+    it 'applies the RF-02 rule to the first message of each conversation (RF-03)' do
+      expect { run_task }.to output("Lead sources backfilled: 2\n").to_stdout
+
+      expect(opportunities.transform_values { |opportunity| opportunity.reload.lead_source }).to eq(
+        incoming_first: 'website', agent_first: 'manual', bot_first: nil, no_messages: nil
+      )
+    end
+
+    it 'changes nothing on a second run and never touches stage, cadence, lead state or updated_at' do
+      updated_at = opportunities.transform_values { |opportunity| opportunity.reload.updated_at }
+      counts = -> { [ScanSolo::PipelineStageEvent.count, ScanSolo::CadenceEnrollment.count, ScanSolo::LeadStateEvent.count] }
+      counts_before = counts.call
+
+      expect { run_task }.to output("Lead sources backfilled: 2\n").to_stdout
+      expect { run_task }.to output("Lead sources backfilled: 0\n").to_stdout
+
+      expect(counts.call).to eq(counts_before)
+      expect(opportunities.transform_values { |opportunity| opportunity.reload.updated_at }).to eq(updated_at)
+      expect(opportunities.values.map(&:stage).uniq).to eq(['em_contato'])
+    end
+  end
+
   describe 'scansolo:smoke' do
     subject(:task) { described_class['scansolo:smoke'] }
 

@@ -2,7 +2,8 @@
 # on its first eligible inbound message. `create_or_find_by!` relies on the
 # unique index on conversation_id, so two concurrent jobs for the same
 # conversation converge on one row; only the caller that actually inserted
-# it records the audit event and the Novo Lead enrollment.
+# it records the audit event and the Novo Lead enrollment. The lead_source
+# (RF-02) is classified in the same insert.
 class ScanSolo::Pipeline::OpportunityBootstrapService
   Result = Struct.new(:opportunity, :created, keyword_init: true) do
     def created?
@@ -26,6 +27,7 @@ class ScanSolo::Pipeline::OpportunityBootstrapService
       record.owner_id = conversation.assignee_id
       record.stage = :novo_lead
       record.last_customer_interaction_at = message.created_at
+      record.lead_source = ScanSolo::Pipeline::LeadSourceClassifier.call(conversation: conversation)
     end
     created = opportunity.previously_new_record?
 
@@ -43,7 +45,7 @@ class ScanSolo::Pipeline::OpportunityBootstrapService
       subject: opportunity,
       event_type: 'pipeline.opportunity_created',
       correlation_id: SecureRandom.uuid,
-      payload: { conversation_id: conversation.id, message_id: message.id }
+      payload: { conversation_id: conversation.id, message_id: message.id, lead_source: opportunity.lead_source }
     )
     ScanSolo::Cadence::StageEntryEnroller.call(opportunity: opportunity)
   end

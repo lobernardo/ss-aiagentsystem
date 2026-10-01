@@ -39,6 +39,41 @@ RSpec.describe ScanSolo::Pipeline::OpportunityBootstrapService do
     expect(ScanSolo::AuditEvent.where(event_type: 'pipeline.opportunity_created').count).to eq(1)
   end
 
+  describe 'lead_source (RF-02)' do
+    it 'is website for a new conversation whose first message is the incoming one, also in the audit payload' do
+      opportunity = described_class.call(message: message).opportunity
+
+      expect(opportunity.reload.lead_source).to eq('website')
+      expect(ScanSolo::AuditEvent.find_by!(event_type: 'pipeline.opportunity_created', subject: opportunity).payload)
+        .to include('lead_source' => 'website')
+    end
+
+    it 'is manual when an agent opened the conversation with a native outgoing message and the customer replied' do
+      create(:message, account: account, conversation: conversation, message_type: :outgoing, sender: agent, created_at: 1.hour.ago)
+
+      expect(described_class.call(message: message).opportunity.reload.lead_source).to eq('manual')
+    end
+
+    it 'keeps website and manual leads on the same em_contato cadence and relative schedule (RF-01)' do
+      manual_conversation = create(:conversation, account: account, contact: create(:contact, account: account), assignee: agent)
+      create(:message, account: account, conversation: manual_conversation, message_type: :outgoing, sender: agent, created_at: 1.hour.ago)
+      manual_message = create(:message, account: account, conversation: manual_conversation, message_type: :incoming,
+                                        sender: manual_conversation.contact)
+      ScanSolo::CadenceDefinition.create!(stage: 'em_contato', version: 1, offsets: [24, 48, 72, 96, 120])
+
+      schedules = [message, manual_message].map do |inbound|
+        opportunity = described_class.call(message: inbound).opportunity
+        ScanSolo::Pipeline::StageTransitionService.new(opportunity: opportunity, target_stage: :em_contato).call
+        enrollment = opportunity.cadence_enrollments.active.sole
+        [opportunity.lead_source, enrollment.cadence_definition_id,
+         enrollment.attempts.order(:step).map { |attempt| attempt.scheduled_at - enrollment.created_at }]
+      end
+
+      expect(schedules.map(&:first)).to eq(%w[website manual])
+      expect(schedules.map { |schedule| schedule.drop(1) }.uniq.size).to eq(1)
+    end
+  end
+
   context 'with a contact that only has its WhatsApp profile name (lead state RF-01)' do
     let(:contact) { create(:contact, account: account, name: 'Milena (WhatsApp)', email: nil, phone_number: nil, custom_attributes: {}) }
 

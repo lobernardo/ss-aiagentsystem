@@ -4,3 +4,16 @@ end
 class CustomExceptions::ScanSolo::ProposalIntegrationNotConfigured < StandardError; end
 class CustomExceptions::ScanSolo::CadenceDefinitionMissing < StandardError; end
 class CustomExceptions::ScanSolo::Forbidden < StandardError; end
+
+# RF-05/RF-09: a "Novo lead" registration refused by a database-dependent rule
+# (`contact_opted_out`, `contact_conflict`, `opportunity_exists`); the
+# controller maps it to 422 `{ error: code }` (+ `opportunity_id`).
+class CustomExceptions::ScanSolo::ManualLeadRejected < StandardError
+  attr_reader :code, :opportunity_id
+
+  def initialize(code, opportunity_id = nil)
+    @code = code
+    @opportunity_id = opportunity_id
+    super(code)
+  end
+end

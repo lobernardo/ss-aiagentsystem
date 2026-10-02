@@ -366,7 +366,7 @@ Origem: T01 (coluna), T02 (validação) e T08 (`lead_source_classifier.rb`, boot
     - `show` com `quote_request`, `proposal` (com `document_url` ≠ `artifact_url`) e `initial_template_failure` (`status: blocked` com o `reason` do guard; `status: failed` com o `external_error`; sem falha → `null`);
     - fixtures legadas (versão `approved` com `approved_at`, `MakeCallback` `proposal.send`) → 0 erros e campos atuais iguais (RNF-10).
   - `proposals_spec.rb`: `proposal_number`/`valid_until`/`document_url`/`quote_request_status` presentes, e versão histórica `approved` com status e `approved_at` inalterados.
-  - `pipeline_opportunities_spec.rb` e `pipeline_opportunities_lead_state_spec.rb` existentes verdes, sem alteração.
+  - `pipeline_opportunities_spec.rb` existente verde, sem alteração. `pipeline_opportunities_lead_state_spec.rb` existente verde; a asserção `eq` das chaves do `show` passa a listar, na ordem emitida, os campos do CT-02 (`lead_source`, `company`, `service`, `city_uf`, `ai_control_state`, `quote_request_status`, `proposal_status`, `quote_request`, `proposal`, `initial_template_failure`), sem afrouxar para `include` (expectativa alterada pelo CT-02, conforme RNF-11).
 - **Risk**: Medium — muda o partial compartilhado por index/show/update/stage_transitions. A cobertura vem dos specs existentes intocados e da contagem de queries.
 - **Dependencies**: T02, T03
 

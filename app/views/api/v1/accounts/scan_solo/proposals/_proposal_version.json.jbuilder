@@ -14,3 +14,6 @@ json.approval_required resource.approval_required?
 json.sent_at resource.send_callback_applied_at
 json.retry_count make_request&.retry_count.to_i
 json.dead_letter make_request&.dead_letter? || false
+json.proposal_number resource.proposal_number
+json.valid_until resource.valid_until
+json.document_url resource.document_url

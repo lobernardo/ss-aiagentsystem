@@ -41,6 +41,7 @@ class ScanSolo::Pipeline::ManualLeadService
       )
       record_creation!(opportunity, contact_created)
       enroll!(opportunity)
+      ActiveRecord.after_all_transactions_commit { ScanSolo::Pipeline::ManualLeadOutreach.call(opportunity: opportunity) }
 
       Result.new(opportunity: opportunity, contact_created: contact_created)
     end

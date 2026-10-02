@@ -110,4 +110,30 @@ RSpec.describe ScanSolo::Messaging::DeliveryReconciler do
       expect(opportunity.reload).to be_proposta_enviada
     end
   end
+
+  describe 'manual lead initial template (RF-08)' do
+    let(:message) { template_message(origin: 'manual_lead') }
+    let(:audits) { ScanSolo::AuditEvent.where(subject: opportunity, event_type: 'pipeline.manual_lead_template_failed') }
+
+    before { opportunity }
+
+    it 'records one audit with the native external error, even after a later message_updated' do
+      message.update!(status: :failed, external_error: '131026: Message undeliverable')
+      event = Events::Base.new('message_updated', Time.zone.now, { message: message })
+
+      ScanSolo::ConversationListener.instance.message_updated(event)
+      ScanSolo::ConversationListener.instance.message_updated(event)
+
+      expect(audits.count).to eq(1)
+      expect(audits.first.payload).to eq('message_id' => message.id, 'external_error' => '131026: Message undeliverable')
+    end
+
+    it 'records nothing while the message is accepted' do
+      message.update!(source_id: 'wamid.manual')
+
+      described_class.call(message: message)
+
+      expect(audits.count).to eq(0)
+    end
+  end
 end

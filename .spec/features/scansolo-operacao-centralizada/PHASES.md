@@ -148,7 +148,7 @@ Antes de implementar, leia:
         • `show` com `quote_request`, `proposal` e `initial_template_failure { reason, status (blocked|failed), occurred_at }` (da auditoria). `quote_request_resend_available` fica para T40.
         • Proposals com `proposal_number`, `valid_until`, `document_url` e `quote_request_status`.
       Cobre: CT-02, RF-01, RF-33, RNF-06, RNF-10, UI-02, UI-04, UI-05
-      Acceptance criteria: mesma contagem de `sql.active_record` no `index` com 5 e 50 oportunidades; cada campo novo correto; `show` com os 3 objetos; guard bloqueado → `initial_template_failure.status` = `blocked` com o `reason`; mensagem `failed` → `status: failed` com o `external_error`; sem falha → `null`; fixtures legadas sem erro; `pipeline_opportunities_spec.rb` e `pipeline_opportunities_lead_state_spec.rb` verdes sem alteração.
+      Acceptance criteria: mesma contagem de `sql.active_record` no `index` com 5 e 50 oportunidades; cada campo novo correto; `show` com os 3 objetos; guard bloqueado → `initial_template_failure.status` = `blocked` com o `reason`; mensagem `failed` → `status: failed` com o `external_error`; sem falha → `null`; fixtures legadas sem erro; `pipeline_opportunities_spec.rb` verde sem alteração; `pipeline_opportunities_lead_state_spec.rb` verde com a asserção `eq` das chaves do `show` atualizada para a lista exata e ordenada do CT-02 (expectativa alterada pelo CT-02, conforme RNF-11).
       Testes: `pipeline_opportunities_centralized_spec.rb`, `proposals_spec.rb` — campos, queries e legado.
 
 ## Phase 5: Endpoint "Novo lead" e interrupção da cadência

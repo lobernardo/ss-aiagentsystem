@@ -11,7 +11,7 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
     authorize(::ScanSolo::Proposal)
     @proposals = ::ScanSolo::Proposal.joins(:opportunity)
                                      .where(scan_solo_pipeline_opportunities: { account_id: Current.account.id })
-                                     .includes(:versions, opportunity: :contact)
+                                     .includes(versions: { document_attachment: :blob }, opportunity: %i[contact quote_request])
   end
 
   def show

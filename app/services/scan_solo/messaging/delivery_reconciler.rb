@@ -13,7 +13,13 @@
 # An accepted proposal version becomes `sent` and runs
 # ScanSolo::Proposal::SuccessHandler (stage -> proposta_enviada); a failed
 # one becomes `failed` with the external error and the stage is untouched.
+#
+# RF-08: a failed manual-lead initial template has no record of its own; it
+# is audited once per message as `pipeline.manual_lead_template_failed` on
+# the conversation's opportunity, for the opportunity detail (UI-04).
 class ScanSolo::Messaging::DeliveryReconciler
+  MANUAL_LEAD_FAILED_EVENT = 'pipeline.manual_lead_template_failed'.freeze
+
   def self.call(message:)
     new(message: message).call
   end
@@ -27,6 +33,7 @@ class ScanSolo::Messaging::DeliveryReconciler
 
     ScanSolo::CadenceAttempt.dispatched.where(message_id: message.id).find_each { |attempt| reconcile_attempt(attempt) }
     ScanSolo::ProposalVersion.where(sent_message_id: message.id).find_each { |version| reconcile_version(version) }
+    record_manual_lead_failure if outcome == :failed && message.additional_attributes.to_h['scansolo_origin'] == 'manual_lead'
   end
 
   private
@@ -62,6 +69,19 @@ class ScanSolo::Messaging::DeliveryReconciler
       else
         version.update!(status: :failed, failure_reason: external_error)
       end
+    end
+  end
+
+  def record_manual_lead_failure
+    opportunity = ScanSolo::PipelineOpportunity.find_by!(conversation_id: message.conversation_id)
+    opportunity.with_lock do
+      next if ScanSolo::AuditEvent.where(subject: opportunity, event_type: MANUAL_LEAD_FAILED_EVENT)
+                                  .exists?(['payload @> ?', { message_id: message.id }.to_json])
+
+      ScanSolo::AuditLogger.record!(
+        subject: opportunity, event_type: MANUAL_LEAD_FAILED_EVENT, correlation_id: SecureRandom.uuid,
+        payload: { message_id: message.id, external_error: external_error }
+      )
     end
   end
 

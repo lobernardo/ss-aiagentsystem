@@ -105,6 +105,33 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       expect(body.first['versions'].first['id']).to eq(version.id)
       expect(body.first['contact_name']).to eq(contact.name)
     end
+
+    it 'exposes proposal_number, valid_until, document_url and the quote request status (CT-02, UI-05)' do
+      version.update!(valid_until: 15.days.from_now)
+      version.document.attach(io: StringIO.new('%PDF-1.4'), filename: 'proposta.pdf', content_type: 'application/pdf')
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals", headers: agent.create_new_auth_token, as: :json
+
+      body = response.parsed_body.first
+      expect(body['quote_request_status']).to eq('replied')
+      expect(body['versions'].first).to include('proposal_number' => version.reload.proposal_number)
+      expect(body['versions'].first['valid_until']).to be_present
+      expect(body['versions'].first['document_url']).to include('proposta.pdf')
+    end
+
+    it 'keeps a historical approved version with its status and approved_at (RNF-10)' do
+      approved_at = 2.days.ago.change(usec: 0)
+      legacy = proposal.versions.create!(status: :approved, approved_at: approved_at, value: 900, currency: 'BRL')
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals", headers: agent.create_new_auth_token, as: :json
+
+      body = response.parsed_body.first
+      expect(body['quote_request_status']).to be_nil
+      legacy_json = body['versions'].find { |item| item['id'] == legacy.id }
+      expect(legacy_json).to include('status' => 'approved', 'document_url' => nil, 'valid_until' => nil)
+      expect(Time.zone.parse(legacy_json['approved_at'])).to eq(approved_at)
+    end
   end
 
   describe 'RF-40/RF-42: retry through Make, dead letter and reprocess' do

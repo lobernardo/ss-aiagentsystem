@@ -710,6 +710,7 @@ en:
           stage: 'Etapa'
           conversation_link: 'Conversa no WhatsApp'
         not_informed: 'Não informado'
+        recipient_contact_name: 'Comercial'
         to_confirm: '(a confirmar)'
         origin:
           website: 'Site/WhatsApp'

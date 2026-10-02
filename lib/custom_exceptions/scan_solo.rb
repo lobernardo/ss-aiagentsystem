@@ -17,3 +17,17 @@ class CustomExceptions::ScanSolo::ManualLeadRejected < StandardError
     super(code)
   end
 end
+
+# RF-14: the published quote inbox setup cannot carry the quote e-mails;
+# `reason` ∈ quote_inbox_missing, quote_inbox_not_email, quote_inbox_allowlisted.
+class CustomExceptions::ScanSolo::QuoteInboxMisconfigured < StandardError
+  attr_reader :reason
+
+  def initialize(reason)
+    @reason = reason
+    super(reason)
+  end
+end
+
+# RNF-01: an e-mail message would be created inside an open transaction.
+class CustomExceptions::ScanSolo::DeliveryInsideTransaction < StandardError; end

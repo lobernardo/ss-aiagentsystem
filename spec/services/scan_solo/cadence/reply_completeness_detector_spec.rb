@@ -45,18 +45,15 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
   describe 'partial customer reply (at least one required field not confirmed)' do
     before { writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil) }
 
-    it 'cancels only the immediate pending send, leaving the rest of the schedule scheduled' do
-      remaining_attempts = enrollment.attempts.order(:scheduled_at).drop(1)
-
+    # RF-43 changes this expectation (RNF-11): the next attempt is interrupted by
+    # ScanSolo::Cadence::ReplyInterruptionService for every reply, so the detector cancels nothing on a partial one.
+    it 'cancels nothing, leaving the whole schedule scheduled' do
       result = call
 
       expect(result).to be_partial
       expect(result.missing_fields).to eq(['Prazo desejado'])
       expect(enrollment.reload).to be_active
-
-      first_attempt = enrollment.attempts.order(:scheduled_at).first
-      expect(first_attempt).to be_cancelled
-      remaining_attempts.each { |attempt| expect(attempt.reload).to be_scheduled }
+      expect(enrollment.attempts.pluck(:result).uniq).to eq(['scheduled'])
     end
   end
 
@@ -69,7 +66,8 @@ RSpec.describe ScanSolo::Cadence::ReplyCompletenessDetector do
 
       expect(result.missing_fields).to eq(['Área', 'Prazo desejado'])
       expect(enrollment.reload).to be_active
-      expect(enrollment.attempts.order(:scheduled_at).map(&:result)).to eq(%w[cancelled scheduled scheduled])
+      # RF-43 (RNF-11): a partial reply no longer cancels the next attempt here.
+      expect(enrollment.attempts.order(:scheduled_at).map(&:result)).to eq(%w[scheduled scheduled scheduled])
     end
   end
 end

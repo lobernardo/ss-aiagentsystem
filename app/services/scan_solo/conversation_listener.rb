@@ -6,7 +6,9 @@
 #
 # Incoming: bootstraps the conversation's opportunity (RF-22); the creating
 # message keeps it in novo_lead, later ones refresh the interaction time and
-# apply the Novo Lead -> Em Contato rule (RF-23); the deterministic opt-out
+# apply the Novo Lead -> Em Contato rule (RF-23) and then interrupt the
+# pending cadence attempt (RF-43, ScanSolo::Cadence::ReplyInterruptionService)
+# before and independently of the AI turn; the deterministic opt-out
 # keyword check runs independently of the AI turn (RF-16 (b)); then the AI
 # turn job is enqueued.
 #
@@ -52,6 +54,7 @@ class ScanSolo::ConversationListener < BaseListener
     unless bootstrap.created?
       bootstrap.opportunity.record_customer_interaction!(at: message.created_at)
       ScanSolo::Pipeline::InboundMessageTransitionRule.call(message: message)
+      ScanSolo::Cadence::ReplyInterruptionService.call(opportunity: bootstrap.opportunity, message: message)
     end
 
     keywords = ScanSolo::AiAgentConfig.published_for(message.account).opt_out_keywords

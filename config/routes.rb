@@ -460,7 +460,7 @@ Rails.application.routes.draw do
           resources :upload, only: [:create]
 
           namespace :scan_solo do
-            resources :pipeline_opportunities, only: [:index, :show, :update] do
+            resources :pipeline_opportunities, only: [:index, :show, :update, :create] do
               member do
                 post :stage_transitions
               end

@@ -7,6 +7,10 @@ class ScanSolo::PipelineOpportunityPolicy < ScanSolo::ApplicationPolicy
     true
   end
 
+  def create?
+    account_user.present?
+  end
+
   def update?
     true
   end

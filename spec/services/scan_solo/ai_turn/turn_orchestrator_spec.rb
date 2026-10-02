@@ -284,10 +284,12 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
       expect(ScanSolo::CadenceAttempt.scheduled.count).to eq(0)
     end
 
-    it 'cancels only the next scheduled attempt on a partial reply' do
+    # RF-43 changes this expectation (RNF-11): the next attempt is interrupted by the
+    # listener (ScanSolo::Cadence::ReplyInterruptionService), not by the turn.
+    it 'cancels no attempt on a partial reply' do
       described_class.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
 
-      expect(enrollment.attempts.order(:step).pluck(:result)).to eq(%w[cancelled scheduled scheduled])
+      expect(enrollment.attempts.order(:step).pluck(:result)).to eq(%w[scheduled scheduled scheduled])
     end
 
     it 'leaves an enrollment created by the triggering message itself untouched' do

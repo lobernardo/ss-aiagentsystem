@@ -4,8 +4,9 @@
 # lead; data only in the Contact does not count), never an NLP/intent
 # classifier. A full reply (every required qualification field for the
 # opportunity's stage now satisfied) stops/recalculates every pending
-# cadence attempt; a partial reply cancels only the immediate pending send,
-# leaving the remaining schedule untouched.
+# cadence attempt. A partial reply changes nothing here: every reply already
+# interrupted the immediate pending send through
+# ScanSolo::Cadence::ReplyInterruptionService (RF-43).
 class ScanSolo::Cadence::ReplyCompletenessDetector
   Result = Struct.new(:complete, :missing_fields, keyword_init: true) do
     def complete?
@@ -27,12 +28,7 @@ class ScanSolo::Cadence::ReplyCompletenessDetector
 
   def call
     missing = missing_fields
-
-    if missing.empty?
-      ScanSolo::Cadence::LifecycleService.cancel_all_for_opportunity!(opportunity)
-    else
-      cancel_immediate_pending!
-    end
+    ScanSolo::Cadence::LifecycleService.cancel_all_for_opportunity!(opportunity) if missing.empty?
 
     Result.new(complete: missing.empty?, missing_fields: missing)
   end
@@ -44,14 +40,5 @@ class ScanSolo::Cadence::ReplyCompletenessDetector
   def missing_fields
     config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
     ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config).missing_labels
-  end
-
-  def cancel_immediate_pending!
-    opportunity.cadence_enrollments.active.find_each do |enrollment|
-      next_attempt = enrollment.attempts.scheduled.order(:scheduled_at).first
-      next if next_attempt.blank?
-
-      ScanSolo::Cadence::AttemptEvidenceRecorder.record_cancelled!(next_attempt)
-    end
   end
 end

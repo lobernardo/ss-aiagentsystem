@@ -9,8 +9,13 @@
 # CT-02 / RNF-06: index preloads everything its items render and groups the
 # next follow-up of the whole list in one query, so its query count does not
 # grow with the number of opportunities.
+#
+# CT-01 / RF-05: create ("Novo lead") rejects malformed input here with 422
+# before any write; the database rules (opt-out, conflict, open opportunity)
+# belong to ScanSolo::Pipeline::ManualLeadService.
 class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Accounts::ScanSolo::BaseController
   STAGE_TRANSITION_IDEMPOTENCY_WINDOW = 5.seconds
+  E164_PHONE_REGEXP = /\A\+[1-9]\d{1,14}\z/
 
   before_action :set_opportunity, only: [:show, :update, :stage_transitions]
 
@@ -26,6 +31,21 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
   def show
     authorize(@opportunity)
     project_lead_state
+  end
+
+  def create
+    authorize(::ScanSolo::PipelineOpportunity)
+    error = manual_lead_input_error
+    return render(json: { error: error }, status: :unprocessable_entity) if error
+
+    result = ::ScanSolo::Pipeline::ManualLeadService.call(account: Current.account, actor: Current.user, inbox: manual_lead_inbox,
+                                                          **manual_lead_attributes)
+    @opportunity = result.opportunity
+    @contact_created = result.contact_created
+    project_lead_state
+    render :create, status: :created
+  rescue CustomExceptions::ScanSolo::ManualLeadRejected => e
+    render json: { error: e.code, opportunity_id: e.opportunity_id }.compact, status: :unprocessable_entity
   end
 
   def update
@@ -67,6 +87,46 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
 
   def update_params
     params.permit(:owner_id)
+  end
+
+  def create_params
+    params.permit(:name, :phone_number, :email, :company, :owner_id, :inbox_id)
+  end
+
+  def manual_lead_attributes
+    input = create_params
+    { name: input[:name], phone_number: input[:phone_number], email: input[:email].presence, company: input[:company].presence,
+      owner_id: input[:owner_id].presence }
+  end
+
+  def manual_lead_input_error
+    input = create_params
+    return 'missing_name' if input[:name].blank?
+    return 'invalid_phone' unless input[:phone_number].to_s.match?(E164_PHONE_REGEXP)
+    return 'invalid_email' if input[:email].present? && !input[:email].match?(URI::MailTo::EMAIL_REGEXP)
+
+    manual_lead_reference_error
+  end
+
+  def manual_lead_reference_error
+    return 'invalid_owner' if create_params[:owner_id].present? && !Current.account.users.exists?(id: create_params[:owner_id])
+
+    'invalid_inbox' if manual_lead_inbox.blank?
+  end
+
+  # UI-01: a WhatsApp inbox of the published allowlist; `inbox_id` may be
+  # omitted only when exactly one such inbox exists.
+  def manual_lead_inbox
+    @manual_lead_inbox ||= begin
+      allowlisted = Current.account.inboxes.where(id: ::ScanSolo::AiAgentConfig.published_for(Current.account)&.allowed_inbox_ids.to_a,
+                                                  channel_type: 'Channel::Whatsapp')
+      if create_params[:inbox_id].present?
+        allowlisted.find_by(id: create_params[:inbox_id])
+      else
+        candidates = allowlisted.limit(2).to_a
+        candidates.first if candidates.one?
+      end
+    end
   end
 
   def idempotent_replay?

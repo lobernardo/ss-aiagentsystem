@@ -77,6 +77,61 @@ RSpec.describe ScanSolo::ConversationListener do
     end
   end
 
+  describe 'RF-43: every reply interrupts the pending cadence attempt, independently of the AI turn' do
+    let!(:opportunity) do
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
+    end
+    let!(:enrollment) do
+      definition = ScanSolo::CadenceDefinition.create!(stage: 'em_qualificacao', version: 1, offsets: [24, 48, 72])
+      travel_to(1.hour.ago) { ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: definition) }
+    end
+    let(:interruptions) { ScanSolo::AuditEvent.where(event_type: 'cadence.attempt_interrupted_by_reply') }
+
+    # A partial reply: the completeness rule of the turn (RF-28) cancels nothing.
+    before do
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(required_qualification_fields: %w[Metragem])
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+    end
+
+    def results
+      enrollment.attempts.order(:scheduled_at).pluck(:result)
+    end
+
+    it 'cancels the next attempt even when the turn ends superseded' do
+      message = incoming
+      dispatch(message)
+      incoming('mais uma coisa')
+
+      ScanSolo::AiTurn::TurnOrchestrator.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(ScanSolo::AiTurn.find_by!(message_id: message.id)).to have_attributes(invocation_status: 'suppressed', failure_reason: 'superseded')
+      expect(results).to eq(%w[cancelled scheduled scheduled])
+      expect(interruptions.count).to eq(1)
+    end
+
+    it 'cancels the next attempt even when the turn fails' do
+      message = incoming
+      dispatch(message)
+      allow(ScanSolo::TestMode::MockLlmProvider).to receive(:call).and_raise(StandardError, 'boom')
+
+      ScanSolo::AiTurn::TurnOrchestrator.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(ScanSolo::AiTurn.find_by!(message_id: message.id)).to be_failed
+      expect(results).to eq(%w[cancelled scheduled scheduled])
+      expect(interruptions.count).to eq(1)
+    end
+
+    it 'does not interrupt on the message that creates the opportunity' do
+      other_conversation = create(:conversation, account: account, inbox: inbox, contact: create(:contact, account: account))
+      message = create(:message, account: account, inbox: inbox, conversation: other_conversation, message_type: :incoming,
+                                 sender: other_conversation.contact)
+
+      dispatch(message)
+
+      expect(interruptions).to be_none
+    end
+  end
+
   describe 'RF-16 (b): deterministic opt-out keyword' do
     it 'marks the contact and cancels its enrollments for PARAR' do
       dispatch(incoming('PARAR'))

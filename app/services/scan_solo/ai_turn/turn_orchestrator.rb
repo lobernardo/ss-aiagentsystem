@@ -147,10 +147,12 @@ class ScanSolo::AiTurn::TurnOrchestrator
                 .exists?
   end
 
-  # RF-28: the customer's reply cancels/recalculates the cadence that was
+  # RF-28: a complete customer reply cancels/recalculates the cadence that was
   # already running when the message arrived -- the enrollment created by
   # this very message (bootstrap or stage entry) is left alone, and a burst
-  # applies the rule once, through its surviving (non-superseded) turn.
+  # applies the rule once, through its surviving (non-superseded) turn. The
+  # partial-reply interruption of the next attempt is not here: the listener
+  # applies it to every reply, whatever the turn's outcome (RF-43).
   def apply_reply_completeness(turn)
     return if turn.suppressed? && turn.failure_reason == 'superseded'
 

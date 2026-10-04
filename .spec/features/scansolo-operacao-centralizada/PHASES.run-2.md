@@ -12,6 +12,7 @@ Regras transversais (de `AGENTS.md`/`CLAUDE.md`, `docs/agents/architecture.md`, 
 - Estilo: classe compacta `class ScanSolo::...`, 1 classe por arquivo, ≤150 colunas, header comment com RF/CT/RNF. Vue com `<script setup>`, Tailwind e `components-next/`.
 - Specs Ruby e rubocop: `docker exec scansolo-phase2-test sh -c 'cd /app && bundle exec rspec <paths>'` (idem `bundle exec rubocop <paths>`). Depois da Phase 1: `docker exec scansolo-phase2-test sh -c 'cd /app && RAILS_ENV=test bundle exec rails db:migrate'`. Vitest: `pnpm test <paths>`. ESLint com os `.vue` explícitos.
 - RNF-11: um spec existente só muda de expectativa quando reflete mudança intencional do SPEC, citando o requisito na task. Nunca flexibilizar, remover ou pular (`skip`/`pending`/`xit`) um teste para fazê-lo passar.
+- Base de comparação da feature: `8a168c0590` (`docs(spec): plano scansolo-operacao-centralizada`), o commit de primeiro pai imediatamente anterior ao 1º commit de código (`3eaed50351`) e que só altera `.spec/`. Todo `git diff <base>` desta feature usa esse commit. `main` não tem ancestral comum com esta branch, e `origin/feat/release-2026-09-25` (merge-base `c100e87d83`) inclui o lead-state e o ciclo 1, que não são desta feature e acusariam falsos diffs em `ai_turn/` e nos specs.
 - As Phases 7, 16, 17, 18 e 19 NÃO são executadas pelo `ralph.sh`: são de operador/humano (configuração Chatwoot/Meta, Make via MCP com aprovação do desenvolvedor, verificação com evidência). Os checkboxes ficam para registro e só são marcados `[x]` com a evidência descrita.
 
 ## Phase 8: Solicitação de orçamento e geração com dados comerciais
@@ -273,9 +274,9 @@ Antes de implementar, leia:
       Arquivos: nenhum arquivo novo (corrige só quebras residuais nos arquivos já alterados)
       Mudança:
         • rubocop nos `.rb` alterados; `pnpm eslint` com os `.js`/`.vue` explícitos; `pnpm test` nos specs tocados; `./scripts/ralph-test.sh`.
-        • Checagens RNF-05: diff de `ai_turn/` restrito a `attempt_runner.rb`, `prompt_builder.rb` e `input_guardrail.rb`; `output_validator.rb` sem diff.
-        • RNF-10/RF-44: sem `remove_*`, seeds de cadência intactos, 6 estados de controle.
-        • RNF-11: `git diff main -- spec app/javascript` sem `skip`/`pending`/`xit`/`it.skip` novos; cada spec existente alterado citado numa task com o requisito.
+        • Checagens RNF-05: `git diff 8a168c0590 --stat -- app/services/scan_solo/ai_turn/` restrito a `attempt_runner.rb`, `prompt_builder.rb` e `input_guardrail.rb`, mais `turn_orchestrator.rb` só com comentário (autorizado no T13); `output_validator.rb` sem diff.
+        • RNF-10/RF-44: sem `remove_*`, seeds de cadência intactos (`git diff 8a168c0590 -- db/seeds/scansolo_cadence_definitions.rb` vazio), 6 estados de controle.
+        • RNF-11: `git diff 8a168c0590 -- spec app/javascript` sem `skip`/`pending`/`xit`/`it.skip` novos; cada spec existente alterado citado numa task com o requisito.
         • RF-55 Etapa 1: nenhuma tela chama `approveProposal`/`sendProposal`; rotas `approve`/`send` ainda presentes.
         • RNF-07 (sem segredos literais) e enterprise (0 referências).
       Cobre: RNF-04, RNF-05, RNF-07, RNF-08, RNF-10, RNF-11, RF-44, RF-46, RF-55

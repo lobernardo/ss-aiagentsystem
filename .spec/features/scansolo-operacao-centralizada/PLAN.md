@@ -9,6 +9,7 @@
 - Architecture references: `AGENTS.md` (= `CLAUDE.md`), `docs/agents/architecture.md`, `docs/agents/domain_rules.md` (também consultados: `docs/agents/data_model.md`, `docs/agents/coding_guidelines.md`). Contratos base: `.spec/features/scansolo-chatwoot-platform/openapi.yaml` (v1.1.0), `.spec/features/scansolo-production-complete/openapi.yaml` (v1.2.0) e `asyncapi.yaml` (v1.2.0), `.spec/features/scansolo-agent-qualification-continuity/asyncapi.yaml` (v1.3.0, CT-05 `qualification`) e `.spec/features/scansolo-agent-lead-state/openapi.yaml` (v1.5.0, `lead_state`).
 
 ### Regras de arquitetura preservadas (valem para todas as tasks)
+- Base de comparação da feature: `8a168c0590` (`docs(spec): plano scansolo-operacao-centralizada`), o commit de primeiro pai imediatamente anterior ao 1º commit de código (`3eaed50351`) e que só altera `.spec/`. Todos os `git diff <base>` das tasks usam esse commit. `main` não tem ancestral comum com esta branch (`git merge-base main HEAD` vazio), e `origin/feat/release-2026-09-25` (merge-base `c100e87d83`) inclui o lead-state e o ciclo 1, que não são desta feature: contra ele, `ai_turn/` mostra 10 arquivos alterados por aquelas features e o RNF-05 falharia sem motivo.
 - `docs/agents/architecture.md` "Layer responsibilities":
   - Controllers ficam com o gate 404 `scansolo_enabled` (herdado do `BaseController`), o Pundit (403) e a validação de formato da requisição (422). Exemplos: CT-01 (telefone/nome/e-mail/responsável/inbox), CT-08 e RF-54.
   - Services ficam com regras, transações, locks e auditoria: `ManualLeadService`, `Quote::*`, `Negotiation::RequestService`, `Proposal::DeliveryService` e `Cadence::ReplyInterruptionService`.
@@ -408,7 +409,7 @@ Origem: T01 (coluna), T02 (validação) e T08 (`lead_source_classifier.rb`, boot
   - `reply_interruption_service_spec.rb`: resposta parcial → próxima `scheduled` → `cancelled` + 1 auditoria; rajada de 3 mensagens sem saída → 1 cancelada, as demais com `scheduled_at` inalterado e tentativas `sent` intactas; cliente → saída da IA → cliente → 2 cancelamentos; matrícula criada depois da mensagem → 0.
   - `conversation_listener_spec.rb`: turno `superseded` ou `failed` não impede o cancelamento.
   - `reply_completeness_detector_spec.rb`: completa → cancela tudo; parcial → 0 cancelamentos (expectativa alterada pelo RF-43, conforme RNF-11).
-  - `git diff --stat main -- db/seeds/scansolo_cadence_definitions.rb` vazio.
+  - `git diff --stat 8a168c0590 -- db/seeds/scansolo_cadence_definitions.rb` vazio.
 - **Risk**: Medium — muda o comportamento da cadência em produção (correção pedida). O lock por matrícula evita cancelamento duplo em rajada.
 - **Dependencies**: none
 
@@ -898,10 +899,10 @@ Origem: T01 (coluna), T02 (validação) e T08 (`lead_source_classifier.rb`, boot
 - **Files**: nenhum arquivo novo. A task só corrige quebras residuais nos arquivos já alterados.
 - **Change**: rodar e corrigir:
   - rubocop em todos os `.rb` alterados; `pnpm eslint <arquivos .js/.vue alterados>` (os `.vue` explícitos); `pnpm test` nos specs tocados; `./scripts/ralph-test.sh`.
-  - RNF-05: `git diff main --stat -- app/services/scan_solo/ai_turn/` só em `attempt_runner.rb`, `prompt_builder.rb` (ACTION_DESCRIPTIONS + 1 regra) e `input_guardrail.rb`; `output_validator.rb` sem diff; 0 migrações que atualizem valores de `scan_solo_ai_agent_configs`.
-  - RNF-10/RF-44: `grep -nE "remove_column|rename_column|drop_table|change_column" db/migrate/20261001*` vazio; `git diff main -- db/seeds/scansolo_cadence_definitions.rb` vazio; enum `ai_control_state` com os mesmos 6 valores (RF-46).
+  - RNF-05: `git diff 8a168c0590 --stat -- app/services/scan_solo/ai_turn/` só em `attempt_runner.rb`, `prompt_builder.rb` (ACTION_DESCRIPTIONS + 1 regra) e `input_guardrail.rb`, mais `turn_orchestrator.rb` só com comentário (autorizado no T13); `output_validator.rb` sem diff; 0 migrações que atualizem valores de `scan_solo_ai_agent_configs`.
+  - RNF-10/RF-44: `grep -nE "remove_column|rename_column|drop_table|change_column" db/migrate/20261001*` vazio; `git diff 8a168c0590 -- db/seeds/scansolo_cadence_definitions.rb` vazio; enum `ai_control_state` com os mesmos 6 valores (RF-46).
   - RNF-07: `grep -rnE "secret|Bearer|api_access_token" app/services/scan_solo/quote app/services/scan_solo/notifications` só nomes, sem literais.
-  - RNF-11: `git diff main -- spec app/javascript | grep -E '^\+.*\b(skip|pending|xit|xdescribe|it\.skip)\b'` vazio, e cada spec existente alterado é citado em alguma task com o requisito que justifica a mudança.
+  - RNF-11: `git diff 8a168c0590 -- spec app/javascript | grep -E '^\+\s*(skip|pending|xit|xdescribe|xcontext)\b|\b(it|describe|test)\.(skip|todo)\('` vazio (a regex casa só as chamadas de RSpec/Vitest, não o valor de enum `pending` nem textos de exemplo), e cada spec existente alterado é citado em alguma task com o requisito que justifica a mudança.
   - RF-55 Etapa 1: `grep -rn "approveProposal\|sendProposal\|requestSend" app/javascript/dashboard/routes` vazio; rotas `approve`/`send` ainda presentes em `config/routes.rb`.
   - Enterprise: `grep -rnE "enterprise/|Captain::"` nos arquivos alterados vazio.
 - **Covers**: RNF-04, RNF-05, RNF-07, RNF-08, RNF-10, RNF-11, RF-44, RF-46, RF-55 (Etapa 1)
@@ -997,10 +998,10 @@ Origem: T01 (coluna), T02 (validação) e T08 (`lead_source_classifier.rb`, boot
 | 20 — Remoção condicional do aprovar/enviar legado | T32 | No (só remove com "sem uso" em T41; senão conclui sem diff) |
 
 Deployabilidade:
-- Cada fase de código (1–6, 8–16) deixa a aplicação consistente sozinha.
+- Cada fase de código (1–6, 8–15 e 20) deixa a aplicação consistente sozinha.
 - As fases 1–2 são aditivas e sem efeito visível. As fases 3–5 entregam AC1–AC3 e AC11. A fase 6 não tem efeito de produção (só serviços sem chamador).
 - A fase 7 (HG-A) tem de estar concluída antes do deploy da fase 8, que liga o primeiro efeito comercial automático.
-- A fase 10 só produz entrega quando houver callback, o que só acontece depois da fase 19.
+- A fase 10 só produz entrega quando houver callback, o que só acontece depois da ativação da `Entrada` na fase 18 (T39).
 - A desativação de Aprovar/Enviar (RF-55 Etapa 1) acontece na fase 13; as rotas e o código legado seguem existindo até a fase 20, que só remove com a evidência de não uso da fase 19.
 - As fases 7, 16, 17, 18 e 19 não são executadas pelo `ralph.sh`: são de operador/humano (Make via MCP com aprovação do desenvolvedor). A fase 20 volta a ser código e exige deploy.
 

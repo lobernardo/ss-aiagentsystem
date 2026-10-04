@@ -14,7 +14,10 @@
 # 3. the next action recorded by the model in this turn stays, otherwise the
 #    default of the current intent is recorded;
 # 4. one `lead_state.qualification_completed` audit event carries the turn's
-#    correlation id.
+#    correlation id;
+# 5. with next action `proposta`, ScanSolo::QuoteRequestJob is enqueued only
+#    after every open transaction commits, so a rolled-back attempt requests
+#    no quote (RF-12).
 class ScanSolo::LeadState::CompletionService
   STAGE_PATH = {
     'novo_lead' => %w[em_qualificacao qualificado],
@@ -43,6 +46,7 @@ class ScanSolo::LeadState::CompletionService
       writer.record_next_action!(value: ScanSolo::LeadState::DEFAULT_NEXT_ACTION_BY_INTENT[lead_state.intent], source_message_id: turn.message_id)
     end
     record_audit!
+    request_quote! if lead_state.next_action == 'proposta'
   end
 
   private
@@ -63,6 +67,11 @@ class ScanSolo::LeadState::CompletionService
     STAGE_PATH.fetch(opportunity.stage, []).each do |stage|
       ScanSolo::Pipeline::StageTransitionService.new(opportunity: opportunity, target_stage: stage).call
     end
+  end
+
+  def request_quote!
+    opportunity_id = opportunity.id
+    ActiveRecord.after_all_transactions_commit { ScanSolo::QuoteRequestJob.perform_later(opportunity_id) }
   end
 
   def record_audit!

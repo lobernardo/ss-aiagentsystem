@@ -8,6 +8,9 @@
 # only the provider callback does (RF-76).
 # `proposal_approve`/`proposal_send` are requires_confirmation, matching
 # ScanSolo::AiTurn::InputGuardrail::CONFIRMATION_ONLY_ACTIONS.
+# RF-25: `proposal_generate` is no longer offered to the model (generation
+# follows the validated commercial reply); the handler stays registered for
+# the historical audit trail and only generates from that reply.
 # rubocop:disable Style/OneClassPerFile -- RF-73 keeps the three separable
 # proposal actions colocated, per the plan's single proposal_actions.rb file.
 module ScanSolo::Actions::ProposalActions
@@ -37,7 +40,9 @@ module ScanSolo::Actions::ProposalActions
     def self.call(params:, **)
       provider = AfterCommitProvider.new(ScanSolo::Proposal::Integration.provider!)
       opportunity = ScanSolo::PipelineOpportunity.find(params[:opportunity_id])
-      version = ScanSolo::Proposal::GenerateService.call(opportunity: opportunity, correlation_id: SecureRandom.uuid, provider: provider)
+      version = ScanSolo::Proposal::GenerateService.call(
+        opportunity: opportunity, quote_request: opportunity.quote_request, correlation_id: SecureRandom.uuid, provider: provider
+      )
 
       { status: 'requested', action: 'proposal.generate', opportunity_id: opportunity.id, proposal_version_id: version.id }
     end

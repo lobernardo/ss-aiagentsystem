@@ -100,8 +100,10 @@ RSpec.describe ScanSolo::Actions::Registry do
       end.to raise_error(ScanSolo::Actions::Executor::InvalidParamsError)
     end
 
+    # RF-25 (RNF-11): the handler stays registered and generates only from the validated quote reply.
     it 'executes proposal_generate as an automatic action' do
       allow(ScanSolo::Proposal::Integration).to receive(:provider!).and_return(ScanSolo::Proposal::MockProvider)
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
       result = described_class.call(
         action_id: 'proposal_generate',
         params: { opportunity_id: opportunity.id },

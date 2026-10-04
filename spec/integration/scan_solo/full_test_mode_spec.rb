@@ -262,8 +262,10 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do #
       ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
     end
 
+    # RF-25 (RNF-11): generation needs the validated quote reply.
     it 'generates a proposal version via the registered mock provider' do
-      version = ScanSolo::Proposal::GenerateService.call(opportunity: opportunity, correlation_id: SecureRandom.uuid)
+      quote_request = ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
+      version = ScanSolo::Proposal::GenerateService.call(opportunity: opportunity, quote_request: quote_request, correlation_id: SecureRandom.uuid)
 
       expect(version).to be_generated
       expect(version.value).to eq(ScanSolo::Proposal::MockProvider::DEFAULT_VALUE)

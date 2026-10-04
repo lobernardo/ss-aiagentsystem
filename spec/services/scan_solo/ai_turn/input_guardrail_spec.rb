@@ -39,5 +39,15 @@ RSpec.describe ScanSolo::AiTurn::InputGuardrail do
 
       expect(outcome[:allowed_actions]).not_to include('proposal_approve', 'proposal_send')
     end
+
+    it 'never offers proposal_generate, even with the proposal integration configured, and keeps the other offers (RF-25)' do
+      allow(ScanSolo::Proposal::Integration).to receive(:configured?).and_return(true)
+
+      outcome = described_class.call(config: config, content: 'ola')
+
+      expect(outcome[:allowed_actions]).to eq(%w[qualification_field stage_transition private_note cadence_signal human_handoff lead_state_update])
+      expect(described_class::ALL_ACTIONS).to include('proposal_generate')
+      expect(ScanSolo::Actions::Registry::HANDLERS).to include('proposal_generate' => ScanSolo::Actions::ProposalActions::Generate)
+    end
   end
 end

@@ -106,6 +106,54 @@ RSpec.describe ScanSolo::LeadState::CompletionService do
     end
   end
 
+  describe 'quote request trigger (RF-12)' do
+    before do
+      writer.set_intent!(intent: 'orcamento', source_message_id: message.id)
+      writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: message.id)
+    end
+
+    it 'enqueues the quote request job only after the transaction commits' do
+      ActiveRecord::Base.transaction do
+        described_class.call(opportunity: opportunity, turn: turn)
+
+        expect(ScanSolo::QuoteRequestJob).not_to have_been_enqueued
+      end
+
+      expect(ScanSolo::QuoteRequestJob).to have_been_enqueued.with(opportunity.id).once
+    end
+
+    it 'enqueues nothing when the attempt rolls back' do
+      ActiveRecord::Base.transaction do
+        described_class.call(opportunity: opportunity, turn: turn)
+        raise ActiveRecord::Rollback
+      end
+
+      expect(ScanSolo::QuoteRequestJob).not_to have_been_enqueued
+    end
+
+    it 'enqueues nothing for a next action other than proposta' do
+      writer.set_intent!(intent: 'duvida', source_message_id: message.id)
+
+      described_class.call(opportunity: opportunity, turn: turn)
+
+      expect(lead_state).to be_concluida
+      expect(ScanSolo::QuoteRequestJob).not_to have_been_enqueued
+    end
+
+    it 'enqueues nothing when the lead state backfill concludes an opportunity' do
+      opportunity.update!(stage: :qualificado)
+      ScanSolo::LeadStateEvent.delete_all
+      ScanSolo::LeadState.delete_all
+      Rake::Task['scansolo:backfill_lead_states'].reenable
+
+      expect { Rake::Task['scansolo:backfill_lead_states'].invoke }.to output.to_stdout
+
+      expect(opportunity.reload.lead_state).to be_concluida
+      expect(ScanSolo::QuoteRequestJob).not_to have_been_enqueued
+      expect(ScanSolo::QuoteRequest.count).to eq(0)
+    end
+  end
+
   it 'does not conclude while a required field is only inferido (RF-04)' do
     writer.apply_field!(key: 'area', value: '800 m²', status: 'inferido', source_message_id: message.id)
 

@@ -21,7 +21,16 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
   describe 'POST .../pipeline_opportunities/:id/proposals/generate' do
     let(:path) { "/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities/#{opportunity.id}/proposals/generate" }
 
-    it 'generates a proposal version (RF-73/RF-75)' do
+    def create_quote_request(status)
+      ScanSolo::QuoteRequest.create!(
+        account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: status,
+        commercial: { 'total_value' => '12500.0', 'schedule' => '30 dias', 'scope' => 'Sondagem SPT', 'payment_terms' => 'À vista' }
+      )
+    end
+
+    # RF-25 (RNF-11): generation now requires the validated quote reply, so the example creates a `replied` request.
+    it 'generates a proposal version from the validated quote reply (RF-73/RF-75, RF-24)' do
+      quote_request = create_quote_request(:replied)
       ScanSolo::AiAgentConfig.draft_for!(account).update!(required_qualification_fields: ['Área'])
       ScanSolo::AiAgent::PublishService.new(account: account).call
       ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
@@ -32,15 +41,35 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       expect(response).to have_http_status(:success)
       expect(response.parsed_body['status']).to eq('generated')
       expect(response.parsed_body['is_current']).to be true
+      expect(ScanSolo::ProposalVersion.sole.quote_request).to eq(quote_request)
     end
 
+    # RF-25 (RNF-11): with the validated reply in place, the field gate still rejects.
     it 'rejects generation with required fields incomplete (RF-74)' do
+      create_quote_request(:replied)
       contact.update!(custom_attributes: {})
 
       post path, params: { correlation_id: SecureRandom.uuid }, headers: agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:unprocessable_entity)
       expect(ScanSolo::Proposal.where(opportunity: opportunity)).to be_none
+    end
+
+    it 'rejects generation without a quote request (RF-25)' do
+      post path, params: { correlation_id: SecureRandom.uuid }, headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body.to_s).to include('sem resposta de orçamento validada')
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
+    end
+
+    it 'rejects generation while the quote request awaits the reply (RF-25)' do
+      create_quote_request(:awaiting_reply)
+
+      post path, params: { correlation_id: SecureRandom.uuid }, headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
     end
   end
 

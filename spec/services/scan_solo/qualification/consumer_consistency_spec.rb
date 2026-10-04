@@ -41,8 +41,10 @@ RSpec.describe 'ScanSolo qualification consumer consistency' do # rubocop:disabl
                                             retrieval_service: retrieval)[:pipeline_context]
   end
   let(:reply_completeness_missing) { ScanSolo::Cadence::ReplyCompletenessDetector.call(opportunity: opportunity.reload).missing_fields }
+  # RF-25 (RNF-11): generation needs the validated quote reply, so the field gate is what is compared.
   let(:generate_service_missing) do
-    ScanSolo::Proposal::GenerateService.call(opportunity: opportunity.reload, correlation_id: SecureRandom.uuid,
+    quote_request = ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
+    ScanSolo::Proposal::GenerateService.call(opportunity: opportunity.reload, quote_request: quote_request, correlation_id: SecureRandom.uuid,
                                              provider: ScanSolo::Proposal::MockProvider)
     []
   rescue ActiveRecord::RecordInvalid => e

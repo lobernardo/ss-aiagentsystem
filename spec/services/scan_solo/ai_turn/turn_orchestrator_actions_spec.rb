@@ -19,13 +19,13 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
                      content: 'A metragem é 5000')
   end
 
+  # RF-25 (RNF-11): `proposal_generate` is no longer offered, so it left the one-of-each turn.
   let(:one_of_each) do
     [
       { 'action_id' => 'qualification_field', 'params' => { 'fields' => { 'metragem' => '5000' } } },
       { 'action_id' => 'stage_transition', 'params' => { 'target_stage' => 'qualificado' } },
       { 'action_id' => 'private_note', 'params' => { 'content' => 'Cliente com orçamento definido' } },
       { 'action_id' => 'cadence_signal', 'params' => { 'signal' => 'partial_reply' } },
-      { 'action_id' => 'proposal_generate', 'params' => {} },
       { 'action_id' => 'human_handoff', 'params' => { 'reason' => 'pronto para negociar' } }
     ]
   end
@@ -67,10 +67,11 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
       expect { run_turn(one_of_each) }.not_to change(ScanSolo::AgentActionExecution, :count)
     end
 
-    it 'offers the six base ids plus proposal_generate only while the proposal integration is configured' do
+    # RF-25 (RNF-11): `proposal_generate` is never offered, with or without the proposal integration.
+    it 'offers the six base ids, never proposal_generate, whether or not the proposal integration is configured' do
       run_turn([])
       offered = ScanSolo::TestMode::MockLlmProvider.last_payload[:schema][:schema][:properties][:actions][:items][:properties][:action_id][:enum]
-      expect(offered).to eq(%w[qualification_field stage_transition private_note proposal_generate cadence_signal human_handoff lead_state_update])
+      expect(offered).to eq(%w[qualification_field stage_transition private_note cadence_signal human_handoff lead_state_update])
 
       allow(ScanSolo::Proposal::Integration).to receive(:configured?).and_return(false)
       next_message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, sender: contact)
@@ -86,23 +87,19 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
       expect(other_conversation.messages.where(private: true).count).to eq(0)
     end
 
-    it 'issues the proposal provider request once the turn commits' do
-      opportunity.lead_state.update!(fields: { 'metragem' => { 'value' => '5000', 'status' => 'confirmado' } })
-
-      run_turn([{ 'action_id' => 'proposal_generate', 'params' => {} }])
-
-      expect(ScanSolo::ProposalVersion.sole).to be_generated
-    end
-
-    it 'never issues the proposal provider request when the turn rolls back' do
+    # RF-25 (RNF-11): replaces "issues the proposal provider request once the turn commits" and its rollback twin --
+    # the model can no longer request generation, even with a validated quote reply in place.
+    it 'never runs a model-requested proposal_generate, which is not offered' do
       allow(ScanSolo::Proposal::MockProvider).to receive(:request_generation)
-      allow(ScanSolo::AiTurn::ResponseSender).to receive(:call).and_raise(ActiveRecord::RecordInvalid)
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
       opportunity.lead_state.update!(fields: { 'metragem' => { 'value' => '5000', 'status' => 'confirmado' } })
 
-      run_turn([{ 'action_id' => 'proposal_generate', 'params' => {} }])
+      turn = run_turn([{ 'action_id' => 'proposal_generate', 'params' => {} }])
 
+      expect(turn).not_to be_succeeded
       expect(ScanSolo::Proposal::MockProvider).not_to have_received(:request_generation)
       expect(ScanSolo::ProposalVersion.count).to eq(0)
+      expect(ai_replies.count).to eq(0)
     end
   end
 

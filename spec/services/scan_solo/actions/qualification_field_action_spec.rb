@@ -245,8 +245,11 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
       call(fields: { email: 'lead@example.com' })
 
       expect(opportunity.reload.stage).to eq('em_qualificacao')
+      # RF-25 (RNF-11): with the validated quote reply, the field gate is what rejects.
+      quote_request = ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
       expect do
-        ScanSolo::Proposal::GenerateService.call(opportunity: opportunity, correlation_id: 'corr-gate', provider: double)
+        ScanSolo::Proposal::GenerateService.call(opportunity: opportunity, quote_request: quote_request, correlation_id: 'corr-gate',
+                                                 provider: double)
       end.to raise_error(ActiveRecord::RecordInvalid, %r{Cidade / UF})
       expect(ScanSolo::ProposalVersion.count).to eq(0)
     end

@@ -11,6 +11,11 @@ RSpec.describe ScanSolo::Proposal::GenerateService do
   end
   let(:writer) { ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state) }
   let(:correlation_id) { SecureRandom.uuid }
+  let(:commercial) { { 'total_value' => '12500.0', 'schedule' => '30 dias', 'scope' => 'Sondagem SPT', 'payment_terms' => '50% na assinatura' } }
+  let(:quote_request) do
+    ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied,
+                                   commercial: commercial, replied_at: Time.current)
+  end
 
   before do
     draft = ScanSolo::AiAgentConfig.draft_for!(account)
@@ -18,8 +23,62 @@ RSpec.describe ScanSolo::Proposal::GenerateService do
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
-  def call
-    described_class.call(opportunity: opportunity, correlation_id: correlation_id)
+  # RF-25 (RNF-11): every generation now needs the validated quote reply.
+  def call(request = quote_request)
+    described_class.call(opportunity: opportunity, quote_request: request, correlation_id: correlation_id)
+  end
+
+  describe 'validated quote reply gate (RF-24, RF-25, RNF-02)' do
+    before { writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil) }
+
+    it 'rejects without a quote request and creates no version' do
+      expect { call(nil) }.to raise_error(ActiveRecord::RecordInvalid, /sem resposta de orçamento validada/)
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
+    end
+
+    it 'rejects a request still awaiting_reply' do
+      quote_request.update!(status: :awaiting_reply)
+
+      expect { call }.to raise_error(ActiveRecord::RecordInvalid, /sem resposta de orçamento validada/)
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
+    end
+
+    it 'rejects a request of another opportunity' do
+      other_contact = create(:contact, account: account)
+      other = ScanSolo::PipelineOpportunity.create!(account: account, contact: other_contact,
+                                                    conversation: create(:conversation, account: account, contact: other_contact))
+      quote_request.update!(opportunity: other)
+
+      expect { call }.to raise_error(ActiveRecord::RecordInvalid, /sem resposta de orçamento validada/)
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
+    end
+
+    it 'creates one generating version linked to a replied request' do
+      version = described_class.call(opportunity: opportunity, quote_request: quote_request, correlation_id: correlation_id,
+                                     provider: Class.new { def self.request_generation(**) = nil })
+
+      expect(version).to have_attributes(status: 'generating', quote_request_id: quote_request.id)
+    end
+
+    it 'rejects a second call for the same request' do
+      call
+
+      expect { call }.to raise_error(ActiveRecord::RecordInvalid, /sem resposta de orçamento validada/)
+      expect(ScanSolo::ProposalVersion.count).to eq(1)
+    end
+
+    it 'creates one version for two concurrent calls' do
+      outcomes = Array.new(2) do
+        Thread.new do
+          call(ScanSolo::QuoteRequest.find(quote_request.id))
+        rescue ActiveRecord::RecordInvalid => e
+          e
+        end
+      end.map(&:value)
+
+      expect(ScanSolo::ProposalVersion.where(quote_request: quote_request).count).to eq(1)
+      expect(outcomes.grep(ActiveRecord::RecordInvalid).size).to eq(1)
+    end
   end
 
   describe 'required-field validation (RF-74; satisfied = confirmado no estado do lead)' do
@@ -88,7 +147,8 @@ RSpec.describe ScanSolo::Proposal::GenerateService do
         end
       end
 
-      version = described_class.call(opportunity: opportunity, correlation_id: correlation_id, provider: no_op_provider)
+      version = described_class.call(opportunity: opportunity, quote_request: quote_request, correlation_id: correlation_id,
+                                     provider: no_op_provider)
 
       expect(version).to be_generating
       expect(version.value).to be_nil

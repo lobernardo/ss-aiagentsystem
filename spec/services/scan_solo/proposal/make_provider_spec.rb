@@ -19,20 +19,33 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
   end
   let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
   let(:correlation_id) { SecureRandom.uuid }
-  let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id) }
+  let(:quote_request) do
+    ScanSolo::QuoteRequest.create!(
+      account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied, replied_at: Time.current,
+      commercial: { 'total_value' => '12500.0', 'schedule' => '30 dias', 'scope' => "Sondagem SPT\n3 furos", 'payment_terms' => '50% na assinatura',
+                    'notes' => nil }
+    )
+  end
+  let(:expected_commercial) do
+    { total_value: 12_500.0, total_value_in_words: 'doze mil e quinhentos reais', currency: 'BRL', schedule: '30 dias',
+      scope: "Sondagem SPT\n3 furos", payment_terms: '50% na assinatura', quote_request_id: quote_request.id }
+  end
+  let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id, quote_request: quote_request) }
 
   before do
     ScanSolo::AiAgentConfig.draft_for!(account).update!(required_qualification_fields: config_v2_labels)
     ScanSolo::AiAgent::PublishService.new(account: account).call
   end
 
-  it 'delegates generation to the existing transport with correlation and qualification data' do
+  # CT-05 (RNF-11): the payload gains `proposal_number` and `commercial`; every current key is unchanged.
+  it 'delegates generation to the existing transport with correlation, qualification and commercial data' do
     freeze_time do
       expect(ScanSolo::Make::OutboundRequestService).to receive(:call).with(
         account: account, action: 'proposal.generate', correlation_id: correlation_id, idempotency_key: correlation_id, retry_count: 0,
         payload: {
-          account_id: account.id, opportunity_id: opportunity.id, proposal_version_id: version.id, qualification: expected_qualification,
-          requested_by_user_id: user.id, requested_at: Time.current.iso8601
+          account_id: account.id, opportunity_id: opportunity.id, proposal_version_id: version.id, proposal_number: version.proposal_number,
+          qualification: expected_qualification, requested_by_user_id: user.id, requested_at: Time.current.iso8601,
+          commercial: expected_commercial
         }
       )
 
@@ -83,9 +96,10 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
       expect(version.reload).to be_generating
     end
 
-    it 'posts a payload valid against the refined CT-05 MakeIntegrationRequestPayload schema' do
+    # CT-05 (RNF-11): validated against the operação centralizada contract, which requires `proposal_number` and `commercial`.
+    it 'posts a payload valid against the CT-05 MakeIntegrationRequestPayload schema' do
       stub_request(:post, scenario_url).to_return(status: 200, body: '{}')
-      asyncapi = YAML.safe_load_file(Rails.root.join('.spec/features/scansolo-agent-qualification-continuity/asyncapi.yaml'))
+      asyncapi = YAML.safe_load_file(Rails.root.join('.spec/features/scansolo-operacao-centralizada/asyncapi.yaml'))
       schema = JSONSchemer.schema(
         asyncapi.dig('components', 'schemas', 'MakeIntegrationRequestPayload').merge('components' => asyncapi['components'])
       )
@@ -111,6 +125,45 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
         expect(version.failure_reason).to eq(reason)
         expect(ScanSolo::MakeRequest.find_by(correlation_id: correlation_id)).to be_failed
       end
+    end
+  end
+
+  describe 'CT-05 commercial data (RF-24, RF-26, RF-47)' do
+    let(:payloads) { [] }
+
+    before do
+      allow(ScanSolo::Make::OutboundRequestService).to receive(:call) { |**kwargs| payloads << kwargs }
+    end
+
+    it 'sends the proposal number, the commercial reply and the amount in words without any LLM call' do
+      allow(ScanSolo::AiTurn::ModelInvoker).to receive(:call).and_raise('LLM must not be called (RF-47)')
+      allow(RubyLLM).to receive(:context).and_raise('LLM must not be called (RF-47)')
+
+      described_class.request_generation(proposal_version: version, correlation_id: correlation_id)
+
+      request = payloads.sole
+      expect(request).to include(idempotency_key: correlation_id, correlation_id: correlation_id)
+      expect(request[:payload]).to include(proposal_number: version.proposal_number, commercial: expected_commercial)
+      expect(version.proposal_number).to match(/\ASS-\d{4}-\d{6}\z/)
+      expect(ScanSolo::AiTurn::ModelInvoker).not_to have_received(:call)
+      expect(RubyLLM).not_to have_received(:context)
+    end
+
+    it 'sends the commercial notes only when present' do
+      quote_request.update!(commercial: quote_request.commercial.merge('notes' => 'Mobilização inclusa'))
+
+      described_class.request_generation(proposal_version: version, correlation_id: correlation_id)
+
+      expect(payloads.sole[:payload][:commercial]).to include(notes: 'Mobilização inclusa')
+    end
+
+    it 'sends qualification.projeto with the cliente_final value' do
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+                                 .apply_field!(key: 'cliente_final', value: 'Hospital Central', status: 'confirmado', source_message_id: nil)
+
+      described_class.request_generation(proposal_version: version, correlation_id: correlation_id)
+
+      expect(payloads.sole[:payload][:qualification]).to eq(expected_qualification.merge('projeto' => 'Hospital Central'))
     end
   end
 

@@ -196,13 +196,12 @@ class ScanSolo::Qualification::FieldResolver
   end
 
   # RF-15: all 10 canonical keys are evaluated whether or not the config
-  # requires them; only present values are sent.
+  # requires them; only present values are sent. CT-05: `projeto` carries the
+  # resolved `cliente_final` (`{{PROJETO_CLIENTE_FINAL}}`), only when present.
   def make_qualification
-    MAKE_KEYS.each_with_object({}) do |canonical, qualification|
-      label = fields.find { |field| field.canonical_key == canonical }&.label
-      value, = resolve(canonical, label)
-      qualification[canonical] = value if value.present?
-    end
+    qualification = MAKE_KEYS.index_with { |canonical| resolved_value(canonical) }
+    qualification['projeto'] = resolved_value('cliente_final')
+    qualification.compact_blank
   end
 
   private
@@ -213,6 +212,11 @@ class ScanSolo::Qualification::FieldResolver
     return 'faltante' unless CATALOG_KEYS.include?(canonical)
 
     state_fields.dig(canonical, 'status') || 'faltante'
+  end
+
+  def resolved_value(canonical)
+    label = fields.find { |field| field.canonical_key == canonical }&.label
+    resolve(canonical, label).first
   end
 
   def resolve(canonical, label)

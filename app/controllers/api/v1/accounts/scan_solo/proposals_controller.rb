@@ -23,7 +23,7 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
     authorize(proposal || ::ScanSolo::Proposal, :generate?)
 
     @version = ::ScanSolo::Proposal::GenerateService.call(
-      opportunity: @opportunity, correlation_id: params.require(:correlation_id), actor: Current.user
+      opportunity: @opportunity, quote_request: @opportunity.quote_request, correlation_id: params.require(:correlation_id), actor: Current.user
     )
 
     render :generate

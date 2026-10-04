@@ -19,6 +19,7 @@
 #    or resends. Its `scansolo_origin` keeps it out of the implicit takeover.
 class ScanSolo::Quote::RequestService
   NOTICE_ORIGIN = 'quote_notice'.freeze
+  MISCONFIGURED_EVENT = 'quote_request.misconfigured'.freeze
 
   def self.call(opportunity:)
     new.call(opportunity: opportunity)
@@ -48,15 +49,33 @@ class ScanSolo::Quote::RequestService
     post_customer_notice!(quote_request)
   end
 
+  # RF-14, also recorded by a manual resend on a still invalid config.
+  def record_misconfigured!(opportunity, error)
+    ScanSolo::AuditLogger.record!(
+      subject: opportunity, event_type: MISCONFIGURED_EVENT, correlation_id: SecureRandom.uuid, payload: { reason: error.reason }
+    )
+    ChatwootExceptionTracker.new(error, account: opportunity.account).capture_exception
+  end
+
+  # The single request of the opportunity and its e-mail thread; the caller
+  # holds the opportunity lock (the job and the manual resend).
+  def create_request!(opportunity, settings)
+    quote_request = ScanSolo::QuoteRequest.create!(
+      account: opportunity.account, opportunity: opportunity, status: :awaiting_reply, correlation_id: SecureRandom.uuid
+    )
+    conversation = ScanSolo::Quote::EmailThread.open!(
+      inbox: settings.inbox, recipient: settings.recipient, subject: compose(opportunity).subject, marker: 'quote_request'
+    )
+    quote_request.update!(email_conversation: conversation)
+    quote_request
+  end
+
   private
 
   def resolve_settings!(opportunity)
     ScanSolo::Quote::Mailbox.resolve!(opportunity.account)
   rescue CustomExceptions::ScanSolo::QuoteInboxMisconfigured => e
-    ScanSolo::AuditLogger.record!(
-      subject: opportunity, event_type: 'quote_request.misconfigured', correlation_id: SecureRandom.uuid, payload: { reason: e.reason }
-    )
-    ChatwootExceptionTracker.new(e, account: opportunity.account).capture_exception
+    record_misconfigured!(opportunity, e)
     nil
   end
 
@@ -65,14 +84,7 @@ class ScanSolo::Quote::RequestService
       opportunity.lock!
       next if ScanSolo::QuoteRequest.exists?(opportunity_id: opportunity.id)
 
-      quote_request = ScanSolo::QuoteRequest.create!(
-        account: opportunity.account, opportunity: opportunity, status: :awaiting_reply, correlation_id: SecureRandom.uuid
-      )
-      conversation = ScanSolo::Quote::EmailThread.open!(
-        inbox: settings.inbox, recipient: settings.recipient, subject: compose(opportunity).subject, marker: 'quote_request'
-      )
-      quote_request.update!(email_conversation: conversation)
-      quote_request
+      create_request!(opportunity, settings)
     end
   end
 

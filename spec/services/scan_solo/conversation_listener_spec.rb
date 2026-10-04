@@ -197,4 +197,51 @@ RSpec.describe ScanSolo::ConversationListener do
       expect(ScanSolo::AuditEvent.where(event_type: 'handoff.takeover')).to be_none
     end
   end
+
+  describe 'RF-16/RF-17: quote inbox replies are routed ahead of the eligibility gate' do
+    let(:email_inbox) { create(:channel_email, account: account).inbox }
+    let(:email_conversation) { create(:conversation, account: account, inbox: email_inbox) }
+
+    before do
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(quote_inbox_id: email_inbox.id)
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+    end
+
+    def email_message(message_type)
+      create(:message, account: account, inbox: email_inbox, conversation: email_conversation, message_type: message_type,
+                       content: 'Valor total: R$ 12.500,00')
+    end
+
+    it 'enqueues the quote reply job and writes no opportunity, turn or extension for an incoming e-mail' do
+      message = email_message(:incoming)
+
+      expect { dispatch(message) }.to have_enqueued_job(ScanSolo::QuoteReplyJob).with(message.id).exactly(:once)
+      expect(ScanSolo::AiTurnJob).not_to have_been_enqueued
+      expect(ScanSolo::PipelineOpportunity.count).to eq(0)
+      expect(ScanSolo::AiTurn.count).to eq(0)
+      expect(ScanSolo::ConversationExtension.count).to eq(0)
+    end
+
+    it 'ignores an outgoing e-mail of the quote inbox' do
+      expect { dispatch(email_message(:outgoing)) }.not_to have_enqueued_job(ScanSolo::QuoteReplyJob)
+    end
+
+    it 'ignores an incoming e-mail of another e-mail inbox' do
+      other_conversation = create(:conversation, account: account, inbox: create(:channel_email, account: account).inbox)
+      message = create(:message, account: account, inbox: other_conversation.inbox, conversation: other_conversation,
+                                 message_type: :incoming)
+
+      expect { dispatch(message) }.not_to have_enqueued_job(ScanSolo::QuoteReplyJob)
+    end
+
+    it 'adds no config query for an incoming message outside an e-mail inbox' do
+      message = incoming
+      allow(ScanSolo::AiAgentConfig).to receive(:published_for).and_call_original
+
+      listener.send(:route_quote_reply, message)
+
+      expect(ScanSolo::AiAgentConfig).not_to have_received(:published_for)
+      expect(ScanSolo::QuoteReplyJob).not_to have_been_enqueued
+    end
+  end
 end

@@ -463,6 +463,7 @@ Rails.application.routes.draw do
             resources :pipeline_opportunities, only: [:index, :show, :update, :create] do
               member do
                 post :stage_transitions
+                post 'quote_request/resend', to: 'quote_requests#resend'
               end
 
               resources :proposals, only: [], controller: 'proposals' do

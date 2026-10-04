@@ -54,6 +54,11 @@ class ScanSolo::Quote::EmailComposer
       build(t('negotiation.email.subject', opportunity_id: payload[:opportunity_id], name: contact[:company].presence || contact[:name]), lines)
     end
 
+    # The Chatwoot conversation link, also used by the CT-07 payload.
+    def conversation_url(account_id, display_id)
+      "#{ENV.fetch('FRONTEND_URL', nil)}/app/accounts/#{account_id}/conversations/#{display_id}"
+    end
+
     # The empty CT-04 block, also used by the parser specs.
     def empty_block
       block_lines.join("\n")
@@ -120,10 +125,6 @@ class ScanSolo::Quote::EmailComposer
 
     def stage_label(stage)
       ScanSolo::Handoff::HandoffService::STAGE_LABELS.fetch(stage.to_s)
-    end
-
-    def conversation_url(account_id, display_id)
-      "#{ENV.fetch('FRONTEND_URL', nil)}/app/accounts/#{account_id}/conversations/#{display_id}"
     end
 
     def t(key, **)

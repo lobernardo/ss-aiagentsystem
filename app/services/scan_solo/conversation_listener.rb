@@ -23,6 +23,11 @@
 # must be recorded even if the inbox left the allowlist meanwhile -- and is
 # keyed on the `scansolo_origin` marker, so other messages cost no query.
 #
+# Quote reply (RF-16, RF-17): an incoming e-mail of the published quote inbox
+# is routed to ScanSolo::QuoteReplyJob, also ahead of the eligibility gate --
+# that inbox is never allowlisted, so it never gets an opportunity, turn,
+# enrollment or takeover. Messages outside an e-mail inbox cost no query.
+#
 # The listener delegates every write to services and holds no AI logic.
 class ScanSolo::ConversationListener < BaseListener
   IMPLICIT_TAKEOVER_REASON = 'Resposta humana na conversa'.freeze
@@ -31,6 +36,7 @@ class ScanSolo::ConversationListener < BaseListener
   def message_created(event)
     message = event.data[:message]
     reconcile_delivery(message)
+    route_quote_reply(message)
     return unless message.incoming? || message.outgoing?
     return unless ScanSolo::Eligibility.for_message(message).eligible?
 
@@ -47,6 +53,13 @@ class ScanSolo::ConversationListener < BaseListener
     return unless message.outgoing? && TEMPLATE_ORIGINS.include?(message.additional_attributes.to_h['scansolo_origin'])
 
     ScanSolo::Messaging::DeliveryReconciler.call(message: message)
+  end
+
+  def route_quote_reply(message)
+    return unless message.incoming? && message.inbox.email? && message.account.scansolo_enabled?
+    return unless ScanSolo::AiAgentConfig.published_for(message.account)&.quote_inbox_id == message.inbox_id
+
+    ScanSolo::QuoteReplyJob.perform_later(message.id)
   end
 
   def handle_incoming(message)

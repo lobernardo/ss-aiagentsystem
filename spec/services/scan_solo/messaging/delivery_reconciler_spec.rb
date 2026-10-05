@@ -111,6 +111,50 @@ RSpec.describe ScanSolo::Messaging::DeliveryReconciler do
     end
   end
 
+  describe 'generated proposal delivered by Chatwoot (RF-30)' do
+    let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
+    let(:message) { template_message(origin: 'proposal') }
+    let!(:version) do
+      proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf',
+                                generate_callback_applied_at: Time.current, sent_message: message)
+    end
+    let!(:definition) { ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168]) }
+    let(:stage_events) { ScanSolo::PipelineStageEvent.where(opportunity: opportunity) }
+
+    it 'keeps the version generated and the stage while the message has no source_id' do
+      described_class.call(message: message)
+
+      expect(version.reload).to be_generated
+      expect(opportunity.reload).to be_qualificado
+    end
+
+    it 'marks the version sent, moves the stage and enrolls the active proposta_enviada cadence on acceptance' do
+      message.update!(source_id: 'wamid.proposal')
+
+      described_class.call(message: message)
+
+      expect(version.reload).to be_sent
+      expect(opportunity.reload).to be_proposta_enviada
+      expect(stage_events.count).to eq(1)
+      enrollment = opportunity.cadence_enrollments.active.sole
+      expect(enrollment.cadence_definition).to eq(definition)
+      expect(enrollment.attempts.count).to eq(definition.offsets.size)
+    end
+
+    it 'fails a sent version on a later native failure with 1 audit, keeping stage and enrollment' do
+      message.update!(source_id: 'wamid.proposal')
+      described_class.call(message: message)
+      message.update!(status: :failed, external_error: '131049: Meta chose not to deliver')
+
+      expect { 2.times { described_class.call(message: message) } }.not_to change(stage_events, :count)
+
+      expect(version.reload).to have_attributes(status: 'failed', failure_reason: '131049: Meta chose not to deliver')
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.delivery_failed_after_sent', subject: opportunity).count).to eq(1)
+      expect(opportunity.reload).to be_proposta_enviada
+      expect(opportunity.cadence_enrollments.active.count).to eq(1)
+    end
+  end
+
   describe 'manual lead initial template (RF-08)' do
     let(:message) { template_message(origin: 'manual_lead') }
     let(:audits) { ScanSolo::AuditEvent.where(subject: opportunity, event_type: 'pipeline.manual_lead_template_failed') }

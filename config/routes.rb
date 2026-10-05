@@ -473,6 +473,13 @@ Rails.application.routes.draw do
               end
             end
 
+            resources :quote_replies, only: [:index] do
+              member do
+                post :link
+                post :discard
+              end
+            end
+
             resources :proposals, only: [:index, :show], controller: 'proposals' do
               member do
                 post :approve

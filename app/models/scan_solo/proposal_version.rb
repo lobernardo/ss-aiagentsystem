@@ -94,6 +94,13 @@ class ScanSolo::ProposalVersion < ApplicationRecord
     ScanSolo::MakeRequest.find_by(correlation_id: correlation_id) if correlation_id.present?
   end
 
+  # RF-22 / RNF-09: delivery audits carry the quote request's correlation id,
+  # so the whole chain is found by it; a legacy version falls back to its own
+  # latest operation, or a fresh id when it never had one.
+  def audit_correlation_id
+    quote_request&.correlation_id || correlation_id || SecureRandom.uuid
+  end
+
   def document_url
     return unless document.attached?
 

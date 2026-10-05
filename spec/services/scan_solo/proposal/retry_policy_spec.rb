@@ -42,20 +42,47 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
       expect(version.value).to eq(ScanSolo::Proposal::MockProvider::DEFAULT_VALUE)
     end
 
-    it 'retries a retryable send failure without duplicating the send' do
-      version = proposal.versions.create!(
-        status: :failed, failure_reason: 'timeout', value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf',
-        send_correlation_id: SecureRandom.uuid
-      )
+    # CT-10 / RF-32: a delivery failure is redelivered by the DeliveryService
+    # with the stored PDF; the legacy send retry through Make is gone.
+    describe 'delivery failure (CT-10)' do
+      let(:artifact_url) { 'https://make.example/proposals/7.pdf' }
+      let(:version) do
+        proposal.versions.create!(status: :failed, failure_reason: 'template_missing', value: 1000, currency: 'BRL', artifact_url: artifact_url,
+                                  generate_correlation_id: SecureRandom.uuid, generate_callback_applied_at: Time.current)
+      end
+      let(:proposal_messages) { conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal'") }
 
-      expect do
-        described_class.retry!(proposal_version: version, conversation: conversation, actor: agent)
-      end.to change { conversation.messages.outgoing.count }.by(1)
+      before do
+        allow(Resolv).to receive(:getaddresses).and_call_original
+        allow(Resolv).to receive(:getaddresses).with('make.example').and_return(['93.184.216.34'])
+        stub_request(:get, artifact_url).to_return(status: 200, body: '%PDF-1.4', headers: { 'Content-Type' => 'application/pdf' })
+      end
 
-      # RF-41: `sent` only after the native message is accepted.
-      expect(version.reload).not_to be_sent
-      ScanSolo::Messaging::DeliveryReconciler.call(message: version.sent_message)
-      expect(version.reload).to be_sent
+      it 'is retryable whatever the delivery failure reason' do
+        expect(described_class.retryable?(version)).to be true
+      end
+
+      it 'sends one new proposal message with the same stored blob, without downloading nor calling Make' do
+        version.document.attach(io: StringIO.new('%PDF-1.4'), filename: 'SS.pdf', content_type: 'application/pdf')
+        blob_id = version.document.blob.id
+
+        expect { described_class.retry!(proposal_version: version, actor: agent) }
+          .to change(proposal_messages, :count).by(1).and not_change(ScanSolo::MakeRequest, :count)
+
+        expect(a_request(:get, artifact_url)).not_to have_been_made
+        expect(version.reload).to have_attributes(status: 'generated', failure_reason: nil, sent_message: proposal_messages.sole)
+        expect(version.document.blob.id).to eq(blob_id)
+        expect(ScanSolo::AuditEvent.find_by!(event_type: 'proposal.retry_requested'))
+          .to have_attributes(actor: agent, payload: include('operation' => 'delivery'))
+      end
+
+      it 'downloads the PDF again only when it is missing' do
+        described_class.retry!(proposal_version: version, actor: agent)
+
+        expect(a_request(:get, artifact_url)).to have_been_made.once
+        expect(version.reload.document).to be_attached
+        expect(proposal_messages.count).to eq(1)
+      end
     end
 
     describe 'RF-40: retry count, dead letter and reprocess' do

@@ -47,3 +47,15 @@ class CustomExceptions::ScanSolo::QuoteRequestResendRejected < StandardError
     super(code)
   end
 end
+
+# CT-08 / RF-20 / RF-23: a manual decision on a pending quote reply refused;
+# the controller maps it to 422 `{ error: code }` (already_linked,
+# quote_request_closed, already_discarded, not_discardable).
+class CustomExceptions::ScanSolo::QuoteReplyRejected < StandardError
+  attr_reader :code
+
+  def initialize(code)
+    @code = code
+    super(code)
+  end
+end

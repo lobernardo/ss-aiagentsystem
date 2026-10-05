@@ -58,7 +58,7 @@ class ScanSolo::Make::CallbackApplicationService
     ScanSolo::Proposal::CallbackHandler.apply_generate_result!(
       proposal_version: version, correlation_id: correlation_id, success: success?,
       value: callback_result['total_value'], currency: callback_result['currency'], artifact_url: callback_result['artifact_url'],
-      failure_reason: failure_reason
+      valid_until: callback_result['valid_until'], failure_reason: failure_reason
     )
   end
 

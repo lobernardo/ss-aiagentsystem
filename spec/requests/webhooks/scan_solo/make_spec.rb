@@ -34,7 +34,7 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
         artifact_url: 'https://make.example/proposals/7.pdf',
         total_value: 4321.5,
         currency: 'BRL',
-        valid_until: 1.week.from_now.iso8601
+        valid_until: '2026-11-04T00:00:00Z'
       }
     }
   end
@@ -156,6 +156,25 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
       )
     end
 
+    it 'RF-26/RF-29/RF-33: persists valid_until, schedules the delivery and leaves the stage untouched' do
+      make_request
+
+      expect { post_callback(success_payload.to_json) }.to have_enqueued_job(ScanSolo::ProposalDeliveryJob).with(version.id)
+
+      expect(version.reload.valid_until).to eq(Time.zone.parse('2026-11-04T00:00:00Z'))
+      expect(opportunity.reload).to be_qualificado
+      expect(opportunity.cadence_enrollments).to be_none
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generated', subject: opportunity).count).to eq(1)
+    end
+
+    it 'RF-26: schedules no delivery for a rejected callback' do
+      make_request
+
+      expect { post_callback(success_payload.to_json, signature: 'bad') }.not_to have_enqueued_job(ScanSolo::ProposalDeliveryJob)
+
+      expect(version.reload).to be_generating
+    end
+
     it 'marks the originating make request failed when the callback reports failure' do
       make_request
       failure_payload = {
@@ -217,9 +236,11 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
     end
 
     it 'creates exactly one native template message and moves the stage once delivery is accepted' do
+      # scansolo-operacao-centralizada RF-31 (RNF-11): the accepted proposal is followed by 1 follow-up template.
+      follow_ups = conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal_follow_up'")
       expect do
         perform_enqueued_jobs(only: EventDispatcherJob) { post_callback(send_payload.to_json) }
-      end.to change(conversation.messages.outgoing, :count).by(1)
+      end.to change(conversation.messages.outgoing, :count).by(2).and change(follow_ups, :count).by(1)
 
       expect(response).to have_http_status(:ok)
       message = version.reload.sent_message

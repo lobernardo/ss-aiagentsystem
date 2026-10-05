@@ -12,7 +12,11 @@
 #
 # An accepted proposal version becomes `sent` and runs
 # ScanSolo::Proposal::SuccessHandler (stage -> proposta_enviada); a failed
-# one becomes `failed` with the external error and the stage is untouched.
+# one becomes `failed` with the external error and 1 `proposal.delivery_failed`
+# audit, the stage untouched (RF-32). RF-30: a `sent` version whose message
+# later fails (asynchronous Meta failure) becomes `failed` with 1
+# `proposal.delivery_failed_after_sent` audit, keeping the stage and the
+# enrollment; a `failed` version is never touched again.
 #
 # RF-08: a failed manual-lead initial template has no record of its own; it
 # is audited once per message as `pipeline.manual_lead_template_failed` on
@@ -61,15 +65,25 @@ class ScanSolo::Messaging::DeliveryReconciler
 
   def reconcile_version(version)
     version.with_lock do
-      next if version.sent? || version.failed?
+      next if version.failed?
 
-      if outcome == :accepted
+      if version.sent?
+        fail_version!(version, 'proposal.delivery_failed_after_sent') if outcome == :failed
+      elsif outcome == :accepted
         version.update!(status: :sent)
         ScanSolo::Proposal::SuccessHandler.call(proposal_version: version)
       else
-        version.update!(status: :failed, failure_reason: external_error)
+        fail_version!(version, 'proposal.delivery_failed')
       end
     end
+  end
+
+  def fail_version!(version, event_type)
+    version.update!(status: :failed, failure_reason: external_error)
+    ScanSolo::AuditLogger.record!(
+      subject: version.proposal.opportunity, event_type: event_type, correlation_id: version.audit_correlation_id,
+      payload: { proposal_version_id: version.id, message_id: message.id, reason: external_error }
+    )
   end
 
   def record_manual_lead_failure

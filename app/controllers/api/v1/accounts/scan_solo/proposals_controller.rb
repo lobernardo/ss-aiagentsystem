@@ -62,7 +62,7 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
 
     @version = ::ScanSolo::Proposal::RetryPolicy.retry!(
       proposal_version: @proposal.versions.where(is_current: true).find(params[:proposal_version_id]),
-      confirm_reprocess: params[:confirm_reprocess], conversation: @proposal.opportunity.conversation, actor: Current.user
+      confirm_reprocess: params[:confirm_reprocess], actor: Current.user
     )
     render :retry
   rescue ::ScanSolo::Proposal::RetryPolicy::UnsafeRetryError, ::ScanSolo::Proposal::RetryPolicy::ReprocessConfirmationRequiredError => e

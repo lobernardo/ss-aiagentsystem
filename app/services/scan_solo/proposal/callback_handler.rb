@@ -7,6 +7,11 @@
 # exactly once, guarded by generate_callback_applied_at/
 # send_callback_applied_at read under a row lock (RF-80).
 #
+# RF-26 / RF-29: a successful generate result also persists `valid_until`,
+# audits `proposal.generated` and, after the callback transaction commits,
+# enqueues ScanSolo::ProposalDeliveryJob (RNF-01). `generated` alone never
+# moves the stage (RF-33).
+#
 # A successful send result resolves the proposal template (RF-32) and checks
 # its availability (RF-33) before creating the native message; the version
 # only becomes `sent` -- and the stage `proposta_enviada` -- once
@@ -15,7 +20,7 @@
 class ScanSolo::Proposal::CallbackHandler
   # rubocop:disable Metrics/ParameterLists
   def self.apply_generate_result!(proposal_version:, correlation_id:, success:, value: nil, currency: nil,
-                                  artifact_url: nil, failure_reason: nil)
+                                  artifact_url: nil, valid_until: nil, failure_reason: nil)
     # rubocop:enable Metrics/ParameterLists
     proposal_version.with_lock do
       # RF-87-style guard: only a callback matching the correlation id this
@@ -26,9 +31,14 @@ class ScanSolo::Proposal::CallbackHandler
 
       if success
         proposal_version.update!(
-          status: :generated, value: value, currency: currency, artifact_url: artifact_url,
+          status: :generated, value: value, currency: currency, artifact_url: artifact_url, valid_until: valid_until,
           generate_callback_applied_at: Time.current
         )
+        ScanSolo::AuditLogger.record!(
+          subject: proposal_version.proposal.opportunity, event_type: 'proposal.generated', correlation_id: proposal_version.audit_correlation_id,
+          payload: { proposal_version_id: proposal_version.id, generate_correlation_id: correlation_id }
+        )
+        ActiveRecord.after_all_transactions_commit { ScanSolo::ProposalDeliveryJob.perform_later(proposal_version.id) }
       else
         proposal_version.update!(status: :failed, failure_reason: failure_reason, generate_callback_applied_at: Time.current)
       end

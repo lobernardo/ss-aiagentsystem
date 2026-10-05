@@ -4,6 +4,8 @@
 # (T12), whose stage-entry enrollment (RF-24) enrolls the post-proposal
 # cadence, reusing its idempotency/terminal-stage guarantees rather than
 # duplicating them (RF-19: a Ganho/Perdido opportunity is left untouched).
+# RF-31: after the commit, the post-proposal follow-up is sent once by
+# ScanSolo::Proposal::FollowUpService.
 class ScanSolo::Proposal::SuccessHandler
   def self.call(proposal_version:)
     new(proposal_version: proposal_version).call
@@ -18,6 +20,7 @@ class ScanSolo::Proposal::SuccessHandler
     return if opportunity.ganho? || opportunity.perdido?
 
     transition_stage!(opportunity)
+    ActiveRecord.after_all_transactions_commit { ScanSolo::Proposal::FollowUpService.call(proposal_version: proposal_version) }
   end
 
   private

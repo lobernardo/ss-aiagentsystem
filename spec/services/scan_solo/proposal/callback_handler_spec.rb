@@ -25,6 +25,32 @@ RSpec.describe ScanSolo::Proposal::CallbackHandler do
                                        conversation: conversation, actor: agent, failure_reason: failure_reason)
   end
 
+  describe '.apply_generate_result!' do
+    let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id) }
+
+    def apply_generate(success: true)
+      described_class.apply_generate_result!(
+        proposal_version: version, correlation_id: correlation_id, success: success, value: 4321.5, currency: 'BRL',
+        artifact_url: 'https://make.example/7.pdf', valid_until: '2026-11-04T00:00:00Z', failure_reason: 'docs_copy_failed'
+      )
+    end
+
+    it 'persists value and valid_until and schedules the delivery without moving the stage (RF-26, RF-29, RF-33)' do
+      expect { apply_generate }.to have_enqueued_job(ScanSolo::ProposalDeliveryJob).with(version.id)
+
+      expect(version.reload).to have_attributes(status: 'generated', value: BigDecimal('4321.5'),
+                                                valid_until: Time.zone.parse('2026-11-04T00:00:00Z'))
+      expect(opportunity.reload).to be_qualificado
+      expect(opportunity.cadence_enrollments).to be_none
+    end
+
+    it 'keeps the failure path without a delivery (RF-27)' do
+      expect { apply_generate(success: false) }.not_to have_enqueued_job(ScanSolo::ProposalDeliveryJob)
+
+      expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'docs_copy_failed')
+    end
+  end
+
   describe '.apply_send_result!' do
     it 'creates the native proposal message but does not mark the version sent nor move the stage (RF-41)' do
       expect { apply_send }.to change(conversation.messages.outgoing, :count).by(1)

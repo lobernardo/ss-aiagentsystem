@@ -26,6 +26,15 @@ RSpec.describe ScanSolo::Actions::StageTransitionAction do
     end
   end
 
+  it 'never reaches negociacao from proposta_enviada (RF-36)' do
+    opportunity.update!(stage: :proposta_enviada)
+
+    expect(call('negociacao')).to eq(status: 'rejected', reason: 'stage_not_allowed_for_ai', from_stage: 'proposta_enviada',
+                                     target_stage: 'negociacao')
+    expect(opportunity.reload).to be_proposta_enviada
+    expect(opportunity.stage_events).to be_none
+  end
+
   it 'moves em_contato forward to em_qualificacao with a PipelineStageEvent' do
     opportunity.update!(stage: :em_contato)
 

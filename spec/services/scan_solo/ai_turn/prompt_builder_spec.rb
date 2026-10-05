@@ -203,6 +203,34 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
       expect(offered).to include("- qualification_field: #{instruction}")
       expect(not_offered).not_to include(instruction)
     end
+
+    it 'RF-35: adds only the negotiation rule and the negotiation_requested description, leaving the other rules unchanged' do
+      negotiation_rule = 'Se o cliente pedir negociação comercial, marque negotiation_requested em lead_state_update e não negocie.'
+      system = described_class.call(config: config, context: context, offered_actions: %w[lead_state_update])[:system]
+
+      expect(described_class::CONTINUITY_RULES.last).to eq(negotiation_rule)
+      expect(described_class::CONTINUITY_RULES[0...-1]).to eq(
+        [
+          'Nunca pergunte novamente informação já presente no contato, nos campos coletados ou no histórico.',
+          'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos, ' \
+          'apenas entre os campos elegíveis (faltantes).',
+          'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.',
+          'Se a mensagem do cliente contiver uma pergunta direta, responda-a antes de qualquer pergunta de qualificação.',
+          'Não peça nova confirmação para ação já pedida ou autorizada.',
+          'Liste em asked_fields as chaves dos campos que a resposta pergunta.'
+        ]
+      )
+      expect(system.index(negotiation_rule)).to be < system.index('## Regras do agente')
+      expect(system).to include(
+        '- lead_state_update: registrar a intenção do cliente, a próxima ação, uma ação que o cliente pediu ou autorizou ' \
+        'e se há risco de interpretação; negotiation_requested quando o cliente pedir preço, desconto, condição, prazo comercial, ' \
+        'forma de pagamento ou decisão comercial humana',
+        '"negotiation_requested":{"type":"boolean"}'
+      )
+      expect(described_class::ACTION_DESCRIPTIONS.keys).to eq(
+        %w[qualification_field stage_transition private_note cadence_signal human_handoff proposal_generate lead_state_update]
+      )
+    end
   end
 
   describe 'lead state section (RF-09, RF-15, RF-22, RF-24, RF-25)' do

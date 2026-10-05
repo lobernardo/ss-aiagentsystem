@@ -3,7 +3,8 @@
 # authorized, and whether it sees an interpretation risk. Every write goes
 # through ScanSolo::LeadState::Writer with the turn's inbound message as
 # origin; `interpretation_risk` is only returned as evidence (RF-25 is
-# enforced by the prompt). Recording a next action or an authorization runs
+# enforced by the prompt), and so is `negotiation_requested`, read by
+# ScanSolo::AiTurn::AttemptRunner after the actions (RF-35). Recording a next action or an authorization runs
 # no side effect -- no proposal, handoff, e-mail or AI control change.
 class ScanSolo::Actions::LeadStateUpdateAction
   CLASSIFICATION = :automatic
@@ -15,7 +16,8 @@ class ScanSolo::Actions::LeadStateUpdateAction
       'intent' => { 'type' => 'string', 'enum' => ScanSolo::LeadState::INTENTS },
       'next_action' => { 'type' => 'string', 'enum' => ScanSolo::LeadState::NEXT_ACTIONS },
       'authorized_action' => { 'type' => 'string', 'enum' => ScanSolo::LeadState::NEXT_ACTIONS },
-      'interpretation_risk' => { 'type' => 'boolean' }
+      'interpretation_risk' => { 'type' => 'boolean' },
+      'negotiation_requested' => { 'type' => 'boolean' }
     },
     'required' => %w[opportunity_id],
     'additionalProperties' => false
@@ -39,7 +41,7 @@ class ScanSolo::Actions::LeadStateUpdateAction
     writer.record_next_action!(value: next_action, source_message_id: turn.message_id) if next_action
     writer.authorize_action!(action: authorized_action, source_message_id: turn.message_id) if authorized_action
 
-    { opportunity_id: opportunity.id, **params.slice(:intent, :next_action, :authorized_action, :interpretation_risk) }
+    { opportunity_id: opportunity.id, **params.slice(:intent, :next_action, :authorized_action, :interpretation_risk, :negotiation_requested) }
   end
 
   private

@@ -30,7 +30,8 @@ class ScanSolo::AiTurn::PromptBuilder
     'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.',
     'Se a mensagem do cliente contiver uma pergunta direta, responda-a antes de qualquer pergunta de qualificação.',
     'Não peça nova confirmação para ação já pedida ou autorizada.',
-    'Liste em asked_fields as chaves dos campos que a resposta pergunta.'
+    'Liste em asked_fields as chaves dos campos que a resposta pergunta.',
+    'Se o cliente pedir negociação comercial, marque negotiation_requested em lead_state_update e não negocie.'
   ].freeze
 
   # RF-11a: the violations that trigger one regenerated attempt.
@@ -54,7 +55,8 @@ class ScanSolo::AiTurn::PromptBuilder
     'human_handoff' => 'transferir a conversa para um atendente humano',
     'proposal_generate' => 'solicitar a geração da proposta comercial',
     'lead_state_update' => 'registrar a intenção do cliente, a próxima ação, uma ação que o cliente pediu ou autorizou ' \
-                           'e se há risco de interpretação'
+                           'e se há risco de interpretação; negotiation_requested quando o cliente pedir preço, desconto, ' \
+                           'condição, prazo comercial, forma de pagamento ou decisão comercial humana'
   }.freeze
 
   def self.call(config:, context:, offered_actions:, previous_violation: nil)

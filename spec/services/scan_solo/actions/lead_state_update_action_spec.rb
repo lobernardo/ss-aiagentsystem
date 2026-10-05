@@ -59,6 +59,23 @@ RSpec.describe ScanSolo::Actions::LeadStateUpdateAction do
     expect(lead_state.authorized_actions).to contain_exactly(include('action' => 'proposta', 'source_message_id' => first_message.id))
   end
 
+  it 'returns negotiation_requested only as evidence, with no write or side effect (RF-35)' do
+    extension = ScanSolo::ConversationExtension.resolve_for(conversation)
+    first_turn
+
+    result = nil
+    expect { result = invoke({ negotiation_requested: true }) }
+      .not_to(change { [lead_state.attributes, extension.reload.ai_control_state, conversation.messages.count, ScanSolo::PipelineStageEvent.count] })
+
+    expect(result.side_effect_result).to eq(opportunity_id: opportunity.id, negotiation_requested: true)
+    expect(opportunity.reload).to be_em_qualificacao
+  end
+
+  it 'rejects a non-boolean negotiation_requested' do
+    expect { invoke({ negotiation_requested: 'sim' }) }
+      .to(raise_error { |error| expect(error.class.name).to eq('ScanSolo::Actions::Executor::InvalidParamsError') })
+  end
+
   it 'runs no side effect when recording atendimento_humano (RF-23)' do
     extension = ScanSolo::ConversationExtension.resolve_for(conversation)
     first_turn

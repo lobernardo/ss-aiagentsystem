@@ -11,6 +11,10 @@
 #    the model, is unregistered or fails schema validation raises;
 # 3. ScanSolo::LeadState::CompletionService concludes the qualification when
 #    every required field is now `confirmado` (RF-21);
+#    a `lead_state_update` evidence with `negotiation_requested` on an
+#    opportunity in `proposta_enviada`/`negociacao` runs
+#    ScanSolo::Negotiation::RequestService and replaces the model's reply
+#    with the standard negotiation reply (RF-35); earlier stages ignore it;
 # 4. ScanSolo::AiTurn::OutputValidator checks the reply against the reloaded
 #    lead state projection and the model's `asked_fields` (RF-11, RF-12,
 #    RF-22). A blocked reply rolls the savepoint back -- 0 changes of the
@@ -21,6 +25,7 @@ class ScanSolo::AiTurn::AttemptRunner
   Result = Struct.new(:status, :violation, keyword_init: true)
 
   TURN_SCOPED_PARAMS = ScanSolo::AiTurn::PromptBuilder::TURN_SCOPED_PARAMS
+  NEGOTIATION_STAGES = %w[proposta_enviada negociacao].freeze
 
   # rubocop:disable Metrics/ParameterLists
   def self.call(turn:, message:, config:, result:, opportunity:, pending_updates:)
@@ -44,6 +49,7 @@ class ScanSolo::AiTurn::AttemptRunner
       apply_pending_updates! if opportunity
       evidence = execute_actions
       ScanSolo::LeadState::CompletionService.call(opportunity: opportunity, turn: turn) if opportunity
+      request_negotiation! if negotiation_requested?(evidence)
 
       validation = validate_reply
       if validation[:blocked]
@@ -84,6 +90,20 @@ class ScanSolo::AiTurn::AttemptRunner
       side_effect = outcome.side_effect_result
       { action_id: action_id, index: index, execution_id: outcome.execution.id,
         result: side_effect.is_a?(Hash) ? side_effect : side_effect.class.name }
+    end
+  end
+
+  def negotiation_requested?(evidence)
+    return false unless opportunity && NEGOTIATION_STAGES.include?(opportunity.reload.stage)
+
+    evidence.any? { |item| item in { action_id: 'lead_state_update', result: { negotiation_requested: true } } }
+  end
+
+  def request_negotiation!
+    ScanSolo::Negotiation::RequestService.call(opportunity: opportunity, turn: turn, message: message)
+    @result = result.dup.tap do |reply|
+      reply.content = I18n.t('scan_solo.negotiation.standard_reply')
+      reply.asked_fields = []
     end
   end
 

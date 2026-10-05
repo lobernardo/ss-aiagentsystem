@@ -83,6 +83,119 @@ RSpec.describe ScanSolo::AiTurn::AttemptRunner do
     end
   end
 
+  describe 'RF-35: negotiation signal' do
+    let(:email_inbox) { create(:channel_email, account: account, email: 'atendimento.comercial@scansolo.com.br').inbox }
+    let(:pending_updates) { [] }
+    let(:actions) { [{ 'action_id' => 'lead_state_update', 'params' => { 'negotiation_requested' => true } }] }
+    let(:result) do
+      ScanSolo::AiTurn::ModelInvoker::Result.new(content: 'Consigo fazer por R$ 11.000,00 à vista.', actions: actions, asked_fields: ['bairro'],
+                                                 summary: false, provider: 'scansolo_test_mode', model: 'scansolo-mock-llm')
+    end
+    let(:extension) { ScanSolo::ConversationExtension.resolve_for(conversation) }
+
+    before do
+      turn.update!(guardrail_outcome: { 'allowed_actions' => %w[lead_state_update private_note] })
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(quote_inbox_id: email_inbox.id)
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+    end
+
+    def notifications
+      Message.where(inbox: email_inbox, message_type: :outgoing)
+    end
+
+    context 'when the opportunity is in proposta_enviada' do
+      before { opportunity.update!(stage: :proposta_enviada) }
+
+      it 'sends the exact standard reply, moves to negociacao, hands off and publishes once after the commit' do
+        ActiveRecord::Base.transaction do
+          expect(run_attempt).to have_attributes(status: :sent, violation: nil)
+          expect(notifications.count).to eq(0)
+        end
+
+        expect(ai_replies.sole.content).to eq('Vou verificar isso com nosso comercial. Só um momento.')
+        expect(opportunity.reload).to be_negociacao
+        expect(ScanSolo::PipelineStageEvent.where(opportunity: opportunity).sole)
+          .to have_attributes(from_stage: 'proposta_enviada', to_stage: 'negociacao')
+        expect([extension.reload.ai_control_state, conversation.messages.where(private: true).count]).to eq(['awaiting_human', 1])
+        expect(notifications.count).to eq(1)
+      end
+
+      it 'stops the cadence with no attempt left scheduled' do
+        definition = ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72])
+        ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: definition)
+
+        run_attempt
+
+        expect(opportunity.cadence_enrollments.where(status: :active)).to be_none
+        expect(ScanSolo::CadenceAttempt.where(result: 'scheduled')).to be_none
+      end
+
+      it 'sends the standard reply instead of a model reply that quotes a price' do
+        run_attempt
+
+        expect(ai_replies.sole.content).to eq('Vou verificar isso com nosso comercial. Só um momento.')
+        expect(ai_replies.sole.content).not_to include('R$')
+      end
+
+      it 'next customer message is not answered by the AI (RF-40)' do
+        run_attempt
+        next_message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming,
+                                        sender: contact, content: 'E então?')
+
+        ScanSolo::AiTurn::TurnOrchestrator.call(message: next_message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+        expect(ScanSolo::AiTurn.find_by!(message_id: next_message.id))
+          .to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
+        expect(ai_replies.count).to eq(1)
+      end
+    end
+
+    context 'when the opportunity is already in negociacao with the AI active' do
+      before { opportunity.update!(stage: :negociacao) }
+
+      it 'sends the standard reply, hands off and notifies without a stage event' do
+        run_attempt
+
+        expect(ai_replies.sole.content).to eq('Vou verificar isso com nosso comercial. Só um momento.')
+        expect(ScanSolo::PipelineStageEvent.where(opportunity: opportunity)).to be_none
+        expect(extension.reload).to be_awaiting_human
+        expect(notifications.count).to eq(1)
+      end
+    end
+
+    context 'when the opportunity is still in qualification' do
+      let(:result) do
+        ScanSolo::AiTurn::ModelInvoker::Result.new(content: 'Pode me informar a metragem?', actions: actions, asked_fields: [],
+                                                   summary: false, provider: 'scansolo_test_mode', model: 'scansolo-mock-llm')
+      end
+
+      it 'ignores the signal and sends the model reply' do
+        definition = ScanSolo::CadenceDefinition.create!(stage: 'em_qualificacao', version: 1, offsets: [24, 72])
+        enrollment = ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: definition)
+
+        expect(run_attempt).to have_attributes(status: :sent)
+
+        expect(ai_replies.sole.content).to eq('Pode me informar a metragem?')
+        expect(opportunity.reload).to be_em_qualificacao
+        expect(extension.reload).to be_ai_active
+        expect(enrollment.reload).to be_active
+        expect(ScanSolo::AuditEvent.where(event_type: 'negotiation.requested')).to be_none
+        expect(notifications).to be_none
+      end
+    end
+  end
+
+  %w[awaiting_human human_active].each do |state|
+    it "keeps the AI silent while the conversation is #{state} (RF-40)" do
+      ScanSolo::ConversationExtension.resolve_for(conversation).update!(ai_control_state: state)
+
+      ScanSolo::AiTurn::TurnOrchestrator.call(message: message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
+
+      expect(turn.reload).to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
+      expect(ai_replies).to be_none
+    end
+  end
+
   it 'lets an action exception propagate' do
     actions.replace([{ 'action_id' => 'stage_transition', 'params' => { 'target_stage' => 'qualificado' } }])
 

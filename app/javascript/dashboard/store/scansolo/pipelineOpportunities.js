@@ -46,6 +46,15 @@ export const useScansoloPipelineOpportunitiesStore = defineStore(
         }
       },
 
+      // UI-01 / CT-01: a manual lead lands on the board as soon as the
+      // server creates it; a 422 propagates so the form shows the reason.
+      async createOpportunity(payload) {
+        const { data } = await ScanSoloPipelineOpportunitiesAPI.create(payload);
+        const opportunity = camelizeOpportunity(data);
+        this.upsertOpportunity(opportunity);
+        return opportunity;
+      },
+
       // Moves the card immediately (optimistic) so drag-and-drop feels
       // responsive, then reverts it if the server rejects the transition
       // (RF-09) — the card's final resting stage always matches what the

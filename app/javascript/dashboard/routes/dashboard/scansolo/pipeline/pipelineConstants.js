@@ -11,6 +11,8 @@ export const SCANSOLO_PIPELINE_STAGES = [
   'perdido',
 ];
 
+export const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 // RF-12: fixed, non-account-configurable staleness threshold, mirroring
 // ScanSolo::PIPELINE_STALE_THRESHOLD.
-export const SCANSOLO_STALE_THRESHOLD_MS = 48 * 60 * 60 * 1000;
+export const SCANSOLO_STALE_THRESHOLD_MS = 2 * MS_PER_DAY;

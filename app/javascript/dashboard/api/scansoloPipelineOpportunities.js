@@ -11,6 +11,11 @@ class ScanSoloPipelineOpportunitiesAPI extends ApiClient {
       target_stage: targetStage,
     });
   }
+
+  // CT-12: administrators only; no body.
+  resendQuoteRequest(id) {
+    return axios.post(`${this.url}/${id}/quote_request/resend`);
+  }
 }
 
 export default new ScanSoloPipelineOpportunitiesAPI();

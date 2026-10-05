@@ -62,11 +62,85 @@
         "OWNER_LABEL": "Responsável",
         "LAST_INTERACTION_LABEL": "Última interação",
         "FROM_TO": "{from} → {to}",
-        "INITIAL_STAGE": "Início"
+        "INITIAL_STAGE": "Início",
+        "LEAD_SOURCE_LABEL": "Origem",
+        "QUALIFICATION_TITLE": "Qualificação",
+        "QUALIFICATION_EMPTY": "Nenhum campo nesta seção.",
+        "QUOTE_REQUEST": {
+          "TITLE": "Orçamento",
+          "STATUS_LABEL": "Status do orçamento",
+          "SENT_AT_LABEL": "Solicitado em",
+          "REPLIED_AT_LABEL": "Respondido em",
+          "NONE": "Nenhuma solicitação de orçamento."
+        },
+        "PROPOSAL": {
+          "TITLE": "Proposta",
+          "VERSION_LABEL": "Versão",
+          "NUMBER_LABEL": "Número",
+          "STATUS_LABEL": "Status da proposta",
+          "VALUE_LABEL": "Valor",
+          "VALID_UNTIL_LABEL": "Validade",
+          "DOCUMENT_LINK": "Abrir PDF da proposta",
+          "NONE": "Nenhuma proposta gerada."
+        },
+        "INITIAL_TEMPLATE_FAILURE": {
+          "TITLE": "Falha na mensagem inicial do lead",
+          "REASON_LABEL": "Motivo",
+          "STATUS_LABEL": "Status",
+          "STATUSES": {
+            "BLOCKED": "Bloqueada",
+            "FAILED": "Falhou"
+          }
+        },
+        "RESEND_QUOTE_REQUEST": {
+          "ACTION": "Reenviar solicitação de orçamento",
+          "SUCCESS": "Solicitação de orçamento reenviada.",
+          "ERRORS": {
+            "QUOTE_REQUEST_CLOSED": "O orçamento desta oportunidade já foi respondido; não há solicitação para reenviar.",
+            "QUOTE_REQUEST_NOT_ELIGIBLE": "Esta oportunidade não tem uma solicitação de orçamento que possa ser reenviada.",
+            "QUOTE_INBOX_MISCONFIGURED": "A caixa de entrada de e-mail de orçamento não está configurada corretamente. Corrija e publique a configuração do agente."
+          }
+        }
       },
       "EMPTY_STATE": "Nenhuma oportunidade no pipeline ainda.",
       "EMPTY_COLUMN": "Nenhuma oportunidade",
-      "ASSIGNED_OWNER": "Responsável atribuído"
+      "ASSIGNED_OWNER": "Responsável atribuído",
+      "NO_INTERACTION_DAYS": "Sem interação há {days} dias",
+      "HUMAN_ATTENDANCE": "Atendimento humano",
+      "NEW_LEAD": {
+        "BUTTON": "Novo lead",
+        "TITLE": "Novo lead",
+        "FIELDS": {
+          "NAME": "Nome",
+          "PHONE": "Telefone (E.164)",
+          "EMAIL": "E-mail",
+          "COMPANY": "Empresa",
+          "OWNER": "Responsável",
+          "INBOX": "Caixa de entrada WhatsApp"
+        },
+        "PLACEHOLDERS": {
+          "NAME": "Nome do contato",
+          "PHONE": "+5511999999999",
+          "EMAIL": "contato@empresa.com.br",
+          "COMPANY": "Nome da empresa",
+          "OWNER": "Selecione o responsável",
+          "INBOX": "Selecione a caixa de entrada"
+        },
+        "SAVE": "Cadastrar lead",
+        "CANCEL": "Cancelar",
+        "SUCCESS": "Lead cadastrado.",
+        "OPEN_EXISTING": "Abrir oportunidade existente",
+        "ERRORS": {
+          "MISSING_NAME": "Informe o nome do contato.",
+          "INVALID_PHONE": "Informe o telefone no formato E.164, por exemplo +5511999999999.",
+          "INVALID_EMAIL": "O e-mail informado não é válido.",
+          "INVALID_OWNER": "O responsável escolhido não é um usuário desta conta.",
+          "INVALID_INBOX": "Escolha uma caixa de entrada WhatsApp atendida pela IA.",
+          "CONTACT_OPTED_OUT": "Este contato pediu para não receber mensagens (opt-out).",
+          "CONTACT_CONFLICT": "O telefone e o e-mail informados pertencem a contatos diferentes.",
+          "OPPORTUNITY_EXISTS": "Este contato já tem uma oportunidade em andamento."
+        }
+      }
     },
     "AGENT_CENTER": {
       "TITLE": "Agente de IA",
@@ -98,7 +172,10 @@
         "SERVICE_HOURS": "Horário de atendimento",
         "REQUIRE_PROPOSAL_APPROVAL": "Exigir aprovação de um administrador antes de enviar propostas",
         "ALLOWED_INBOX_IDS": "Caixas de entrada atendidas pela IA",
-        "OPT_OUT_KEYWORDS": "Palavras-chave de opt-out"
+        "OPT_OUT_KEYWORDS": "Palavras-chave de opt-out",
+        "QUOTE_INBOX_ID": "Inbox de e-mail de orçamento",
+        "COMMERCIAL_USER_ID": "Usuário comercial responsável",
+        "QUOTE_RECIPIENT_EMAIL": "E-mail do destinatário comercial"
       },
       "SECTIONS": {
         "IDENTITY": "Identidade",
@@ -109,7 +186,8 @@
         "HANDOFF": "Handoff",
         "HOURS": "Horário",
         "PROPOSAL": "Proposta",
-        "CHANNELS": "Canais"
+        "CHANNELS": "Canais",
+        "COMMERCIAL": "Comercial"
       },
       "CHANNELS": {
         "PLACEHOLDER": "Selecione as caixas de entrada",
@@ -128,7 +206,9 @@
       "UNSAVED_CHANGES_MESSAGE": "Há alterações não salvas no rascunho. Deseja sair mesmo assim?",
       "LEAVE": "Sair sem salvar",
       "STAY": "Continuar editando",
-      "READ_ONLY_NOTICE": "Somente administradores podem editar a configuração do agente."
+      "READ_ONLY_NOTICE": "Somente administradores podem editar a configuração do agente.",
+      "QUOTE_INBOX_PLACEHOLDER": "Selecione a caixa de entrada de e-mail",
+      "COMMERCIAL_USER_PLACEHOLDER": "Selecione o usuário comercial"
     },
     "KNOWLEDGE_CENTER": {
       "TITLE": "Conhecimento",
@@ -233,7 +313,11 @@
         "PARAM_VALUE_PLACEHOLDER": "Texto fixo",
         "SAVE_SUCCESS": "Modelo atualizado.",
         "SAVE_ERROR": "Não foi possível salvar o modelo.",
-        "EMPTY_STATE": "Nenhuma cadência ativa para mapear."
+        "EMPTY_STATE": "Nenhuma cadência ativa para mapear.",
+        "SLOTS": {
+          "LEAD_MANUAL_INICIAL": "Mensagem inicial do lead manual",
+          "PROPOSTA_ACOMPANHAMENTO": "Acompanhamento da proposta"
+        }
       }
     },
     "PROPOSALS": {
@@ -266,7 +350,32 @@
       "GENERATE_SUCCESS": "Geração de proposta solicitada.",
       "APPROVE_SUCCESS": "Proposta aprovada.",
       "SEND_SUCCESS": "Envio de proposta solicitado.",
-      "RETRY_SUCCESS": "Nova tentativa solicitada."
+      "RETRY_SUCCESS": "Nova tentativa solicitada.",
+      "RESEND": "Reenviar",
+      "QUOTE_REQUEST_STATUS_LABEL": "Status do orçamento",
+      "PENDING_REPLIES": {
+        "TITLE": "Respostas pendentes de vínculo",
+        "EMPTY_STATE": "Nenhuma resposta pendente de vínculo.",
+        "SENDER_LABEL": "Remetente",
+        "SUBJECT_LABEL": "Assunto",
+        "RECEIVED_AT_LABEL": "Recebida em",
+        "EXCERPT_LABEL": "Trecho",
+        "CONVERSATION_LINK": "Ver conversa de e-mail",
+        "ORIGIN_REQUEST": "Solicitação de orçamento de origem #{id}",
+        "LINK": "Vincular",
+        "LINK_PLACEHOLDER": "Selecione a solicitação de orçamento",
+        "DISCARD": "Descartar",
+        "DISCARD_CONFIRM_MESSAGE": "Descartar esta resposta a remove da lista sem alterar o orçamento nem a proposta. Deseja confirmar?",
+        "LINK_SUCCESS": "Resposta vinculada à solicitação de orçamento.",
+        "DISCARD_SUCCESS": "Resposta descartada.",
+        "ERRORS": {
+          "ALREADY_LINKED": "Esta resposta já foi vinculada.",
+          "QUOTE_REQUEST_CLOSED": "Esta solicitação de orçamento já foi respondida e não aceita vínculo.",
+          "ALREADY_DISCARDED": "Esta resposta já foi descartada.",
+          "NOT_DISCARDABLE": "Só respostas tardias podem ser descartadas.",
+          "INVALID_QUOTE_REQUEST_ID": "Selecione uma solicitação de orçamento válida."
+        }
+      }
     },
     "EXECUTIONS": {
       "TITLE": "Execuções e auditoria",
@@ -468,6 +577,29 @@
         "CADENCE_SIGNAL": "Sinal de follow-up",
         "HUMAN_HANDOFF": "Transferência para humano",
         "PROPOSAL_GENERATE": "Geração de proposta"
+      },
+      "LEAD_SOURCE_TAGS": {
+        "WEBSITE": "SITE",
+        "MANUAL": "COMERCIAL"
+      },
+      "LEAD_SOURCES": {
+        "WEBSITE": "Site/WhatsApp",
+        "MANUAL": "Comercial",
+        "NONE": "Não informada"
+      },
+      "FIELD_STATUSES": {
+        "CONFIRMADO": "Coletado",
+        "INFERIDO": "A confirmar",
+        "FALTANTE": "Faltante"
+      },
+      "COMMERCIAL_STATUSES": {
+        "AWAITING_REPLY": "Aguardando orçamento",
+        "CORRECTION_REQUESTED": "Correção solicitada",
+        "REPLIED": "Orçamento recebido",
+        "GENERATING": "Gerando proposta",
+        "GENERATED": "Proposta gerada",
+        "SENT": "Proposta enviada",
+        "FAILED": "Falha na proposta"
       }
     },
     "CONTACT_OPT_OUT": {

@@ -145,6 +145,101 @@ export const PROPOSAL_STATUS_LABELS = {
   failed: 'SCANSOLO.PROPOSALS.STATUSES.FAILED',
 };
 
+// RF-01 / UI-02: card tag; an empty origin shows no tag.
+export const LEAD_SOURCE_TAGS = {
+  website: 'SCANSOLO.LABELS.LEAD_SOURCE_TAGS.WEBSITE',
+  manual: 'SCANSOLO.LABELS.LEAD_SOURCE_TAGS.MANUAL',
+};
+
+// UI-04: an empty origin reads "Não informada".
+export const LEAD_SOURCE_LABELS = {
+  website: 'SCANSOLO.LABELS.LEAD_SOURCES.WEBSITE',
+  manual: 'SCANSOLO.LABELS.LEAD_SOURCES.MANUAL',
+  none: 'SCANSOLO.LABELS.LEAD_SOURCES.NONE',
+};
+
+// RF-45: display-only mapping of the LeadState field classification.
+export const FIELD_STATUS_LABELS = {
+  confirmado: 'SCANSOLO.LABELS.FIELD_STATUSES.CONFIRMADO',
+  inferido: 'SCANSOLO.LABELS.FIELD_STATUSES.INFERIDO',
+  faltante: 'SCANSOLO.LABELS.FIELD_STATUSES.FALTANTE',
+};
+
+// RF-33: `generated` (and the historical `approved`) is never shown as sent.
+const PROPOSAL_COMMERCIAL_STATUS_LABELS = {
+  generating: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.GENERATING',
+  generated: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.GENERATED',
+  approved: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.GENERATED',
+  sent: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.SENT',
+  failed: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.FAILED',
+};
+
+const QUOTE_REQUEST_COMMERCIAL_STATUS_LABELS = {
+  awaiting_reply: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.AWAITING_REPLY',
+  correction_requested:
+    'SCANSOLO.LABELS.COMMERCIAL_STATUSES.CORRECTION_REQUESTED',
+  replied: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.REPLIED',
+};
+
+// UI-02 / UI-04: one quote/proposal label per opportunity; the proposal
+// status wins over the quote request status. `null` → no label.
+export const commercialStatusKey = (quoteRequestStatus, proposalStatus) =>
+  PROPOSAL_COMMERCIAL_STATUS_LABELS[proposalStatus] ||
+  QUOTE_REQUEST_COMMERCIAL_STATUS_LABELS[quoteRequestStatus] ||
+  null;
+
+// CT-01 / UI-01: 422 reason → message.
+export const MANUAL_LEAD_ERROR_LABELS = {
+  missing_name: 'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.MISSING_NAME',
+  invalid_phone: 'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.INVALID_PHONE',
+  invalid_email: 'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.INVALID_EMAIL',
+  invalid_owner: 'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.INVALID_OWNER',
+  invalid_inbox: 'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.INVALID_INBOX',
+  contact_opted_out:
+    'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.CONTACT_OPTED_OUT',
+  contact_conflict: 'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.CONTACT_CONFLICT',
+  opportunity_exists:
+    'SCANSOLO.PIPELINE_BOARD.NEW_LEAD.ERRORS.OPPORTUNITY_EXISTS',
+};
+
+// CT-12 / UI-07: 422 reason → message.
+export const QUOTE_REQUEST_RESEND_ERROR_LABELS = {
+  quote_request_closed:
+    'SCANSOLO.PIPELINE_BOARD.DETAIL.RESEND_QUOTE_REQUEST.ERRORS.QUOTE_REQUEST_CLOSED',
+  quote_request_not_eligible:
+    'SCANSOLO.PIPELINE_BOARD.DETAIL.RESEND_QUOTE_REQUEST.ERRORS.QUOTE_REQUEST_NOT_ELIGIBLE',
+  quote_inbox_misconfigured:
+    'SCANSOLO.PIPELINE_BOARD.DETAIL.RESEND_QUOTE_REQUEST.ERRORS.QUOTE_INBOX_MISCONFIGURED',
+};
+
+// RF-08 / UI-04: status of the manual lead's initial template failure.
+export const INITIAL_TEMPLATE_FAILURE_STATUS_LABELS = {
+  blocked:
+    'SCANSOLO.PIPELINE_BOARD.DETAIL.INITIAL_TEMPLATE_FAILURE.STATUSES.BLOCKED',
+  failed:
+    'SCANSOLO.PIPELINE_BOARD.DETAIL.INITIAL_TEMPLATE_FAILURE.STATUSES.FAILED',
+};
+
+// CT-08 / UI-05: 422 reason → message.
+export const QUOTE_REPLY_ERROR_LABELS = {
+  already_linked: 'SCANSOLO.PROPOSALS.PENDING_REPLIES.ERRORS.ALREADY_LINKED',
+  quote_request_closed:
+    'SCANSOLO.PROPOSALS.PENDING_REPLIES.ERRORS.QUOTE_REQUEST_CLOSED',
+  already_discarded:
+    'SCANSOLO.PROPOSALS.PENDING_REPLIES.ERRORS.ALREADY_DISCARDED',
+  not_discardable: 'SCANSOLO.PROPOSALS.PENDING_REPLIES.ERRORS.NOT_DISCARDABLE',
+  invalid_quote_request_id:
+    'SCANSOLO.PROPOSALS.PENDING_REPLIES.ERRORS.INVALID_QUOTE_REQUEST_ID',
+};
+
+// Mirrors the ScanSolo::TemplateMapping slots added by this feature.
+export const TEMPLATE_SLOT_LABELS = {
+  lead_manual_inicial:
+    'SCANSOLO.FOLLOW_UPS.TEMPLATES.SLOTS.LEAD_MANUAL_INICIAL',
+  proposta_acompanhamento:
+    'SCANSOLO.FOLLOW_UPS.TEMPLATES.SLOTS.PROPOSTA_ACOMPANHAMENTO',
+};
+
 // Translates a known enum value; free-form values (e.g. a provider error
 // message) are shown as they came from the server.
 export const enumLabel = (t, labels, value) => {

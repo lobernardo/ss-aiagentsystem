@@ -48,7 +48,7 @@ const draftFixture = {
   opt_out_keywords: ['PARAR', 'SAIR', 'STOP'],
   quote_inbox_id: null,
   commercial_user_id: null,
-  quote_recipient_email: 'comercial@scansolo.com.br',
+  quote_recipient_email: 'comercial@example.com',
   updated_at: '2026-01-01T09:00:00Z',
 };
 
@@ -575,7 +575,7 @@ describe('AgentCenter', () => {
       ]);
       expect(
         section.find('[data-testid="field-quoteRecipientEmail"]').element.value
-      ).toBe('comercial@scansolo.com.br');
+      ).toBe('comercial@example.com');
     });
 
     it('sends the 3 fields when saving', async () => {
@@ -592,7 +592,7 @@ describe('AgentCenter', () => {
       await section.find('[data-testid="field-commercialUserId"]').setValue(7);
       await section
         .find('[data-testid="field-quoteRecipientEmail"]')
-        .setValue('luciano@scansolo.com.br');
+        .setValue('luciano@example.com');
       await wrapper.find('form').trigger('submit');
       await flushPromises();
 
@@ -600,7 +600,7 @@ describe('AgentCenter', () => {
         expect.objectContaining({
           quote_inbox_id: 13,
           commercial_user_id: 7,
-          quote_recipient_email: 'luciano@scansolo.com.br',
+          quote_recipient_email: 'luciano@example.com',
         })
       );
     });

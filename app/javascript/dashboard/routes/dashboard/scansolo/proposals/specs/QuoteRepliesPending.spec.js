@@ -29,7 +29,7 @@ const unmatchedReply = {
   id: 1,
   conversation_id: 50,
   message_id: 500,
-  sender_email: 'luciano@scansolo.com.br',
+  sender_email: 'luciano@example.com',
   subject: 'Re: orçamento',
   received_at: '2026-01-05T12:00:00Z',
   excerpt: 'Segue o valor combinado.',
@@ -41,7 +41,7 @@ const lateReply = {
   id: 2,
   conversation_id: 51,
   message_id: 501,
-  sender_email: 'luciano@scansolo.com.br',
+  sender_email: 'luciano@example.com',
   subject: 'Solicitação de orçamento #8 — Solar Ltda',
   received_at: '2026-01-06T12:00:00Z',
   excerpt: 'Correção do valor.',
@@ -100,7 +100,7 @@ describe('QuoteRepliesPending', () => {
     expect(wrapper.findAll('[data-testid="quote-reply-row"]')).toHaveLength(2);
     const unmatched = row(wrapper, 1);
     expect(unmatched.find('[data-testid="quote-reply-sender"]').text()).toBe(
-      'Remetente: luciano@scansolo.com.br'
+      'Remetente: luciano@example.com'
     );
     expect(unmatched.find('[data-testid="quote-reply-subject"]').text()).toBe(
       'Assunto: Re: orçamento'

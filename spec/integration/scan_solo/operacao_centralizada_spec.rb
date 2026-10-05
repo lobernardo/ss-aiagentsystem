@@ -282,11 +282,11 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     luciano_replies(stray, valid_block)
 
     get "/api/v1/accounts/#{account.id}/scan_solo/quote_replies", params: { status: 'pending' }, headers: admin.create_new_auth_token
-    pending = response.parsed_body.sole
-    expect(pending).to include('kind' => 'unmatched', 'conversation_id' => stray.id)
+    unmatched_reply = response.parsed_body.sole
+    expect(unmatched_reply).to include('kind' => 'unmatched', 'conversation_id' => stray.id)
 
     run_jobs do
-      post "/api/v1/accounts/#{account.id}/scan_solo/quote_replies/#{pending['id']}/link",
+      post "/api/v1/accounts/#{account.id}/scan_solo/quote_replies/#{unmatched_reply['id']}/link",
            params: { quote_request_id: opportunity.quote_request.id }, headers: admin.create_new_auth_token, as: :json
     end
 

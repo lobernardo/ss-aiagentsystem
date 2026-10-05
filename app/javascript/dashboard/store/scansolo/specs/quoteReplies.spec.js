@@ -14,7 +14,7 @@ const unmatchedReply = {
   id: 11,
   conversation_id: 40,
   message_id: 400,
-  sender_email: 'luciano@scansolo.com.br',
+  sender_email: 'luciano@example.com',
   subject: 'Re: orçamento',
   received_at: '2026-10-01T12:00:00Z',
   excerpt: 'Segue o orçamento',
@@ -47,7 +47,7 @@ describe('useScansoloQuoteRepliesStore', () => {
     expect(ScanSoloQuoteRepliesAPI.getPending).toHaveBeenCalledTimes(1);
     expect(store.replies.map(reply => reply.id)).toEqual([11, 12]);
     expect(store.replies[1]).toMatchObject({
-      senderEmail: 'luciano@scansolo.com.br',
+      senderEmail: 'luciano@example.com',
       kind: 'late_reply',
       quoteRequestId: 3,
     });

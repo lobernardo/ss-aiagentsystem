@@ -7,22 +7,45 @@ import { computed, onMounted, ref } from 'vue';
 import camelcaseKeys from 'camelcase-keys';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
+import { useAlert } from 'dashboard/composables';
+import { useStore, useMapGetter } from 'dashboard/composables/store.js';
+import Button from 'dashboard/components-next/button/Button.vue';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
-import { STAGE_LABELS, enumLabel } from '../scansoloLabels';
+import { useScanSoloRole } from '../composables/useScanSoloRole';
+import {
+  FIELD_STATUS_LABELS,
+  INITIAL_TEMPLATE_FAILURE_STATUS_LABELS,
+  LEAD_SOURCE_LABELS,
+  PROPOSAL_STATUS_LABELS,
+  QUOTE_REQUEST_RESEND_ERROR_LABELS,
+  REASON_LABELS,
+  STAGE_LABELS,
+  commercialStatusKey,
+  enumLabel,
+} from '../scansoloLabels';
+
+// UI-04: value and validity only mean something once the PDF exists.
+const PROPOSAL_STATUSES_WITH_TERMS = ['generated', 'sent'];
+const FIELD_STATUSES = Object.keys(FIELD_STATUS_LABELS);
 
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+const vuexStore = useStore();
+const agents = useMapGetter('agents/getAgents');
+const { isAdministrator } = useScanSoloRole();
 
 const opportunity = ref(null);
 const loading = ref(false);
 const loadError = ref(false);
+const resendingQuoteRequest = ref(false);
 
 // UI-02: contact and conversation come straight off the opportunity payload
 // (T13's serializer now embeds contact_name/stage_history for this view);
 // no separate fetch is needed.
 const fetchOpportunity = async () => {
-  loading.value = true;
+  // A reload after an action keeps the screen on display.
+  loading.value = !opportunity.value;
   loadError.value = false;
   try {
     const { data } = await ScanSoloPipelineOpportunitiesAPI.show(
@@ -53,6 +76,93 @@ const stageLabel = stage =>
     ? enumLabel(t, STAGE_LABELS, stage)
     : t('SCANSOLO.PIPELINE_BOARD.DETAIL.INITIAL_STAGE');
 
+const leadSourceLabel = computed(() =>
+  enumLabel(t, LEAD_SOURCE_LABELS, opportunity.value.leadSource || 'none')
+);
+
+const ownerLabel = computed(() => {
+  const { ownerId } = opportunity.value;
+  if (!ownerId) return t('SCANSOLO.PIPELINE_BOARD.UNASSIGNED_OWNER');
+  const owner = (agents.value || []).find(agent => agent.id === ownerId);
+  return owner?.name || t('SCANSOLO.PIPELINE_BOARD.ASSIGNED_OWNER');
+});
+
+// RF-45: display-only grouping of the lead-state fields by classification.
+const fieldsByStatus = computed(() => {
+  const groups = Object.fromEntries(FIELD_STATUSES.map(status => [status, []]));
+  Object.values(opportunity.value.leadState?.blocks || {})
+    .flat()
+    .forEach(field => groups[field.status]?.push(field));
+  return groups;
+});
+
+// A missing field has no value; the others read "Label: value".
+const fieldText = field => {
+  if (field.status === 'faltante') return field.label;
+  const value = Array.isArray(field.value)
+    ? field.value.join(', ')
+    : field.value;
+  return `${field.label}: ${value ?? ''}`;
+};
+
+const statusLabel = key =>
+  // Keys come from the static maps in scansoloLabels.
+  // eslint-disable-next-line @intlify/vue-i18n/no-dynamic-keys
+  key ? t(key) : '';
+
+const commercialStatusLabel = computed(() =>
+  statusLabel(
+    commercialStatusKey(
+      opportunity.value.quoteRequestStatus,
+      opportunity.value.proposalStatus
+    )
+  )
+);
+
+const quoteRequestStatusLabel = computed(() =>
+  statusLabel(commercialStatusKey(opportunity.value.quoteRequest?.status, null))
+);
+
+const showProposalTerms = computed(() =>
+  PROPOSAL_STATUSES_WITH_TERMS.includes(opportunity.value.proposal?.status)
+);
+
+const formatMoney = (value, currency) =>
+  new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: currency || 'BRL',
+  }).format(Number(value));
+
+// `valid_until` is a calendar date; UTC keeps it from shifting a day.
+const formatDate = value =>
+  new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(new Date(value));
+
+// UI-07: administrators only, and only when CT-12 would accept it.
+const canResendQuoteRequest = computed(
+  () => isAdministrator.value && opportunity.value.quoteRequestResendAvailable
+);
+
+const resendQuoteRequest = async () => {
+  resendingQuoteRequest.value = true;
+  try {
+    await ScanSoloPipelineOpportunitiesAPI.resendQuoteRequest(
+      opportunity.value.id
+    );
+    useAlert(t('SCANSOLO.PIPELINE_BOARD.DETAIL.RESEND_QUOTE_REQUEST.SUCCESS'));
+    await fetchOpportunity();
+  } catch (error) {
+    useAlert(
+      enumLabel(
+        t,
+        QUOTE_REQUEST_RESEND_ERROR_LABELS,
+        error?.response?.data?.error
+      ) || t('SCANSOLO.COMMON.ACTION_ERROR')
+    );
+  } finally {
+    resendingQuoteRequest.value = false;
+  }
+};
+
 const technicalItems = computed(() => [
   { label: t('SCANSOLO.TECHNICAL_DETAILS.ID'), value: opportunity.value.id },
   {
@@ -73,9 +183,12 @@ const technicalItems = computed(() => [
   },
 ]);
 
-onMounted(fetchOpportunity);
+onMounted(() => {
+  vuexStore.dispatch('agents/get');
+  fetchOpportunity();
+});
 
-defineExpose({ fetchOpportunity, goToConversation });
+defineExpose({ fetchOpportunity, goToConversation, resendQuoteRequest });
 </script>
 
 <template>
@@ -108,6 +221,241 @@ defineExpose({ fetchOpportunity, goToConversation });
                 :value="opportunity.lastCustomerInteractionAt"
                 :fallback="t('SCANSOLO.COMMON.NOT_AVAILABLE')"
               />
+            </p>
+            <p
+              data-testid="opportunity-lead-source"
+              class="text-sm text-n-slate-11"
+            >
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_SOURCE_LABEL') }}:
+              {{ leadSourceLabel }}
+            </p>
+            <p data-testid="opportunity-owner" class="text-sm text-n-slate-11">
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.OWNER_LABEL') }}:
+              {{ ownerLabel }}
+            </p>
+            <p
+              v-if="commercialStatusLabel"
+              data-testid="opportunity-commercial-status"
+              class="text-sm font-medium text-n-blue-11"
+            >
+              {{ commercialStatusLabel }}
+            </p>
+          </section>
+
+          <section
+            v-if="opportunity.initialTemplateFailure"
+            data-testid="initial-template-failure"
+            class="mb-4 rounded-lg border border-n-ruby-6 bg-n-ruby-2 px-3 py-2 text-sm text-n-ruby-11"
+          >
+            <h3 class="font-medium">
+              {{
+                t(
+                  'SCANSOLO.PIPELINE_BOARD.DETAIL.INITIAL_TEMPLATE_FAILURE.TITLE'
+                )
+              }}
+            </h3>
+            <p data-testid="initial-template-failure-reason">
+              {{
+                t(
+                  'SCANSOLO.PIPELINE_BOARD.DETAIL.INITIAL_TEMPLATE_FAILURE.REASON_LABEL'
+                )
+              }}:
+              {{
+                enumLabel(
+                  t,
+                  REASON_LABELS,
+                  opportunity.initialTemplateFailure.reason
+                )
+              }}
+            </p>
+            <p data-testid="initial-template-failure-status">
+              {{
+                t(
+                  'SCANSOLO.PIPELINE_BOARD.DETAIL.INITIAL_TEMPLATE_FAILURE.STATUS_LABEL'
+                )
+              }}:
+              {{
+                enumLabel(
+                  t,
+                  INITIAL_TEMPLATE_FAILURE_STATUS_LABELS,
+                  opportunity.initialTemplateFailure.status
+                )
+              }}
+            </p>
+          </section>
+
+          <section data-testid="opportunity-qualification" class="mb-4">
+            <h3 class="text-n-slate-11 text-sm font-medium mb-2">
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.QUALIFICATION_TITLE') }}
+            </h3>
+            <div class="grid gap-3 md:grid-cols-3">
+              <div
+                v-for="status in FIELD_STATUSES"
+                :key="status"
+                :data-testid="`qualification-${status}`"
+              >
+                <h4 class="text-sm font-medium text-n-slate-12 mb-1">
+                  {{ enumLabel(t, FIELD_STATUS_LABELS, status) }}
+                </h4>
+                <p
+                  v-if="!fieldsByStatus[status].length"
+                  class="text-xs text-n-slate-10"
+                >
+                  {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.QUALIFICATION_EMPTY') }}
+                </p>
+                <ul v-else class="text-xs text-n-slate-11">
+                  <li
+                    v-for="field in fieldsByStatus[status]"
+                    :key="field.key"
+                    data-testid="qualification-field"
+                    :data-field-key="field.key"
+                  >
+                    {{ fieldText(field) }}
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section data-testid="opportunity-quote-request" class="mb-4">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-n-slate-11 text-sm font-medium">
+                {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.QUOTE_REQUEST.TITLE') }}
+              </h3>
+              <Button
+                v-if="canResendQuoteRequest"
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="resend-quote-request-button"
+                :is-loading="resendingQuoteRequest"
+                :disabled="resendingQuoteRequest"
+                :label="
+                  t(
+                    'SCANSOLO.PIPELINE_BOARD.DETAIL.RESEND_QUOTE_REQUEST.ACTION'
+                  )
+                "
+                @click="resendQuoteRequest"
+              />
+            </div>
+            <div
+              v-if="opportunity.quoteRequest"
+              class="text-sm text-n-slate-11"
+            >
+              <p data-testid="quote-request-status">
+                {{
+                  t(
+                    'SCANSOLO.PIPELINE_BOARD.DETAIL.QUOTE_REQUEST.STATUS_LABEL'
+                  )
+                }}:
+                {{ quoteRequestStatusLabel }}
+              </p>
+              <p>
+                {{
+                  t(
+                    'SCANSOLO.PIPELINE_BOARD.DETAIL.QUOTE_REQUEST.SENT_AT_LABEL'
+                  )
+                }}:
+                <ScanSoloTime
+                  data-testid="quote-request-sent-at"
+                  :value="opportunity.quoteRequest.sentAt"
+                  :fallback="t('SCANSOLO.COMMON.NOT_AVAILABLE')"
+                />
+              </p>
+              <p>
+                {{
+                  t(
+                    'SCANSOLO.PIPELINE_BOARD.DETAIL.QUOTE_REQUEST.REPLIED_AT_LABEL'
+                  )
+                }}:
+                <ScanSoloTime
+                  data-testid="quote-request-replied-at"
+                  :value="opportunity.quoteRequest.repliedAt"
+                  :fallback="t('SCANSOLO.COMMON.NOT_AVAILABLE')"
+                />
+              </p>
+            </div>
+            <p
+              v-else
+              data-testid="quote-request-none"
+              class="text-sm text-n-slate-10"
+            >
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.QUOTE_REQUEST.NONE') }}
+            </p>
+          </section>
+
+          <section data-testid="opportunity-proposal" class="mb-4">
+            <h3 class="text-n-slate-11 text-sm font-medium mb-2">
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.TITLE') }}
+            </h3>
+            <div v-if="opportunity.proposal" class="text-sm text-n-slate-11">
+              <p data-testid="proposal-version">
+                {{
+                  t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.VERSION_LABEL')
+                }}:
+                {{ opportunity.proposal.versionNumber }}
+              </p>
+              <p
+                v-if="opportunity.proposal.proposalNumber"
+                data-testid="proposal-number"
+              >
+                {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.NUMBER_LABEL') }}:
+                {{ opportunity.proposal.proposalNumber }}
+              </p>
+              <p data-testid="proposal-status">
+                {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.STATUS_LABEL') }}:
+                {{
+                  enumLabel(
+                    t,
+                    PROPOSAL_STATUS_LABELS,
+                    opportunity.proposal.status
+                  )
+                }}
+              </p>
+              <template v-if="showProposalTerms">
+                <p
+                  v-if="opportunity.proposal.value !== null"
+                  data-testid="proposal-value"
+                >
+                  {{
+                    t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.VALUE_LABEL')
+                  }}:
+                  {{
+                    formatMoney(
+                      opportunity.proposal.value,
+                      opportunity.proposal.currency
+                    )
+                  }}
+                </p>
+                <p
+                  v-if="opportunity.proposal.validUntil"
+                  data-testid="proposal-valid-until"
+                >
+                  {{
+                    t(
+                      'SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.VALID_UNTIL_LABEL'
+                    )
+                  }}:
+                  {{ formatDate(opportunity.proposal.validUntil) }}
+                </p>
+              </template>
+              <a
+                v-if="opportunity.proposal.documentUrl"
+                data-testid="proposal-document-link"
+                :href="opportunity.proposal.documentUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-n-blue-text underline"
+              >
+                {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.DOCUMENT_LINK') }}
+              </a>
+            </div>
+            <p
+              v-else
+              data-testid="proposal-none"
+              class="text-sm text-n-slate-10"
+            >
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.NONE') }}
             </p>
           </section>
 

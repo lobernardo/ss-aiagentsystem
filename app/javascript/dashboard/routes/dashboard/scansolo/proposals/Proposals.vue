@@ -3,6 +3,7 @@ import ScanSoloPageLayout from 'dashboard/routes/dashboard/scansolo/components/S
 import ScanSoloListState from 'dashboard/routes/dashboard/scansolo/components/ScanSoloListState.vue';
 import ScanSoloConfirmDialog from 'dashboard/routes/dashboard/scansolo/components/ScanSoloConfirmDialog.vue';
 import TechnicalDetails from 'dashboard/routes/dashboard/scansolo/components/TechnicalDetails.vue';
+import QuoteRepliesPending from './QuoteRepliesPending.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAlert } from 'dashboard/composables';
@@ -11,6 +12,7 @@ import { useScanSoloRole } from '../composables/useScanSoloRole';
 import {
   PROPOSAL_STATUS_LABELS,
   REASON_LABELS,
+  commercialStatusKey,
   enumLabel,
 } from '../scansoloLabels';
 import { serverErrorMessage } from '../scansoloErrors';
@@ -20,11 +22,13 @@ const INTEGRATION_NOT_CONFIGURED_ERROR = 'proposal_integration_not_configured';
 
 const { t } = useI18n();
 const store = useScansoloProposalsStore();
-const { isAdministrator, isOwner } = useScanSoloRole();
+const { isAdministrator } = useScanSoloRole();
 
 const loadError = ref(false);
-// { kind: 'send' | 'reprocess', proposal, version }
-const pendingConfirmation = ref(null);
+// RF-55 Etapa 1 / UI-06: only a dead-letter reprocess asks for confirmation;
+// approving and sending are no longer offered by this screen.
+// { proposal, version }
+const pendingReprocess = ref(null);
 
 const createCorrelationId = () =>
   globalThis.crypto?.randomUUID?.() ||
@@ -71,62 +75,48 @@ const generate = proposal =>
     'SCANSOLO.PROPOSALS.GENERATE_SUCCESS'
   );
 
-const approve = (proposal, version) =>
-  runMutation(
-    () => store.approveProposal(proposal.id, version.id, createCorrelationId()),
-    'SCANSOLO.PROPOSALS.APPROVE_SUCCESS'
-  );
-
-const send = (proposal, version) =>
-  runMutation(
-    () => store.sendProposal(proposal.id, version.id, createCorrelationId()),
-    'SCANSOLO.PROPOSALS.SEND_SUCCESS'
-  );
-
 const retry = (proposal, version, confirmReprocess) =>
   runMutation(
     () => store.retryProposal(proposal.id, version.id, confirmReprocess),
     'SCANSOLO.PROPOSALS.RETRY_SUCCESS'
   );
 
-// UI-09: sending and reprocessing a dead letter always ask first.
-const requestSend = (proposal, version) => {
-  pendingConfirmation.value = { kind: 'send', proposal, version };
-};
-
+// UI-09: reprocessing a dead letter always asks first.
 const requestRetry = (proposal, version) => {
   if (version.deadLetter) {
-    pendingConfirmation.value = { kind: 'reprocess', proposal, version };
+    pendingReprocess.value = { proposal, version };
   } else {
     retry(proposal, version, false);
   }
 };
 
-const confirmPending = async () => {
-  const { kind, proposal, version } = pendingConfirmation.value;
-  pendingConfirmation.value = null;
-  if (kind === 'send') await send(proposal, version);
-  else await retry(proposal, version, true);
+const confirmReprocess = async () => {
+  const { proposal, version } = pendingReprocess.value;
+  pendingReprocess.value = null;
+  await retry(proposal, version, true);
 };
 
-const confirmationMessage = computed(() => {
-  const pending = pendingConfirmation.value;
-  if (!pending) return '';
-  return pending.kind === 'send'
-    ? t('SCANSOLO.PROPOSALS.SEND_CONFIRM_MESSAGE')
-    : t('SCANSOLO.PROPOSALS.REPROCESS_CONFIRM_MESSAGE', {
-        count: pending.version.retryCount,
-      });
-});
+const reprocessMessage = computed(() =>
+  pendingReprocess.value
+    ? t('SCANSOLO.PROPOSALS.REPROCESS_CONFIRM_MESSAGE', {
+        count: pendingReprocess.value.version.retryCount,
+      })
+    : ''
+);
 
-// RF-48 / UI-13: which buttons each role sees.
-const canApprove = () => isAdministrator.value;
-const canSend = proposal => isAdministrator.value || isOwner(proposal.ownerId);
+// RF-48 / UI-13: retry (CT-10 "Reenviar") stays administrator-only.
 const canRetry = () => isAdministrator.value;
 
-const isSendable = version =>
-  ['generated', 'approved'].includes(version.status) &&
-  !(version.approvalRequired && !version.approvedAt);
+const quoteRequestStatusLabel = proposal => {
+  const key = commercialStatusKey(proposal.quoteRequestStatus, null);
+  // Keys come from the static maps in scansoloLabels.
+  // eslint-disable-next-line @intlify/vue-i18n/no-dynamic-keys
+  return key ? t(key) : '';
+};
+
+// `valid_until` is a calendar date; UTC keeps it from shifting a day.
+const formatDate = value =>
+  new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(new Date(value));
 
 const versionTechnicalItems = version => [
   {
@@ -139,7 +129,7 @@ const versionTechnicalItems = version => [
   },
 ];
 
-defineExpose({ generate, approve, send, requestSend, requestRetry });
+defineExpose({ generate, requestRetry });
 </script>
 
 <template>
@@ -157,6 +147,8 @@ defineExpose({ generate, approve, send, requestSend, requestRetry });
         {{ t('SCANSOLO.PROPOSALS.INTEGRATION_BLOCKED') }}
       </p>
 
+      <QuoteRepliesPending />
+
       <ScanSoloListState
         :loading="store.uiFlags.fetchingList"
         :error="loadError"
@@ -172,9 +164,22 @@ defineExpose({ generate, approve, send, requestSend, requestRetry });
           class="rounded-lg border border-n-weak p-3 mb-3"
         >
           <div class="flex items-center justify-between mb-2">
-            <p data-testid="proposal-contact-name" class="text-sm font-medium">
-              {{ proposal.contactName }}
-            </p>
+            <div>
+              <p
+                data-testid="proposal-contact-name"
+                class="text-sm font-medium"
+              >
+                {{ proposal.contactName }}
+              </p>
+              <p
+                v-if="quoteRequestStatusLabel(proposal)"
+                data-testid="proposal-quote-request-status"
+                class="text-xs text-n-slate-11"
+              >
+                {{ t('SCANSOLO.PROPOSALS.QUOTE_REQUEST_STATUS_LABEL') }}:
+                {{ quoteRequestStatusLabel(proposal) }}
+              </p>
+            </div>
             <button
               type="button"
               data-testid="generate-button"
@@ -233,29 +238,6 @@ defineExpose({ generate, approve, send, requestSend, requestRetry });
 
               <div v-if="version.isCurrent" class="flex items-center gap-2">
                 <button
-                  v-if="
-                    canApprove() &&
-                    version.status === 'generated' &&
-                    !version.approvedAt
-                  "
-                  type="button"
-                  data-testid="approve-button"
-                  class="rounded-lg border border-n-weak px-3 py-1.5 text-sm"
-                  @click="approve(proposal, version)"
-                >
-                  {{ t('SCANSOLO.PROPOSALS.APPROVE') }}
-                </button>
-                <button
-                  v-if="canSend(proposal)"
-                  type="button"
-                  data-testid="send-button"
-                  :disabled="integrationBlocked || !isSendable(version)"
-                  class="rounded-lg border border-n-weak px-3 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  @click="requestSend(proposal, version)"
-                >
-                  {{ t('SCANSOLO.PROPOSALS.SEND') }}
-                </button>
-                <button
                   v-if="canRetry() && version.status === 'failed'"
                   type="button"
                   data-testid="retry-button"
@@ -266,11 +248,45 @@ defineExpose({ generate, approve, send, requestSend, requestRetry });
                   {{
                     version.deadLetter
                       ? t('SCANSOLO.PROPOSALS.REPROCESS')
-                      : t('SCANSOLO.PROPOSALS.RETRY')
+                      : t('SCANSOLO.PROPOSALS.RESEND')
                   }}
                 </button>
               </div>
             </div>
+            <p
+              v-if="version.proposalNumber || version.validUntil"
+              class="mt-1 text-xs text-n-slate-11"
+            >
+              <span
+                v-if="version.proposalNumber"
+                data-testid="version-proposal-number"
+              >
+                {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.NUMBER_LABEL') }}:
+                {{ version.proposalNumber }}
+              </span>
+              <span
+                v-if="version.validUntil"
+                data-testid="version-valid-until"
+                class="ms-2"
+              >
+                {{
+                  t(
+                    'SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.VALID_UNTIL_LABEL'
+                  )
+                }}:
+                {{ formatDate(version.validUntil) }}
+              </span>
+            </p>
+            <a
+              v-if="version.documentUrl || version.artifactUrl"
+              data-testid="version-document-link"
+              :href="version.documentUrl || version.artifactUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="mt-1 inline-block text-xs text-n-blue-text underline"
+            >
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.DOCUMENT_LINK') }}
+            </a>
             <p
               v-if="version.status === 'failed' && version.failureReason"
               data-testid="version-failure-reason"
@@ -285,15 +301,11 @@ defineExpose({ generate, approve, send, requestSend, requestRetry });
       </ScanSoloListState>
 
       <ScanSoloConfirmDialog
-        :show="!!pendingConfirmation"
-        :message="confirmationMessage"
-        :confirm-label="
-          pendingConfirmation?.kind === 'send'
-            ? t('SCANSOLO.PROPOSALS.SEND_CONFIRM')
-            : t('SCANSOLO.PROPOSALS.REPROCESS_CONFIRM')
-        "
-        @confirm="confirmPending"
-        @cancel="pendingConfirmation = null"
+        :show="!!pendingReprocess"
+        :message="reprocessMessage"
+        :confirm-label="t('SCANSOLO.PROPOSALS.REPROCESS_CONFIRM')"
+        @confirm="confirmReprocess"
+        @cancel="pendingReprocess = null"
       />
     </div>
   </ScanSoloPageLayout>

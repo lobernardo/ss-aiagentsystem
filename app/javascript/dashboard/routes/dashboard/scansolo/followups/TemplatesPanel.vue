@@ -13,6 +13,7 @@ import {
   PARAM_SOURCE_LABELS,
   REASON_LABELS,
   STAGE_LABELS,
+  TEMPLATE_SLOT_LABELS,
   enumLabel,
 } from '../scansoloLabels';
 
@@ -43,6 +44,12 @@ const stepLabel = row =>
   row.step === null
     ? t('SCANSOLO.FOLLOW_UPS.TEMPLATES.PROPOSAL_SEND')
     : t('SCANSOLO.FOLLOW_UPS.TEMPLATES.STEP_LABEL', { step: row.step });
+
+// CT-09: a single-template slot row reads its own label, not a stage/step.
+const rowTitle = row =>
+  TEMPLATE_SLOT_LABELS[row.stage]
+    ? enumLabel(t, TEMPLATE_SLOT_LABELS, row.stage)
+    : `${enumLabel(t, STAGE_LABELS, row.stage)} · ${stepLabel(row)}`;
 
 const paramLabel = param =>
   param.source === STATIC_SOURCE
@@ -118,9 +125,8 @@ defineExpose({ startEdit, saveRow });
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <p class="font-medium text-n-slate-12">
-              {{ enumLabel(t, STAGE_LABELS, row.stage) }} ·
-              {{ stepLabel(row) }}
+            <p data-testid="template-title" class="font-medium text-n-slate-12">
+              {{ rowTitle(row) }}
             </p>
             <p class="text-xs text-n-slate-11">
               {{ t('SCANSOLO.FOLLOW_UPS.TEMPLATES.NAME_LABEL') }}:

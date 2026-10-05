@@ -7,7 +7,8 @@ import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useAlert } from 'dashboard/composables';
 import { useScansoloAiAgentConfigStore } from 'dashboard/store/scansolo/aiAgentConfig';
-import { useMapGetter } from 'dashboard/composables/store.js';
+import { useStore, useMapGetter } from 'dashboard/composables/store.js';
+import { INBOX_TYPES } from 'dashboard/helper/inbox';
 import TagMultiSelectComboBox from 'dashboard/components-next/combobox/TagMultiSelectComboBox.vue';
 import Spinner from 'dashboard/components-next/spinner/Spinner.vue';
 import { useScanSoloRole } from '../composables/useScanSoloRole';
@@ -19,11 +20,17 @@ import {
   DEFAULT_OPT_OUT_KEYWORDS,
   FIELD_TYPES,
   SELECT_OPTIONS,
+  SELECT_PLACEHOLDERS,
 } from './agentCenterFields';
+
+// RF-54: same rule the server applies to quote_recipient_email.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const { t } = useI18n();
 const store = useScansoloAiAgentConfigStore();
+const vuexStore = useStore();
 const inboxes = useMapGetter('inboxes/getInboxes');
+const agents = useMapGetter('agents/getAgents');
 const { isAdministrator } = useScanSoloRole();
 
 const inboxOptions = computed(() =>
@@ -37,6 +44,13 @@ const selectOptions = computed(() => ({
   [SELECT_OPTIONS.MODELS]: store.availableModels.map(model => ({
     value: model,
     label: model,
+  })),
+  [SELECT_OPTIONS.EMAIL_INBOXES]: inboxes.value
+    .filter(inbox => inbox.channel_type === INBOX_TYPES.EMAIL)
+    .map(inbox => ({ value: inbox.id, label: inbox.name })),
+  [SELECT_OPTIONS.AGENTS]: (agents.value || []).map(agent => ({
+    value: agent.id,
+    label: agent.name,
   })),
 }));
 
@@ -58,9 +72,11 @@ const emptyForm = () => ({
   transferCriteria: '',
   responseLimits: '',
   serviceHours: '',
-  requireProposalApproval: true,
   allowedInboxIds: [],
   optOutKeywords: [...DEFAULT_OPT_OUT_KEYWORDS],
+  quoteInboxId: null,
+  commercialUserId: null,
+  quoteRecipientEmail: '',
 });
 
 const form = reactive(emptyForm());
@@ -69,6 +85,7 @@ const loadError = ref(false);
 const showPublishConfirm = ref(false);
 const newKeyword = ref('');
 const pendingLeave = ref(null);
+const fieldErrors = reactive({ quoteRecipientEmail: '' });
 
 const isDirty = computed(() => JSON.stringify(form) !== savedSnapshot.value);
 const isBusy = computed(
@@ -100,6 +117,7 @@ const onBeforeUnload = event => {
 
 onMounted(() => {
   window.addEventListener('beforeunload', onBeforeUnload);
+  vuexStore.dispatch('agents/get');
   loadConfig();
 });
 
@@ -160,12 +178,21 @@ const draftPayload = () => ({
   transfer_criteria: form.transferCriteria,
   response_limits: form.responseLimits,
   service_hours: form.serviceHours,
-  require_proposal_approval: form.requireProposalApproval,
   allowed_inbox_ids: form.allowedInboxIds,
   opt_out_keywords: form.optOutKeywords,
+  quote_inbox_id: form.quoteInboxId,
+  commercial_user_id: form.commercialUserId,
+  quote_recipient_email: form.quoteRecipientEmail.trim(),
 });
 
 const saveDraft = async () => {
+  fieldErrors.quoteRecipientEmail = EMAIL_PATTERN.test(
+    form.quoteRecipientEmail.trim()
+  )
+    ? ''
+    : t('SCANSOLO.AGENT_CENTER.QUOTE_RECIPIENT_EMAIL_ERROR');
+  if (fieldErrors.quoteRecipientEmail) return;
+
   try {
     const draft = await store.updateDraft(draftPayload());
     applyDraftToForm(draft);
@@ -245,7 +272,7 @@ defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
           {{ t('SCANSOLO.AGENT_CENTER.READ_ONLY_NOTICE') }}
         </p>
 
-        <form class="space-y-6" @submit.prevent="saveDraft">
+        <form class="space-y-6" novalidate @submit.prevent="saveDraft">
           <fieldset :disabled="!isAdministrator" class="space-y-6">
             <section
               v-for="section in AGENT_CENTER_SECTIONS"
@@ -285,16 +312,11 @@ defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
                     :data-testid="`field-${field.name}`"
                     class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
                   >
-                    <option value="" disabled>
-                      {{
-                        field.options === SELECT_OPTIONS.PROVIDERS
-                          ? t(
-                              'SCANSOLO.AGENT_CENTER.MODEL_PROVIDER_PLACEHOLDER'
-                            )
-                          : t(
-                              'SCANSOLO.AGENT_CENTER.MODEL_SELECTION_PLACEHOLDER'
-                            )
-                      }}
+                    <option
+                      :value="field.nullable ? null : ''"
+                      :disabled="!field.nullable"
+                    >
+                      {{ t(SELECT_PLACEHOLDERS[field.options]) }}
                     </option>
                     <option
                       v-for="option in selectOptions[field.options]"
@@ -304,6 +326,26 @@ defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
                       {{ option.label }}
                     </option>
                   </select>
+                  <template v-else-if="field.type === FIELD_TYPES.EMAIL">
+                    <input
+                      v-model="form[field.name]"
+                      type="email"
+                      :data-testid="`field-${field.name}`"
+                      class="w-full rounded-lg border px-3 py-2 text-sm"
+                      :class="
+                        fieldErrors[field.name]
+                          ? 'border-n-ruby-8'
+                          : 'border-n-weak'
+                      "
+                    />
+                    <p
+                      v-if="fieldErrors[field.name]"
+                      :data-testid="`field-error-${field.name}`"
+                      class="mt-1 text-sm text-n-ruby-9"
+                    >
+                      {{ fieldErrors[field.name] }}
+                    </p>
+                  </template>
                   <textarea
                     v-else-if="field.type === FIELD_TYPES.TEXTAREA"
                     v-model="form[field.name]"

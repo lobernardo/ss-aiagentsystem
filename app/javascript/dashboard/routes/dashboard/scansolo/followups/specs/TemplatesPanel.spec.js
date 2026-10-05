@@ -208,4 +208,36 @@ describe('TemplatesPanel', () => {
     await flushPromises();
     expect(failed.find('[data-testid="list-state-error"]').exists()).toBe(true);
   });
+
+  it('labels the lead_manual_inicial and proposta_acompanhamento slot rows (CT-09)', async () => {
+    const slotRow = stage => ({
+      ...pausedRow,
+      stage,
+      template_name: `scansolo_${stage}`,
+      availability: 'available',
+      block_reason: null,
+      meta_status: 'APPROVED',
+    });
+    ScanSoloCadenceTemplatesAPI.get.mockResolvedValue({
+      data: [
+        availableRow,
+        slotRow('lead_manual_inicial'),
+        slotRow('proposta_acompanhamento'),
+      ],
+    });
+    const wrapper = mountPanel();
+    await flushPromises();
+
+    expect(
+      row(wrapper, 'lead_manual_inicial:proposal')
+        .find('[data-testid="template-title"]')
+        .text()
+    ).toBe('Mensagem inicial do lead manual');
+    expect(
+      row(wrapper, 'proposta_acompanhamento:proposal')
+        .find('[data-testid="template-title"]')
+        .text()
+    ).toBe('Acompanhamento da proposta');
+    expect(wrapper.text()).not.toContain('lead_manual_inicial ·');
+  });
 });

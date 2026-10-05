@@ -3,14 +3,33 @@ import { createPinia, setActivePinia } from 'pinia';
 import { createStore } from 'vuex';
 import { withFullI18n } from 'test-i18n';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
+import { useScansoloPipelineOpportunitiesStore } from 'dashboard/store/scansolo/pipelineOpportunities';
+import { buildScanSoloSidebarItems } from '../../scansoloSidebarItems';
 import KanbanBoard from '../KanbanBoard.vue';
 
 vi.mock('dashboard/api/scansoloPipelineOpportunities', () => ({
   default: {
     get: vi.fn(),
+    create: vi.fn(),
     stageTransition: vi.fn(),
   },
 }));
+
+const push = vi.fn();
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ params: { accountId: 1 } }),
+  useRouter: () => ({ push }),
+}));
+
+const openNewLeadDialog = vi.fn();
+const NewLeadDialogStub = {
+  name: 'NewLeadDialog',
+  methods: { open: openNewLeadDialog },
+  template: '<div data-testid="new-lead-dialog-stub" />',
+};
+
+const HOUR_MS = 60 * 60 * 1000;
+const hoursAgo = hours => new Date(Date.now() - hours * HOUR_MS).toISOString();
 
 withFullI18n();
 enableAutoUnmount(afterEach);
@@ -46,6 +65,7 @@ const mountBoard = ({ role = 'administrator' } = {}) =>
           actions: { 'agents/get': getAgentsAction },
         }),
       ],
+      stubs: { NewLeadDialog: NewLeadDialogStub },
     },
   });
 
@@ -55,6 +75,15 @@ const cardFor = (wrapper, opportunityId) =>
   );
 
 const columnFor = (wrapper, stage) => wrapper.find(`[data-stage="${stage}"]`);
+
+const mountWith = async opportunity => {
+  ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValue({
+    data: [{ ...seededOpportunity, ...opportunity }],
+  });
+  const wrapper = mountBoard();
+  await flushPromises();
+  return cardFor(wrapper, seededOpportunity.id);
+};
 
 describe('KanbanBoard', () => {
   beforeEach(() => {
@@ -188,5 +217,197 @@ describe('KanbanBoard', () => {
     const failed = mountBoard();
     await flushPromises();
     expect(failed.find('[data-testid="list-state-error"]').exists()).toBe(true);
+  });
+
+  describe('UI-01 / UI-02 / UI-03: lean card, navigation and "Novo lead"', () => {
+    it('opens the "Novo lead" form from the header button', async () => {
+      const wrapper = mountBoard();
+      await flushPromises();
+
+      const button = wrapper.find('[data-testid="new-lead-button"]');
+      expect(button.text()).toBe('Novo lead');
+      await button.trigger('click');
+
+      expect(openNewLeadDialog).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows origin, company, service, city/UF and the commercial status', async () => {
+      const card = await mountWith({
+        lead_source: 'website',
+        company: 'Solar Ltda',
+        service: 'Georradar',
+        city_uf: 'Campinas/SP',
+        quote_request_status: 'awaiting_reply',
+        proposal_status: null,
+      });
+
+      expect(card.find('[data-testid="card-lead-source"]').text()).toBe('SITE');
+      expect(card.find('[data-testid="card-title"]').text()).toBe('Solar Ltda');
+      expect(card.find('[data-testid="card-service"]').text()).toBe(
+        'Georradar'
+      );
+      expect(card.find('[data-testid="card-city-uf"]').text()).toBe(
+        'Campinas/SP'
+      );
+      expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
+        'Aguardando orçamento'
+      );
+    });
+
+    it('shows the contact name and no tag, service, city or status when they are empty', async () => {
+      const card = await mountWith({
+        lead_source: null,
+        company: null,
+        service: null,
+        city_uf: null,
+        quote_request_status: null,
+        proposal_status: null,
+      });
+
+      expect(card.find('[data-testid="card-title"]').text()).toBe(
+        'Maria Silva'
+      );
+      expect(card.find('[data-testid="card-lead-source"]').exists()).toBe(
+        false
+      );
+      expect(card.find('[data-testid="card-service"]').exists()).toBe(false);
+      expect(card.find('[data-testid="card-city-uf"]').exists()).toBe(false);
+      expect(card.find('[data-testid="card-commercial-status"]').exists()).toBe(
+        false
+      );
+    });
+
+    it('labels a generated proposal "Proposta gerada", never as sent (RF-33)', async () => {
+      const card = await mountWith({
+        quote_request_status: 'replied',
+        proposal_status: 'generated',
+      });
+
+      expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
+        'Proposta gerada'
+      );
+    });
+
+    it('counts whole days without interaction: 49 hours → 2 days', async () => {
+      const card = await mountWith({
+        last_customer_interaction_at: hoursAgo(49),
+      });
+
+      expect(card.find('[data-testid="card-no-interaction"]').text()).toBe(
+        'Sem interação há 2 dias'
+      );
+    });
+
+    it('falls back to created_at and hides the counter below 1 day', async () => {
+      const fromCreation = await mountWith({
+        last_customer_interaction_at: null,
+        created_at: hoursAgo(73),
+      });
+      expect(
+        fromCreation.find('[data-testid="card-no-interaction"]').text()
+      ).toBe('Sem interação há 3 dias');
+
+      const recent = await mountWith({
+        last_customer_interaction_at: hoursAgo(23),
+      });
+      expect(recent.find('[data-testid="card-no-interaction"]').exists()).toBe(
+        false
+      );
+    });
+
+    it('shows the human attendance indicator only outside ai_active', async () => {
+      const human = await mountWith({ ai_control_state: 'awaiting_human' });
+      expect(human.find('[data-testid="card-human-attendance"]').text()).toBe(
+        'Atendimento humano'
+      );
+
+      const ai = await mountWith({ ai_control_state: 'ai_active' });
+      expect(ai.find('[data-testid="card-human-attendance"]').exists()).toBe(
+        false
+      );
+    });
+
+    it('opens the opportunity detail on click', async () => {
+      const card = await mountWith({});
+
+      await card.trigger('click');
+
+      expect(push).toHaveBeenCalledWith({
+        name: 'scansolo_pipeline_opportunity_detail',
+        params: { accountId: 1, opportunityId: seededOpportunity.id },
+      });
+    });
+
+    it('keeps drag-and-drop moving the stage and never navigates while dragging', async () => {
+      ScanSoloPipelineOpportunitiesAPI.stageTransition.mockResolvedValue({
+        data: { ...seededOpportunity, stage: 'em_contato' },
+      });
+      const wrapper = mountBoard();
+      await flushPromises();
+      const card = cardFor(wrapper, seededOpportunity.id);
+
+      await card.trigger('dragstart');
+      await card.trigger('click');
+      expect(push).not.toHaveBeenCalled();
+
+      await columnFor(wrapper, 'em_contato').trigger('drop');
+      await flushPromises();
+
+      expect(
+        ScanSoloPipelineOpportunitiesAPI.stageTransition
+      ).toHaveBeenCalledWith(seededOpportunity.id, 'em_contato');
+      expect(
+        columnFor(wrapper, 'em_contato')
+          .find(`[data-opportunity-id="${seededOpportunity.id}"]`)
+          .exists()
+      ).toBe(true);
+    });
+
+    it('shows a created manual lead in "Novo Lead" tagged COMERCIAL', async () => {
+      ScanSoloPipelineOpportunitiesAPI.create.mockResolvedValue({
+        data: {
+          ...seededOpportunity,
+          id: 2,
+          contact_name: 'João Comercial',
+          lead_source: 'manual',
+          last_customer_interaction_at: null,
+          created_at: new Date().toISOString(),
+        },
+      });
+      const wrapper = mountBoard();
+      await flushPromises();
+
+      await useScansoloPipelineOpportunitiesStore().createOpportunity({
+        name: 'João Comercial',
+        phone_number: '+5511999999999',
+      });
+      await flushPromises();
+
+      const card = columnFor(wrapper, 'novo_lead').find(
+        '[data-opportunity-id="2"]'
+      );
+      expect(card.find('[data-testid="card-lead-source"]').text()).toBe(
+        'COMERCIAL'
+      );
+      expect(card.find('[data-testid="card-title"]').text()).toBe(
+        'João Comercial'
+      );
+    });
+
+    it('leaves the ScanSolo menu items unchanged', () => {
+      const items = buildScanSoloSidebarItems({
+        t: key => key,
+        accountScopedRoute: name => name,
+      });
+
+      expect(items.map(item => item.name)).toEqual([
+        'ScanSolo pipeline',
+        'ScanSolo agent',
+        'ScanSolo knowledge',
+        'ScanSolo followups',
+        'ScanSolo proposals',
+        'ScanSolo executions',
+      ]);
+    });
   });
 });

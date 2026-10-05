@@ -3,18 +3,31 @@ import ScanSoloPageLayout from 'dashboard/routes/dashboard/scansolo/components/S
 import ScanSoloListState from 'dashboard/routes/dashboard/scansolo/components/ScanSoloListState.vue';
 import ScanSoloTime from 'dashboard/routes/dashboard/scansolo/components/ScanSoloTime.vue';
 import TechnicalDetails from 'dashboard/routes/dashboard/scansolo/components/TechnicalDetails.vue';
+import Button from 'dashboard/components-next/button/Button.vue';
+import NewLeadDialog from './NewLeadDialog.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useStore, useMapGetter } from 'dashboard/composables/store.js';
 import { useScansoloPipelineOpportunitiesStore } from 'dashboard/store/scansolo/pipelineOpportunities';
-import { STAGE_LABELS, enumLabel } from '../scansoloLabels';
 import {
+  LEAD_SOURCE_TAGS,
+  STAGE_LABELS,
+  commercialStatusKey,
+  enumLabel,
+} from '../scansoloLabels';
+import {
+  MS_PER_DAY,
   SCANSOLO_PIPELINE_STAGES,
   SCANSOLO_STALE_THRESHOLD_MS,
 } from './pipelineConstants';
 
+const AI_ACTIVE = 'ai_active';
+
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const store = useScansoloPipelineOpportunitiesStore();
 const { opportunities } = storeToRefs(store);
 const vuexStore = useStore();
@@ -22,6 +35,7 @@ const agents = useMapGetter('agents/getAgents');
 
 const draggedOpportunityId = ref(null);
 const loadError = ref(false);
+const newLeadDialogRef = ref(null);
 
 const opportunitiesByStage = computed(() => {
   const groups = Object.fromEntries(
@@ -40,6 +54,28 @@ const isStale = opportunity => {
   ).getTime();
   return Date.now() - lastInteraction >= SCANSOLO_STALE_THRESHOLD_MS;
 };
+
+// UI-02: whole days since the last customer interaction (or the creation,
+// while the customer never replied); shown only from 1 day on.
+const daysWithoutInteraction = opportunity => {
+  const reference =
+    opportunity.lastCustomerInteractionAt || opportunity.createdAt;
+  if (!reference) return 0;
+  return Math.floor((Date.now() - new Date(reference).getTime()) / MS_PER_DAY);
+};
+
+const commercialStatusLabel = opportunity => {
+  const key = commercialStatusKey(
+    opportunity.quoteRequestStatus,
+    opportunity.proposalStatus
+  );
+  // Keys come from the static maps in scansoloLabels.
+  // eslint-disable-next-line @intlify/vue-i18n/no-dynamic-keys
+  return key ? t(key) : '';
+};
+
+const isHumanAttended = opportunity =>
+  (opportunity.aiControlState || AI_ACTIVE) !== AI_ACTIVE;
 
 // UI-10: the owner is shown by name; the raw id only in the admin details.
 const ownerLabel = opportunity => {
@@ -70,6 +106,26 @@ const cardTechnicalItems = opportunity => [
 
 const onDragStart = opportunityId => {
   draggedOpportunityId.value = opportunityId;
+};
+
+const onDragEnd = () => {
+  draggedOpportunityId.value = null;
+};
+
+// UI-03: a click opens the lead; finishing a drag never navigates.
+const openOpportunity = opportunity => {
+  if (draggedOpportunityId.value) return;
+  router.push({
+    name: 'scansolo_pipeline_opportunity_detail',
+    params: {
+      accountId: route.params.accountId,
+      opportunityId: opportunity.id,
+    },
+  });
+};
+
+const openNewLead = () => {
+  newLeadDialogRef.value?.open();
 };
 
 // A card only ever moves once useScansoloPipelineOpportunitiesStore's
@@ -105,12 +161,22 @@ onMounted(() => {
   loadOpportunities();
 });
 
-defineExpose({ onDragStart, onDrop });
+defineExpose({ onDragStart, onDrop, openOpportunity });
 </script>
 
 <template>
   <ScanSoloPageLayout>
     <div class="p-4">
+      <div class="flex items-center justify-end mb-4">
+        <Button
+          type="button"
+          size="sm"
+          icon="i-lucide-plus"
+          data-testid="new-lead-button"
+          :label="t('SCANSOLO.PIPELINE_BOARD.NEW_LEAD.BUTTON')"
+          @click="openNewLead"
+        />
+      </div>
       <ScanSoloListState
         :loading="store.uiFlags.fetchingList"
         :error="loadError"
@@ -143,11 +209,61 @@ defineExpose({ onDragStart, onDrop });
               draggable="true"
               data-testid="pipeline-card"
               :data-opportunity-id="opportunity.id"
-              class="rounded-lg border border-n-weak p-3 mb-2 bg-n-solid-1 text-sm"
+              class="rounded-lg border border-n-weak p-3 mb-2 bg-n-solid-1 text-sm cursor-pointer"
               @dragstart="onDragStart(opportunity.id)"
+              @dragend="onDragEnd"
+              @click="openOpportunity(opportunity)"
             >
-              <p class="font-medium text-n-slate-12">
-                {{ opportunity.contactName }}
+              <div class="flex items-center gap-2 mb-1">
+                <span
+                  v-if="LEAD_SOURCE_TAGS[opportunity.leadSource]"
+                  data-testid="card-lead-source"
+                  class="text-xs font-medium px-2 py-0.5 rounded-full bg-n-slate-3 text-n-slate-11"
+                >
+                  {{ enumLabel(t, LEAD_SOURCE_TAGS, opportunity.leadSource) }}
+                </span>
+                <span
+                  v-if="isHumanAttended(opportunity)"
+                  data-testid="card-human-attendance"
+                  class="text-xs font-medium px-2 py-0.5 rounded-full bg-n-amber-3 text-n-amber-11"
+                >
+                  {{ t('SCANSOLO.PIPELINE_BOARD.HUMAN_ATTENDANCE') }}
+                </span>
+              </div>
+              <p data-testid="card-title" class="font-medium text-n-slate-12">
+                {{ opportunity.company || opportunity.contactName }}
+              </p>
+              <p
+                v-if="opportunity.service"
+                data-testid="card-service"
+                class="text-xs text-n-slate-11"
+              >
+                {{ opportunity.service }}
+              </p>
+              <p
+                v-if="opportunity.cityUf"
+                data-testid="card-city-uf"
+                class="text-xs text-n-slate-11"
+              >
+                {{ opportunity.cityUf }}
+              </p>
+              <p
+                v-if="commercialStatusLabel(opportunity)"
+                data-testid="card-commercial-status"
+                class="text-xs font-medium text-n-blue-11"
+              >
+                {{ commercialStatusLabel(opportunity) }}
+              </p>
+              <p
+                v-if="daysWithoutInteraction(opportunity) >= 1"
+                data-testid="card-no-interaction"
+                class="text-xs text-n-amber-11"
+              >
+                {{
+                  t('SCANSOLO.PIPELINE_BOARD.NO_INTERACTION_DAYS', {
+                    days: daysWithoutInteraction(opportunity),
+                  })
+                }}
               </p>
               <p data-testid="card-stage" class="text-xs text-n-slate-11">
                 {{ enumLabel(t, STAGE_LABELS, stage) }}
@@ -179,11 +295,15 @@ defineExpose({ onDragStart, onDrop });
                     : ''
                 }}
               </p>
-              <TechnicalDetails :items="cardTechnicalItems(opportunity)" />
+              <!-- Expanding the admin details must not open the lead. -->
+              <div @click.stop>
+                <TechnicalDetails :items="cardTechnicalItems(opportunity)" />
+              </div>
             </div>
           </div>
         </div>
       </ScanSoloListState>
     </div>
+    <NewLeadDialog ref="newLeadDialogRef" />
   </ScanSoloPageLayout>
 </template>

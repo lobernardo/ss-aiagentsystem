@@ -5,6 +5,7 @@ import { withFullI18n } from 'test-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useAlert } from 'dashboard/composables';
 import ScanSoloAiAgentConfigAPI from 'dashboard/api/scansoloAiAgentConfig';
+import { buildScanSoloSidebarItems } from '../../scansoloSidebarItems';
 import AgentCenter from '../AgentCenter.vue';
 
 vi.mock('dashboard/api/scansoloAiAgentConfig', () => ({
@@ -45,6 +46,9 @@ const draftFixture = {
   require_proposal_approval: true,
   allowed_inbox_ids: [12],
   opt_out_keywords: ['PARAR', 'SAIR', 'STOP'],
+  quote_inbox_id: null,
+  commercial_user_id: null,
+  quote_recipient_email: 'comercial@scansolo.com.br',
   updated_at: '2026-01-01T09:00:00Z',
 };
 
@@ -53,18 +57,34 @@ const inboxesFixture = [
   { id: 12, name: 'WhatsApp Suporte' },
 ];
 
+const emailInbox = {
+  id: 13,
+  name: 'Comercial E-mail',
+  channel_type: 'Channel::Email',
+};
+
+const agentsFixture = [
+  { id: 7, name: 'Luciano Comercial' },
+  { id: 8, name: 'Carla Vendas' },
+];
+
 const AVAILABLE_MODELS = ['gpt-4.1-mini', 'gpt-4.1', 'gpt-5.1', 'gpt-5.2'];
 
-const mountAgentCenter = ({ role = 'administrator' } = {}) =>
+const mountAgentCenter = ({
+  role = 'administrator',
+  inboxes = inboxesFixture,
+} = {}) =>
   mount(AgentCenter, {
     global: {
       plugins: [
         createStore({
           getters: {
-            'inboxes/getInboxes': () => inboxesFixture,
+            'inboxes/getInboxes': () => inboxes,
+            'agents/getAgents': () => agentsFixture,
             getCurrentRole: () => role,
             getCurrentUser: () => ({ id: 5 }),
           },
+          actions: { 'agents/get': vi.fn() },
         }),
       ],
     },
@@ -217,6 +237,8 @@ describe('AgentCenter', () => {
     expect(ScanSoloAiAgentConfigAPI.publish).not.toHaveBeenCalled();
   });
 
+  // RF-54 / UI-06, expectation changed per RNF-11: "Proposta" (approval
+  // toggle) gives way to "Comercial" (quote routing fields).
   it('organizes the form into the 9 sections in order', async () => {
     const wrapper = mountAgentCenter();
     await flushPromises();
@@ -229,7 +251,7 @@ describe('AgentCenter', () => {
       'Segurança',
       'Handoff',
       'Horário',
-      'Proposta',
+      'Comercial',
       'Canais',
     ]);
   });
@@ -263,12 +285,14 @@ describe('AgentCenter', () => {
     await wrapper.find('form').trigger('submit');
     await flushPromises();
 
+    // RF-55 Etapa 1 / UI-06, expectation changed per RNF-11: the payload
+    // no longer carries require_proposal_approval.
     expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledWith(
-      expect.objectContaining({
-        allowed_inbox_ids: [12, 11],
-        require_proposal_approval: true,
-      })
+      expect.objectContaining({ allowed_inbox_ids: [12, 11] })
     );
+    expect(
+      ScanSoloAiAgentConfigAPI.updateDraft.mock.calls[0][0]
+    ).not.toHaveProperty('require_proposal_approval');
   });
   describe('UI-05: save and publish feedback', () => {
     it('disables both buttons while the save request is pending, then toasts success', async () => {
@@ -399,25 +423,30 @@ describe('AgentCenter', () => {
     });
   });
 
-  describe('UI-07 / UI-08: approval toggle and model selects', () => {
-    it('persists the require_proposal_approval toggle from the Proposta section', async () => {
+  describe('UI-06 / UI-08: no approval toggle and model selects', () => {
+    // RF-55 Etapa 1 / UI-06, expectation changed per RNF-11: the approval
+    // toggle is no longer displayed nor sent.
+    it('shows 0 approval toggles and never sends require_proposal_approval', async () => {
       ScanSoloAiAgentConfigAPI.updateDraft.mockResolvedValue({
-        data: { ...draftFixture, require_proposal_approval: false },
+        data: draftFixture,
       });
       const wrapper = mountAgentCenter();
       await flushPromises();
-      const toggle = wrapper.find(
-        '[data-testid="section-proposal"] [data-testid="field-requireProposalApproval"]'
-      );
 
-      await toggle.setValue(false);
+      expect(
+        wrapper.find('[data-testid="field-requireProposalApproval"]').exists()
+      ).toBe(false);
+      expect(wrapper.find('[data-testid="section-proposal"]').exists()).toBe(
+        false
+      );
+      expect(wrapper.text()).not.toContain('Exigir aprovação');
+
       await wrapper.find('form').trigger('submit');
       await flushPromises();
 
-      expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledWith(
-        expect.objectContaining({ require_proposal_approval: false })
-      );
-      expect(toggle.element.checked).toBe(false);
+      expect(
+        ScanSoloAiAgentConfigAPI.updateDraft.mock.calls[0][0]
+      ).not.toHaveProperty('require_proposal_approval');
     });
 
     it('lists the 4 server models and the provider in selects', async () => {
@@ -513,6 +542,148 @@ describe('AgentCenter', () => {
       expect(wrapper.find('[data-testid="list-state-error"]').exists()).toBe(
         true
       );
+    });
+  });
+
+  describe('RF-54: commercial routing fields', () => {
+    const commercial = wrapper =>
+      wrapper.find('[data-testid="section-commercial"]');
+
+    it('shows the quote inbox, commercial user and recipient e-mail fields', async () => {
+      const wrapper = mountAgentCenter({
+        inboxes: [...inboxesFixture, emailInbox],
+      });
+      await flushPromises();
+      const section = commercial(wrapper);
+
+      expect(section.text()).toContain('Inbox de e-mail de orçamento');
+      expect(section.text()).toContain('Usuário comercial responsável');
+      expect(section.text()).toContain('E-mail do destinatário comercial');
+      expect(
+        section
+          .findAll('[data-testid="field-quoteInboxId"] option')
+          .map(option => option.text())
+      ).toEqual(['Selecione a caixa de entrada de e-mail', 'Comercial E-mail']);
+      expect(
+        section
+          .findAll('[data-testid="field-commercialUserId"] option')
+          .map(option => option.text())
+      ).toEqual([
+        'Selecione o usuário comercial',
+        'Luciano Comercial',
+        'Carla Vendas',
+      ]);
+      expect(
+        section.find('[data-testid="field-quoteRecipientEmail"]').element.value
+      ).toBe('comercial@scansolo.com.br');
+    });
+
+    it('sends the 3 fields when saving', async () => {
+      ScanSoloAiAgentConfigAPI.updateDraft.mockResolvedValue({
+        data: draftFixture,
+      });
+      const wrapper = mountAgentCenter({
+        inboxes: [...inboxesFixture, emailInbox],
+      });
+      await flushPromises();
+      const section = commercial(wrapper);
+
+      await section.find('[data-testid="field-quoteInboxId"]').setValue(13);
+      await section.find('[data-testid="field-commercialUserId"]').setValue(7);
+      await section
+        .find('[data-testid="field-quoteRecipientEmail"]')
+        .setValue('luciano@scansolo.com.br');
+      await wrapper.find('form').trigger('submit');
+      await flushPromises();
+
+      expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quote_inbox_id: 13,
+          commercial_user_id: 7,
+          quote_recipient_email: 'luciano@scansolo.com.br',
+        })
+      );
+    });
+
+    it('blocks saving with an empty recipient: field error and 0 requests', async () => {
+      const wrapper = mountAgentCenter();
+      await flushPromises();
+
+      await commercial(wrapper)
+        .find('[data-testid="field-quoteRecipientEmail"]')
+        .setValue('');
+      await wrapper.find('form').trigger('submit');
+      await flushPromises();
+
+      expect(ScanSoloAiAgentConfigAPI.updateDraft).not.toHaveBeenCalled();
+      expect(
+        wrapper.find('[data-testid="field-error-quoteRecipientEmail"]').text()
+      ).toBe('Informe um e-mail válido para o destinatário comercial.');
+    });
+
+    it('rejects a malformed recipient e-mail locally', async () => {
+      const wrapper = mountAgentCenter();
+      await flushPromises();
+
+      await commercial(wrapper)
+        .find('[data-testid="field-quoteRecipientEmail"]')
+        .setValue('comercial@');
+      await wrapper.find('form').trigger('submit');
+      await flushPromises();
+
+      expect(ScanSoloAiAgentConfigAPI.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it('leaves the ScanSolo menu items unchanged', () => {
+      const items = buildScanSoloSidebarItems({
+        t: key => key,
+        accountScopedRoute: name => name,
+      });
+
+      expect(items).toEqual([
+        {
+          name: 'ScanSolo pipeline',
+          label: 'SCANSOLO.SIDEBAR.PIPELINE',
+          icon: 'i-lucide-kanban-square',
+          to: 'scansolo_pipeline_index',
+          activeOn: ['scansolo_pipeline_index'],
+        },
+        {
+          name: 'ScanSolo agent',
+          label: 'SCANSOLO.SIDEBAR.AGENT',
+          icon: 'i-lucide-bot',
+          to: 'scansolo_agent_index',
+          activeOn: ['scansolo_agent_index'],
+        },
+        {
+          name: 'ScanSolo knowledge',
+          label: 'SCANSOLO.SIDEBAR.KNOWLEDGE',
+          icon: 'i-lucide-book-open',
+          to: 'scansolo_knowledge_index',
+          activeOn: ['scansolo_knowledge_index'],
+        },
+        {
+          name: 'ScanSolo followups',
+          label: 'SCANSOLO.SIDEBAR.FOLLOWUPS',
+          icon: 'i-lucide-repeat-2',
+          to: 'scansolo_followups_index',
+          activeOn: ['scansolo_followups_index'],
+        },
+        {
+          name: 'ScanSolo proposals',
+          label: 'SCANSOLO.SIDEBAR.PROPOSALS',
+          icon: 'i-lucide-file-text',
+          to: 'scansolo_proposals_index',
+          activeOn: ['scansolo_proposals_index'],
+        },
+        {
+          name: 'ScanSolo executions',
+          label: 'SCANSOLO.SIDEBAR.EXECUTIONS',
+          icon: 'i-lucide-shield-check',
+          to: 'scansolo_executions_index',
+          activeOn: ['scansolo_executions_index'],
+        },
+      ]);
     });
   });
 });

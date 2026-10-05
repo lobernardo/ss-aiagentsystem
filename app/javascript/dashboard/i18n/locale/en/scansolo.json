@@ -121,7 +121,7 @@
         "PLACEHOLDERS": {
           "NAME": "Nome do contato",
           "PHONE": "+5511999999999",
-          "EMAIL": "contato@empresa.com.br",
+          "EMAIL": "contato{'@'}empresa.com.br",
           "COMPANY": "Nome da empresa",
           "OWNER": "Selecione o responsável",
           "INBOX": "Selecione a caixa de entrada"
@@ -170,7 +170,6 @@
         "TRANSFER_CRITERIA": "Critérios de transferência",
         "RESPONSE_LIMITS": "Limites de resposta",
         "SERVICE_HOURS": "Horário de atendimento",
-        "REQUIRE_PROPOSAL_APPROVAL": "Exigir aprovação de um administrador antes de enviar propostas",
         "ALLOWED_INBOX_IDS": "Caixas de entrada atendidas pela IA",
         "OPT_OUT_KEYWORDS": "Palavras-chave de opt-out",
         "QUOTE_INBOX_ID": "Inbox de e-mail de orçamento",
@@ -185,7 +184,6 @@
         "SAFETY": "Segurança",
         "HANDOFF": "Handoff",
         "HOURS": "Horário",
-        "PROPOSAL": "Proposta",
         "CHANNELS": "Canais",
         "COMMERCIAL": "Comercial"
       },
@@ -208,7 +206,8 @@
       "STAY": "Continuar editando",
       "READ_ONLY_NOTICE": "Somente administradores podem editar a configuração do agente.",
       "QUOTE_INBOX_PLACEHOLDER": "Selecione a caixa de entrada de e-mail",
-      "COMMERCIAL_USER_PLACEHOLDER": "Selecione o usuário comercial"
+      "COMMERCIAL_USER_PLACEHOLDER": "Selecione o usuário comercial",
+      "QUOTE_RECIPIENT_EMAIL_ERROR": "Informe um e-mail válido para o destinatário comercial."
     },
     "KNOWLEDGE_CENTER": {
       "TITLE": "Conhecimento",
@@ -328,8 +327,6 @@
       "CURRENT": "Atual",
       "NON_CURRENT": "Anterior",
       "APPROVED": "Aprovada",
-      "APPROVE": "Aprovar",
-      "SEND": "Enviar",
       "STATUSES": {
         "GENERATING": "Gerando",
         "GENERATED": "Gerada",
@@ -337,19 +334,14 @@
         "SENT": "Enviada",
         "FAILED": "Falhou"
       },
-      "RETRY": "Tentar novamente",
       "REPROCESS": "Reprocessar",
       "INTEGRATION_BLOCKED": "A integração de propostas com o Make ainda não está configurada. Gerar, enviar e tentar novamente ficam indisponíveis até um administrador concluir a configuração.",
       "FAILURE_REASON_LABEL": "Motivo da falha",
       "VALUE_LABEL": "Valor",
       "DEAD_LETTER": "Dead-letter",
-      "SEND_CONFIRM_MESSAGE": "Enviar esta proposta ao cliente pelo WhatsApp? O envio não pode ser desfeito.",
-      "SEND_CONFIRM": "Enviar proposta",
       "REPROCESS_CONFIRM_MESSAGE": "Esta operação já foi tentada {count} vezes e está em dead-letter. Reprocessar cria uma nova requisição ao Make. Deseja confirmar?",
       "REPROCESS_CONFIRM": "Reprocessar",
       "GENERATE_SUCCESS": "Geração de proposta solicitada.",
-      "APPROVE_SUCCESS": "Proposta aprovada.",
-      "SEND_SUCCESS": "Envio de proposta solicitado.",
       "RETRY_SUCCESS": "Nova tentativa solicitada.",
       "RESEND": "Reenviar",
       "QUOTE_REQUEST_STATUS_LABEL": "Status do orçamento",
@@ -364,6 +356,7 @@
         "ORIGIN_REQUEST": "Solicitação de orçamento de origem #{id}",
         "LINK": "Vincular",
         "LINK_PLACEHOLDER": "Selecione a solicitação de orçamento",
+        "LINK_OPTION": "#{id} — {name}",
         "DISCARD": "Descartar",
         "DISCARD_CONFIRM_MESSAGE": "Descartar esta resposta a remove da lista sem alterar o orçamento nem a proposta. Deseja confirmar?",
         "LINK_SUCCESS": "Resposta vinculada à solicitação de orçamento.",

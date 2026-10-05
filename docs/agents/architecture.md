@@ -28,9 +28,12 @@ app/
     make/           # outbound_request, callback_verifier, callback_application, dead_letter_query
     messaging/      # template resolver/sender/mapping, delivery_reconciler
     opt_out/        # keyword_matcher, mark, clear
-    pipeline/       # opportunity bootstrap/query, stage_transition, inbound transition rule
-    proposal/       # generate/approve/send, make/mock providers, retry_policy, callback/success handlers
+    negotiation/    # request_service (negotiation signal -> negociacao + handoff)
+    notifications/  # publisher (CT-07), email_adapter, negotiation_payload
+    pipeline/       # opportunity bootstrap/query, stage_transition, inbound transition rule, manual lead, lead source
+    proposal/       # generate, delivery + follow-up, legacy approve/send (disabled), make/mock providers, retry_policy, callback/success handlers
     qualification/  # field_resolver (single qualification-field reader)
+    quote/          # quote request/resend, e-mail thread/composer, mailbox, reply processor, CT-04 parser, pending replies
     test_mode/      # mock LLM and embedding providers
   views/api/v1/accounts/scan_solo/         # jbuilder responses
   javascript/dashboard/                    # api/scansolo*.js, store/scansolo/ (Pinia), routes/dashboard/scansolo/
@@ -48,7 +51,7 @@ spec/ tests/playwright/                    # RSpec, Vitest co-located, Playwrigh
 | Layer | Owns | Does NOT own |
 |---|---|---|
 | Controllers (`Api::V1::Accounts::ScanSolo::*`) | `scansolo_enabled` 404 gate, Pundit authorize (403), request-boundary validation (422), account scoping | Domain rules, state transitions |
-| Listener (`ScanSolo::ConversationListener`) | Eligibility classification, opportunity bootstrap, opt-out keyword, enqueue turn, implicit takeover, delivery reconcile | AI logic, direct writes beyond service calls |
+| Listener (`ScanSolo::ConversationListener`) | Eligibility classification, opportunity bootstrap, reply interruption of the pending cadence attempt, opt-out keyword, enqueue turn, implicit takeover, delivery reconcile, routing quote-inbox e-mails to `QuoteReplyJob` (ahead of the gate) | AI logic, direct writes beyond service calls |
 | Jobs (`app/jobs/scan_solo/`) | Queueing, per-conversation mutex, cron sweeps | Eligibility decisions (delegated to `AttemptPrecheck`, `TurnOrchestrator`) |
 | Services (`app/services/scan_solo/`) | All rules, transactions, locks, audit writes | HTTP rendering |
 | Actions (`ScanSolo::Actions::Registry` + `Executor`) | Sole path from model output to side effect; schema validation, idempotency, confirmation gate | Choosing conversation/opportunity ids (turn-scoped) |
@@ -63,7 +66,8 @@ spec/ tests/playwright/                    # RSpec, Vitest co-located, Playwrigh
 | LLM provider | `ScanSolo::AiTurn::ModelInvoker` → `RubyLLM.context`, `Llm::FeatureRouter`, `config/llm.yml` `scansolo_agent_response` | Timeout 45s, 1 retry (`config/initializers/scansolo_constants.rb`) |
 | Embeddings | `ScanSolo::Knowledge::EmbeddingService`, `scansolo_knowledge_embedding` = `text-embedding-3-small` | 1536-dim pgvector column |
 | Make | `ScanSolo::Make::OutboundRequestService` (HTTParty, 10s timeout), credentials `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` | Callback HMAC-SHA256 in `X-Make-Signature` |
-| Meta WhatsApp | Native Chatwoot WhatsApp channel; `ScanSolo::Messaging::NativeTemplateSender` | Templates mapped per stage/step (`scan_solo_template_mappings`) |
+| Meta WhatsApp | Native Chatwoot WhatsApp channel; `ScanSolo::Messaging::NativeTemplateSender` | Templates mapped per stage/step and single slots `lead_manual_inicial`, `proposta_enviada` (document header), `proposta_acompanhamento` (`scan_solo_template_mappings`) |
+| E-mail (quote inbox) | Native Chatwoot e-mail channel (SMTP out via `ConversationReplyMailer`, IMAP/ActionMailbox in); `ScanSolo::Quote::EmailThread` | Published `quote_inbox_id` + `quote_recipient_email`; never allowlisted; quote request, correction and negotiation e-mails (CT-03) |
 | Object storage | `config/storage.yml`; MinIO in `docker-compose.scansolo.yaml` | Knowledge file uploads |
 
 ### Macro flow: inbound message to AI reply
@@ -75,6 +79,7 @@ WhatsApp webhook -> Message persisted -> AsyncDispatcher(message_created)
 ScanSolo::ConversationListener --Eligibility false--> (no-op)
         | eligible
         +--> OpportunityBootstrapService / InboundMessageTransitionRule
+        +--> Cadence::ReplyInterruptionService (<= 1 cancelled attempt per cycle, RF-43)
         +--> OptOut::KeywordMatcher -> OptOut::MarkService
         v
 ScanSolo::AiTurnJob [queue medium, Redis mutex per conversation, TTL 3 min]
@@ -82,9 +87,20 @@ ScanSolo::AiTurnJob [queue medium, Redis mutex per conversation, TTL 3 min]
 TurnOrchestrator: AiTurn(pending) -> precheck -> ContextAssembler -> InputGuardrail
         -> PromptBuilder -> ModelInvoker -> OutputValidator
         v
-ConversationExtension.with_lock: recheck -> Actions::Registry(each action) -> ResponseSender
+ConversationExtension.with_lock: recheck -> AttemptRunner: Actions::Registry(each action)
+        -> LeadState::CompletionService (next action proposta -> QuoteRequestJob after commit)
+        -> negotiation signal? Negotiation::RequestService + standard reply
+        -> ResponseSender
         v
-AiTurn terminal: succeeded | suppressed | failed  -> ReplyCompletenessDetector (RF-28)
+AiTurn terminal: succeeded | suppressed | failed  -> ReplyCompletenessDetector (complete only)
+```
+
+Quote-inbox e-mails take another branch of the same listener, ahead of the eligibility gate:
+
+```
+E-mail (IMAP/ActionMailbox) -> Message in quote inbox -> ConversationListener#route_quote_reply
+        v
+ScanSolo::QuoteReplyJob [medium] -> Quote::ReplyProcessor (see "quote request by e-mail")
 ```
 
 ### Macro flow: cadence dispatch
@@ -102,21 +118,52 @@ Cadence::AttemptPrecheck -> cancel | defer | send
                                         DeliveryReconciler (message_updated) -> sent
 ```
 
+### Macro flow: quote request by e-mail
+
+```
+LeadState::CompletionService (concluida, next action proposta)
+        v (after commit)
+ScanSolo::QuoteRequestJob [medium] -> Quote::RequestService
+        | Quote::Mailbox misconfigured -> audit quote_request.misconfigured (+ tracker), stop
+        v opportunity lock
+QuoteRequest(awaiting_reply, correlation_id) + e-mail thread
+        v (after commit)
+EmailThread.post! -> SendReplyJob -> ConversationReplyMailer -> commercial recipient
+        +--> customer notice on WhatsApp (once, quote_notice)
+POST .../pipeline_opportunities/:id/quote_request/resend (admin, CT-12) -> Quote::ResendService -> same request/thread
+        v
+Reply e-mail -> QuoteReplyJob -> Quote::ReplyProcessor
+        | negotiation thread -> ignored
+        | no request -> QuoteReply(unmatched) -> CT-08 link -> ReplyProcessor.apply
+        | request replied -> QuoteReply(late_reply) -> CT-08 discard
+        | invalid CT-04 block -> correction_requested -> correction e-mail (same thread)
+        v valid block
+QuoteRequest(replied, commercial) -> Proposal::GenerateService (after commit)
+```
+
 ### Macro flow: proposal via Make
 
 ```
-proposal_generate action / POST .../proposals/generate
+Validated quote reply (ReplyProcessor / CT-08 link) or POST .../proposals/generate (needs a replied request)
         v
-Proposal::GenerateService -> ProposalVersion(generating)
+Proposal::GenerateService -> ProposalVersion(generating, proposal_number, quote_request_id)
         v (after commit)
-MakeProvider -> Make::OutboundRequestService -> MakeRequest(pending->sent) -> HTTP POST Make
+MakeProvider (CT-05 + commercial) -> Make::OutboundRequestService -> MakeRequest(pending->sent) -> HTTP POST Make
         v
 Make -> POST /webhooks/scan_solo/make (X-Make-Signature)
         v
 CallbackVerifier: HMAC -> JSON -> schema -> matching MakeRequest
         v
-CallbackApplicationService -> MakeCallback row -> ProposalVersion generated|sent|failed
+CallbackApplicationService -> MakeCallback row -> CallbackHandler -> ProposalVersion generated|failed
+        v (after commit)
+ProposalDeliveryJob -> DeliveryService: PDF -> ActiveStorage -> NativeTemplateSender(origin proposal, document header)
+        v
+DeliveryReconciler (message_updated, source_id) -> sent -> SuccessHandler -> proposta_enviada (+ cadence)
+        v (after commit)
+FollowUpService -> 1 proposta_acompanhamento template
 ```
+
+No flow emits `proposal.send` or calls `ApproveService`/`SendService`; those legacy paths are disabled, not removed (RF-55 Etapa 1). Contracts: [`openapi.yaml`](../../.spec/features/scansolo-operacao-centralizada/openapi.yaml) (HTTP) and [`asyncapi.yaml`](../../.spec/features/scansolo-operacao-centralizada/asyncapi.yaml) (Make, e-mail, notification).
 
 ## Related documents
 

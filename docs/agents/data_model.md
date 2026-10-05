@@ -10,13 +10,13 @@
 |---|---|
 | Engine | PostgreSQL + `vector` extension (pgvector; `pgvector/pgvector:pg16` in `docker-compose.test.yaml`) |
 | Schema | `db/schema.rb` (Ruby format) |
-| Migrations | `db/migrate/` (208 files); ScanSolo range `20260917231850..20260923000007` |
+| Migrations | `db/migrate/` (215 files); ScanSolo ranges `20260917231850..20260923000007` and `20261001000001..20261001000005` (centralized operation, additive only) |
 | Migration tool | ActiveRecord migrations; `rails db:chatwoot_prepare` (release in `Procfile`, `POSTGRES_STATEMENT_TIMEOUT=600s`) |
 | Triggers | `hairtrigger` gem (upstream) |
 | Files | ActiveStorage, `config/storage.yml`; MinIO in `docker-compose.scansolo.yaml` |
 | Vector search | `neighbor` gem `nearest_neighbors(:embedding, distance: 'cosine')` |
 
-- Upstream Chatwoot tables (accounts, inboxes, conversations, messages, contacts, users, ...) live in the same schema; ScanSolo adds `accounts.scansolo_enabled` and 19 `scan_solo_*` tables, models in `app/models/scan_solo/`.
+- Upstream Chatwoot tables (accounts, inboxes, conversations, messages, contacts, users, ...) live in the same schema; ScanSolo adds `accounts.scansolo_enabled` and 21 `scan_solo_*` tables, models in `app/models/scan_solo/`.
 - ScanSolo extends core records by 1:1 extension tables, not columns: `scan_solo_conversation_extensions`, `scan_solo_contact_extensions`.
 
 ### Entities
@@ -25,9 +25,9 @@
 
 | Table / model | Key columns | Relations | Invariants |
 |---|---|---|---|
-| `scan_solo_ai_agent_configs` / `AiAgentConfig` | `status` enum `draft 0, published 1`; `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours`; jsonb `qualification_playbook, required_qualification_fields, restricted_information, forbidden_subjects, allowed_inbox_ids`; `opt_out_keywords` default `["PARAR","SAIR","STOP"]`; `require_proposal_approval` default true | `belongs_to :account`, `:published_version` (self) | 1 draft per account (partial unique index `status = 0`) |
+| `scan_solo_ai_agent_configs` / `AiAgentConfig` | `status` enum `draft 0, published 1`; `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours`; jsonb `qualification_playbook, required_qualification_fields, restricted_information, forbidden_subjects, allowed_inbox_ids`; `opt_out_keywords` default `["PARAR","SAIR","STOP"]`; `require_proposal_approval` default true (kept for history, no longer read nor shown — RF-55); `quote_inbox_id` (e-mail inbox, not allowlisted), `commercial_user_id`, `quote_recipient_email` not null default `comercial@scansolo.com.br` (all 3 in the publish snapshot, RF-54) | `belongs_to :account`, `:published_version` (self) | 1 draft per account (partial unique index `status = 0`) |
 | `scan_solo_agent_actions` / `AgentAction` | `action_id`, `classification` enum `read_only 0, automatic 1, requires_confirmation 2, disabled 3`, jsonb `schema` | `has_many :executions` | `action_id` unique |
-| `scan_solo_template_mappings` / `TemplateMapping` | `stage`, `step` (nullable), `template_name`, `language`, jsonb `params` | `belongs_to :account` | unique `(account_id, stage, step)` NULLS NOT DISTINCT; `stage` ∈ 4 cadence stages; param `source` ∈ `contact_name contact_first_name agent_name stage_label static` |
+| `scan_solo_template_mappings` / `TemplateMapping` | `stage`, `step` (nullable), `template_name`, `language`, jsonb `params` | `belongs_to :account` | unique `(account_id, stage, step)` NULLS NOT DISTINCT; `stage` ∈ 4 cadence stages (with `step`) or single slots `proposta_enviada lead_manual_inicial proposta_acompanhamento` (`step` null); param `source` ∈ `contact_name contact_first_name agent_name stage_label static` |
 | `scan_solo_cadence_definitions` / `CadenceDefinition` | `stage`, `version` default 1, jsonb `offsets`, `active` | `has_many :enrollments` | unique `(stage, version)`; `offsets` present |
 
 #### Conversation, contact, pipeline
@@ -36,7 +36,7 @@
 |---|---|---|---|
 | `scan_solo_conversation_extensions` / `ConversationExtension` | `ai_control_state` enum `ai_active 0, handoff_requested 1, awaiting_human 2, human_active 3, paused 4, closed 5` | `belongs_to :conversation` | `conversation_id` unique; row lock serializes turn send |
 | `scan_solo_contact_extensions` / `ContactExtension` | `opted_out` default false, `opted_out_at`, `opted_out_source` | `belongs_to :contact` | `contact_id` unique |
-| `scan_solo_pipeline_opportunities` / `PipelineOpportunity` | `stage` enum `novo_lead 0 … perdido 7`, `owner_id`, `last_customer_interaction_at` | `belongs_to :account, :contact, :conversation, :owner (User)`; `has_many :stage_events, :cadence_enrollments`; `has_one :proposal, :lead_state` | `conversation_id` unique (1 opportunity per conversation); `after_create` creates its lead state |
+| `scan_solo_pipeline_opportunities` / `PipelineOpportunity` | `stage` enum `novo_lead 0 … perdido 7`, `owner_id`, `last_customer_interaction_at`, `lead_source` (`website`/`manual`/null) | `belongs_to :account, :contact, :conversation, :owner (User)`; `has_many :stage_events, :cadence_enrollments`; `has_one :proposal, :lead_state, :quote_request` | `conversation_id` unique (1 opportunity per conversation); check constraint `lead_source IN ('website','manual')`; `after_create` creates its lead state |
 | `scan_solo_pipeline_stage_events` / `PipelineStageEvent` | `from_stage`, `to_stage`, polymorphic `actor`, `created_at` only | `belongs_to :opportunity` | both stages ∈ opportunity stage keys |
 | `scan_solo_lead_states` / `LeadState` | `intent` (nullable, ∈ `INTENTS`), `qualification_status` enum `em_andamento 0, concluida 1`, `qualification_completed_at`, `next_action` (nullable, ∈ `NEXT_ACTIONS`), `next_action_recorded_at`, `next_action_source_message_id` (null only from the backfill), jsonb `authorized_actions` `[{action, source_message_id, recorded_at}]`, jsonb `fields` `{<34 catalog keys> => {value, status ∈ confirmado inferido faltante, updated_at, source_message_id, source_attachment_id}}` | `belongs_to :opportunity`; `has_many :events` | `opportunity_id` unique (1 state per opportunity); `faltante` ⇔ no value; written only by `LeadState::Writer` |
 | `scan_solo_lead_state_events` / `LeadStateEvent` | `subject` ∈ `field intent next_action`, `key`, `previous_value`, `previous_status`, `new_value`, `new_status`, `source_message_id`, `source_attachment_id`, `created_at` only | `belongs_to :lead_state` | append-only (`readonly?` once persisted); 1 event per change |
@@ -68,7 +68,9 @@
 | Table / model | Key columns | Relations | Invariants |
 |---|---|---|---|
 | `scan_solo_proposals` / `Proposal` | `current_version_id` | `belongs_to :opportunity`, `:current_version`; `has_many :versions` | `opportunity_id` unique |
-| `scan_solo_proposal_versions` / `ProposalVersion` | `version_number`, `status` enum `generating 0, generated 1, approved 2, sent 3, failed 4`, `is_current`, `value(12,2)`, `currency`, `artifact_url`, `failure_reason`, `generate_correlation_id`, `generate_requested_at`, `generate_callback_applied_at`, `approved_at`, polymorphic `approved_by`, `send_correlation_id`, `send_requested_at`, `send_callback_applied_at`, `sent_message_id` | `belongs_to :proposal, :sent_message (Message)` | unique `(proposal_id, version_number)`; 1 `is_current` per proposal; unique `generate_correlation_id`, `send_correlation_id` |
+| `scan_solo_quote_requests` / `QuoteRequest` | `status` enum `awaiting_reply 0, correction_requested 1, replied 2`, `correlation_id`, `email_conversation_id`, `request_message_id`, `reply_message_id`, `customer_notice_message_id`, jsonb `commercial` `{total_value, schedule, scope, payment_terms, notes}`, `sent_at`, `replied_at` | `belongs_to :account, :opportunity, :email_conversation (Conversation), :reply_message (Message)`; `has_one :proposal_version` | `opportunity_id` unique (≤ 1 request per opportunity, RF-15); `email_conversation_id` unique; `correlation_id` unique |
+| `scan_solo_quote_replies` / `QuoteReply` | `message_id`, `conversation_id`, `kind` enum `unmatched 0, late_reply 1`, `status` enum `pending 0, linked 1, discarded 2`, `resolved_by_id` (User), `resolved_at` | `belongs_to :account, :message, :quote_request` (optional), `:resolved_by` | `message_id` unique; index `(account_id, status)` |
+| `scan_solo_proposal_versions` / `ProposalVersion` | `version_number`, `status` enum `generating 0, generated 1, approved 2, sent 3, failed 4`, `is_current`, `value(12,2)`, `currency`, `artifact_url`, `failure_reason`, `generate_correlation_id`, `generate_requested_at`, `generate_callback_applied_at`, `approved_at`, polymorphic `approved_by`, `send_correlation_id`, `send_requested_at`, `send_callback_applied_at`, `sent_message_id`, `proposal_number` (`SS-AAAA-NNNNNN`, set after create), `valid_until`, `follow_up_message_id`, `quote_request_id`; `has_one_attached :document` (PDF) | `belongs_to :proposal, :sent_message (Message), :follow_up_message (Message), :quote_request` | unique `(proposal_id, version_number)`; 1 `is_current` per proposal; unique `generate_correlation_id`, `send_correlation_id`, `proposal_number`, `quote_request_id` (1 version per validated reply); `approved`/`approved_at`/`send_*` kept only for legacy rows |
 | `scan_solo_make_requests` / `MakeRequest` | `correlation_id`, `idempotency_key`, `action`, jsonb `payload`, `status` enum `pending 0, sent 1, completed 2, failed 3`, `retry_count` | `belongs_to :account` | `correlation_id` unique; dead letter = `failed` and `retry_count >= 3` |
 | `scan_solo_make_callbacks` / `MakeCallback` | `correlation_id`, `action`, `signature_valid`, `applied`, `rejection_reason`, jsonb `payload`, `created_at` only | — | `correlation_id` unique where `applied = true` |
 
@@ -83,6 +85,8 @@ PipelineOpportunity 1-1 LeadState 1-* LeadStateEvent
 PipelineOpportunity 1-* CadenceEnrollment *-1 CadenceDefinition
 CadenceEnrollment 1-* CadenceAttempt *-0..1 Message
 PipelineOpportunity 1-0..1 Proposal 1-* ProposalVersion
+PipelineOpportunity 1-0..1 QuoteRequest 1-0..1 ProposalVersion ; QuoteRequest 1-1 Conversation (e-mail thread)
+QuoteRequest 0..1-* QuoteReply 1-1 Message
 Message 1-0..1 AiTurn 1-* AgentActionExecution *-1 AgentAction
 AgentActionExecution 0..1-1 AuditEvent
 Account 1-* KnowledgeSource 1-* KnowledgeChunk

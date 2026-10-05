@@ -10,7 +10,8 @@
 # nothing. Idempotent: only `dispatched` attempts and unsent/unfailed
 # versions are touched, under a row lock.
 #
-# An accepted proposal version becomes `sent` and runs
+# An accepted proposal version becomes `sent`, is audited as `proposal.sent`
+# with the quote request correlation id (RNF-09) and runs
 # ScanSolo::Proposal::SuccessHandler (stage -> proposta_enviada); a failed
 # one becomes `failed` with the external error and 1 `proposal.delivery_failed`
 # audit, the stage untouched (RF-32). RF-30: a `sent` version whose message
@@ -71,6 +72,10 @@ class ScanSolo::Messaging::DeliveryReconciler
         fail_version!(version, 'proposal.delivery_failed_after_sent') if outcome == :failed
       elsif outcome == :accepted
         version.update!(status: :sent)
+        ScanSolo::AuditLogger.record!(
+          subject: version.proposal.opportunity, event_type: 'proposal.sent', correlation_id: version.audit_correlation_id,
+          payload: { proposal_version_id: version.id, message_id: message.id }
+        )
         ScanSolo::Proposal::SuccessHandler.call(proposal_version: version)
       else
         fail_version!(version, 'proposal.delivery_failed')

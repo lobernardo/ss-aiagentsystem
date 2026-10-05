@@ -10,11 +10,11 @@
 - **AI turn**: 1 turn per inbound message, terminal state always, all-or-nothing actions.
 - **Actions**: closed registry of 8 action ids; schema-validated, idempotent, confirmation-gated.
 - **Qualification**: required fields from published config, resolved from native contact columns and aliased `custom_attributes`.
-- **Pipeline**: 8 stages; 1 writer; AI moves forward only to `em_qualificacao`/`qualificado`.
-- **Cadence**: stage-entry enrollment, template attempts, 09:00-20:00 `America/Sao_Paulo`, pause vs cancel triggers.
+- **Pipeline**: 8 stages; 1 writer; AI moves forward only to `em_qualificacao`/`qualificado`; structured `lead_source`; manual "Novo lead"; `negociacao` only via the negotiation signal.
+- **Cadence**: stage-entry enrollment, template attempts, 09:00-20:00 `America/Sao_Paulo`, pause vs cancel triggers; every customer reply interrupts ≤ 1 pending attempt per cycle.
 - **Handoff**: control state machine on `ConversationExtension`; 9-line private note.
 - **Opt-out**: keyword exact match or model signal; blocks enrollment and cancels attempts.
-- **Proposal**: generate/approve/send via Make; signed callbacks; safe-retry + dead letter.
+- **Proposal**: quote request by native e-mail → deterministic commercial reply → Make generates (signed callback) → Chatwoot delivers the PDF on WhatsApp → follow-up; approve/send disabled, not removed (RF-55 Etapa 1).
 - **Audit**: `ScanSolo::AuditLogger.record!` writes `scan_solo_audit_events` with `correlation_id`.
 
 ### Eligibility gate
@@ -71,7 +71,7 @@
 
 ### Input and output guardrails
 
-- `InputGuardrail`: case-insensitive substring match on `config.forbidden_subjects` blocks the turn. Offered actions = all 9 minus `proposal_approve`, `proposal_send`; minus `proposal_generate` when `Proposal::Integration.configured?` is false.
+- `InputGuardrail`: case-insensitive substring match on `config.forbidden_subjects` blocks the turn. Offered actions = all 9 minus `proposal_approve`, `proposal_send` and `proposal_generate` (never offered: generation follows the validated commercial reply, RF-25; the handler stays registered for the audit trail).
 - `OutputValidator` blocks when:
 
 | Violation | Pattern |
@@ -102,12 +102,12 @@
 | `qualification_field` | `QualificationFieldAction` | automatic | `conversation_id`, `fields{}` |
 | `stage_transition` | `StageTransitionAction` | automatic | `opportunity_id`, `target_stage` |
 | `private_note` | `PrivateNoteAction` | automatic | `conversation_id`, `content` |
-| `proposal_generate` | `ProposalActions::Generate` | automatic | `opportunity_id` |
-| `proposal_approve` | `ProposalActions::Approve` | requires_confirmation | `opportunity_id` |
-| `proposal_send` | `ProposalActions::Send` | requires_confirmation | `opportunity_id` |
+| `proposal_generate` | `ProposalActions::Generate` | automatic (registered, never offered — RF-25) | `opportunity_id` |
+| `proposal_approve` | `ProposalActions::Approve` | requires_confirmation (never offered; legacy) | `opportunity_id` |
+| `proposal_send` | `ProposalActions::Send` | requires_confirmation (never offered; legacy) | `opportunity_id` |
 | `cadence_signal` | `CadenceSignalAction` | automatic | `opportunity_id`, `signal` ∈ `full_reply partial_reply stage_changed won lost opt_out manual_pause` |
 | `human_handoff` | `HandoffAction` | automatic | `conversation_id`, `reason` |
-| `lead_state_update` | `LeadStateUpdateAction` | automatic | `opportunity_id`, `intent` ∈ `LeadState::INTENTS`, `next_action` / `authorized_action` ∈ `LeadState::NEXT_ACTIONS`, `interpretation_risk` |
+| `lead_state_update` | `LeadStateUpdateAction` | automatic | `opportunity_id`, `intent` ∈ `LeadState::INTENTS`, `next_action` / `authorized_action` ∈ `LeadState::NEXT_ACTIONS`, `interpretation_risk`, `negotiation_requested` (boolean) |
 
 - Every schema is closed (`additionalProperties: false`); `JSONSchemer` rejects extra keys → `InvalidParamsError`.
 - Unregistered / `disabled` / not-offered action → `UnregisteredActionError`; raises roll back all earlier actions and the reply (0 messages).
@@ -115,6 +115,7 @@
 - Executed → `AuditEvent` `agent_action.<action_id>` linked on the execution row.
 - `.call` self-registers the action row in `scan_solo_agent_actions`.
 - `lead_state_update` (CT-03) only records through `LeadState::Writer`: a new next action or authorization runs no side effect (no proposal, handoff, e-mail or AI control change); `interpretation_risk` is returned as evidence only.
+- `negotiation_requested: true` is evidence read by `AiTurn::AttemptRunner` (RF-35): with the opportunity in `proposta_enviada`/`negociacao` the reply is replaced by `scan_solo.negotiation.standard_reply` ("Vou verificar isso com nosso comercial. Só um momento.") and `Negotiation::RequestService` runs in the attempt transaction (audit `negotiation.requested`); in earlier stages it has no effect. `PromptBuilder` has 1 fixed rule telling the model to mark it and not negotiate.
 - Extend: add handler class with `CLASSIFICATION` + `SCHEMA`, add to `HANDLERS`, `InputGuardrail::ALL_ACTIONS`, `PromptBuilder::ACTION_DESCRIPTIONS`.
 
 ### Qualification field resolution
@@ -167,14 +168,20 @@
 | Trigger | From | To | Implementer |
 |---|---|---|---|
 | First eligible inbound message | — | `novo_lead` (created) | `Pipeline::OpportunityBootstrapService` (1 per conversation, unique index) |
+| "Novo lead" (`POST .../pipeline_opportunities`, CT-01) | — | `novo_lead` (created, `lead_source: manual`) | `Pipeline::ManualLeadService` |
 | Later inbound message | `novo_lead` | `em_contato` | `Pipeline::InboundMessageTransitionRule` |
 | AI `stage_transition` | lower stage | `em_qualificacao` / `qualificado` only, forward only | `Actions::StageTransitionAction` (else `rejected` / `stage_not_allowed_for_ai`) |
 | Human `POST .../stage_transitions` | any non-terminal | any stage; `negociacao` requires `authorized: true` | `PipelineOpportunitiesController` |
+| AI negotiation signal (RF-35) | `proposta_enviada` | `negociacao` (`authorized: true`); already `negociacao` → no event | `Negotiation::RequestService` |
+| Qualification completed | `novo_lead`..`em_qualificacao` | `qualificado` | `LeadState::CompletionService` |
+| WhatsApp accepted the proposal template | below `proposta_enviada` | `proposta_enviada` | `Proposal::SuccessHandler` (from `Messaging::DeliveryReconciler`) |
 | Any | `ganho` / `perdido` | — (terminal, rejected) | `Pipeline::StageTransitionService` |
 
 - Each transition writes `PipelineStageEvent` in the same transaction, then `StopRecalculatePolicy` (`won`/`lost`/`stage_changed`) and `StageEntryEnroller`.
 - Human replay of same `(opportunity, target_stage, actor)` within 5s → no new event (`STAGE_TRANSITION_IDEMPOTENCY_WINDOW`).
 - `PIPELINE_STALE_THRESHOLD` = 48 h.
+- Origin (`lead_source`, RF-01..RF-03): `website` | `manual` | null (check constraint). The bootstrap writes it in the same insert from `Pipeline::LeadSourceClassifier` — first public message of the conversation (activity, template and private notes ignored): customer `incoming` → `website`; native `outgoing` by a `User` → `manual`; anything else (campaign, bot, automation, none) → null. `rake scansolo:backfill_lead_source` applies the same rule to null rows, idempotent, no stage/cadence/lead state writes. The origin never changes enrollment, offsets or templates.
+- Manual lead (`Pipeline::ManualLeadService`, RF-04..RF-10): contact found by E.164 phone then e-mail (advisory lock per account+phone, never a duplicate); one transaction creates/reuses the open WhatsApp conversation without opportunity and the `novo_lead`/`manual` opportunity + audit `pipeline.opportunity_created`; a non-terminal opportunity of the contact → 422 `opportunity_exists`. After commit `Pipeline::ManualLeadOutreach` sends the `lead_manual_inicial` template (`scansolo_origin: manual_lead`); a guard block is audited `pipeline.manual_lead_template_blocked`, a native failure `pipeline.manual_lead_template_failed` (exposed as `initial_template_failure`); no rollback, no automatic resend.
 
 ### Cadence engine
 
@@ -191,7 +198,10 @@
 | `handoff` | pause all | `HandoffAction`, `TakeoverService.handle_takeover` |
 
 - Only `scheduled` attempts change; sent attempts never altered. Return to AI resumes paused schedule shifted by paused duration (`Cadence::ResumeOnReturnService`).
-- Reply completeness (`Cadence::ReplyCompletenessDetector`): all required fields satisfied → cancel all; else cancel only the next scheduled attempt.
+- Reply interruption (`Cadence::ReplyInterruptionService`, RF-43): called by the listener for every customer reply on an existing opportunity, before and independently of the AI turn (also for `superseded`/`failed` turns): cancels the next `scheduled` attempt of each active enrollment older than the message, ≤ 1 per cycle — a cycle starts at the last non-private outgoing message, and the marker is the audit `cadence.attempt_interrupted_by_reply`; other attempts keep `scheduled_at` (no recalculation).
+- Reply completeness (`Cadence::ReplyCompletenessDetector`, after the turn): all required fields satisfied → cancel all; a partial reply changes nothing here.
+- Manual lead (RF-10): enrolled in `novo_lead` at creation; step 1 recorded `skipped` (`manual_initial_template`), steps 2..n keep enrollment + own offset.
+- `CadenceDefinition` rows and `db/seeds/scansolo_cadence_definitions.rb` are unchanged by the centralized operation (RF-44).
 - Due attempt precheck (`Cadence::AttemptPrecheck`), in order:
 
 | # | Condition | Decision / reason |
@@ -214,12 +224,15 @@
 | Entry | Service | Result |
 |---|---|---|
 | AI `human_handoff` action | `HandoffService` + pause cadence | `awaiting_human` |
+| AI negotiation signal in `proposta_enviada`/`negociacao` (RF-35) | `Negotiation::RequestService` → `HandoffService` + pause cadence (`handoff`) | `awaiting_human`; after commit CT-07 notification + optional native assignment |
 | `POST .../handoff` (assigned agent or admin) | `TakeoverService` trigger `explicit` | `human_active`, audit `handoff.takeover` |
 | Manual non-private `User` reply without `scansolo_origin` | `TakeoverService` trigger `human_reply` | `human_active` |
 | `POST .../return_to_ai` | `ReturnToAiService` (only path back) | `ai_active`, audit `handoff.return_to_ai`, cadence resume |
 
 - `HandoffService` writes the note only from `ai_active`/`handoff_requested` → exactly 1 note per episode. Note lines: Motivo da transferência, Resumo (last 3 chat messages), Objetivo do cliente, Campos de qualificação coletados, Objeções, Etapa do pipeline, Status da proposta, Ações pendentes, Próximo passo recomendado.
 - Takeover and return are idempotent (no duplicate audit).
+- Negotiation notification (RF-37..RF-41): after commit, `Notifications::Publisher` hands the CT-07 payload (`Notifications::NegotiationPayload`, event `negotiation.requested`) to every adapter in `ADAPTERS` (default `Notifications::EmailAdapter`: e-mail via the published quote inbox to the published commercial recipient, own thread marked `negotiation_notification`); audits `negotiation.notification_sent` / `negotiation.notification_failed` (failure also tracked, never undoes the negotiation). When the published `commercial_user_id` is an inbox member of the conversation, the conversation is assigned to them natively; failure → audit `negotiation.assignment_failed`.
+- No new control state or table: the 6 states above are the only ones (RF-46).
 
 ### Opt-out
 
@@ -227,13 +240,31 @@
 - Model path: `cadence_signal` with `signal: opt_out` → `MarkService` source `model_action`.
 - `MarkService` cancels open enrollments; `ClearService` is the only reset path (admin, `DELETE .../contacts/:id/opt_out`).
 
+### Quote request
+
+`ScanSolo::Quote::*` (CT-03, CT-04, CT-08, CT-12; RF-12..RF-23, RF-53, RF-56):
+
+- Trigger: `LeadState::CompletionService` concludes with next action `proposta` → `QuoteRequestJob` (`medium`) after all transactions commit; any other next action, a rolled-back attempt or the lead state backfill → 0 requests. `Quote::RequestService` revalidates `concluida` + `proposta` in the database.
+- Config (`Quote::Mailbox`, published config only, RF-54): `quote_inbox_id` (e-mail inbox, never in `allowed_inbox_ids`) and `quote_recipient_email` (default `comercial@scansolo.com.br`, never fixed in code). Missing / non-e-mail / allowlisted inbox → 0 messages, audit `quote_request.misconfigured` with `reason` ∈ `quote_inbox_missing quote_inbox_not_email quote_inbox_allowlisted`, `QuoteInboxMisconfigured` to the tracker; qualification and stage untouched.
+- Request: 1 `QuoteRequest` per opportunity (unique index, opportunity lock shared with the resend) with its own `correlation_id` and native e-mail thread (`Quote::EmailThread`, conversation marked `scansolo_thread: quote_request`); the CT-03 e-mail (`Quote::EmailComposer`: identification, non-`faltante` catalog fields with `inferido` as "(a confirmar)", empty CT-04 block) is posted after commit through the native `SendReplyJob` → `ConversationReplyMailer` (From = channel e-mail, native Message-ID threading); audit `quote_request.sent`.
+- Customer notice (RF-53): after the e-mail, 1 message `scan_solo.quote.customer_notice` in the WhatsApp conversation (`scansolo_origin: quote_notice`, AI stays `ai_active`), guarded by `customer_notice_message_id`: never repeated by turns, job retries or resends; not sent when the request was not sent.
+- Status: `awaiting_reply 0, correction_requested 1, replied 2`.
+- Reply (`ConversationListener` → `QuoteReplyJob` → `Quote::ReplyProcessor`, ahead of the eligibility gate; the quote inbox never gets opportunity, turn, enrollment or takeover — RF-16): thread `negotiation_notification` → ignored (RF-42); thread without request → `QuoteReply` `unmatched` pending (RF-19); request already `replied` → `late_reply` pending, never read commercially (RF-23); otherwise `Quote::ResponseBlockParser` (deterministic, no LLM — RF-21): valid block → `replied` + `commercial` jsonb, audit `quote_reply.accepted`, generation after commit; invalid → `correction_requested`, audit `quote_reply.rejected`, correction e-mail (problem labels + empty block) in the same thread after commit.
+- CT-04 parsing: labels "Valor total", "Prazo/cronograma", "Escopo/atividades", "Condições de pagamento" (required) and "Observações comerciais" (optional); delimiters optional; `>` lines and the "Em … escreveu:" header end a value; the first block with ≥ 1 filled label wins (the quoted empty block is skipped); value `R$`? + `1.234,56` (`.` thousands, `,` decimals), > 0.
+- Pending decisions (`Quote::PendingReplyResolution`, CT-08): `link!` only `unmatched` → open request, then read as that request's reply (audit `quote_reply.linked`); `discard!` only `late_reply` (audit `quote_reply.discarded`); repeats → 422.
+- Manual resend (`Quote::ResendService`, RF-56, admin only): config must be valid (else RF-14 audit + 422 `quote_inbox_misconfigured`); open request → same request, thread and correlation id, new e-mail to the recipient published now; no request but `concluida` + `proposta` + a `quote_request.misconfigured` audit → creates the single request; `replied` → 422 `quote_request_closed`; anything else → 422 `quote_request_not_eligible`. Audit `quote_request.resent` (actor, recipient); status unchanged; notice never repeated.
+- Correlation (RF-22, RNF-09): the request `correlation_id` is on every audit of the chain — `quote_request.sent`, `quote_reply.rejected|accepted|pending|linked`, `proposal.generation_requested`, `proposal.generated`, `proposal.sent` / `proposal.delivery_failed` — and the opportunity navigates request → e-mail conversation → reply message → `ProposalVersion` (`quote_request_id`) → `MakeRequest` (`generate_correlation_id`).
+
 ### Proposal lifecycle
 
-- `ProposalVersion.status`: `generating 0, generated 1, approved 2, sent 3, failed 4`; 1 `is_current` per proposal.
+- `ProposalVersion.status`: `generating 0, generated 1, approved 2, sent 3, failed 4`; 1 `is_current` per proposal. `approved` / `approved_at` / `require_proposal_approval` are kept only for historical rows (RNF-10).
 - Provider: `Proposal::Integration.provider!` → `MakeProvider` when `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` present; `MockProvider` only in dev/test; production without creds → `ProposalIntegrationNotConfigured` (422 `proposal_integration_not_configured`).
-- AI-triggered generate: version created in the turn transaction; Make HTTP fires after all transactions commit.
-- Only the provider callback writes commercial `value` (RF-76).
-- Retry (`Proposal::RetryPolicy`): only `failed` with `failure_reason` ∈ `timeout network_error provider_unavailable`; same version row, new correlation id; `retry_count` ≥ 3 (`MakeRequest::DEAD_LETTER_RETRY_THRESHOLD`) → dead letter, needs `confirm_reprocess: true`. `value` present → retry send step, else generate. Audit `proposal.retry_requested` / `proposal.reprocess_requested`.
+- Generate (RF-24, RF-25): only from the opportunity's `replied` quote request without a version (`GenerateService` under the request lock; unique `quote_request_id`); otherwise `RecordInvalid` → 422 at `POST .../proposals/generate`. The version gets `proposal_number` `SS-AAAA-NNNNNN` on create; after commit `MakeProvider` sends CT-05 with `proposal_number` and `commercial{total_value, total_value_in_words (Quote::AmountInWords, deterministic), currency, schedule, scope, payment_terms, notes?, quote_request_id}`.
+- Only the signed provider callback writes commercial `value`, `currency`, `artifact_url` and `valid_until`; `generated` never moves the stage (RF-26, RF-33). Audit `proposal.generated`.
+- Delivery (RF-29, `ProposalDeliveryJob` → `Proposal::DeliveryService`, after the callback commit): claims the version under its lock, downloads `artifact_url` (`SafeFetch`, PDF only) into the version's ActiveStorage `document`, sends the `proposta_enviada` slot template (`scansolo_proposal_send` by convention) through `NativeTemplateSender` (`scansolo_origin: proposal`) with the document header `{media_url: document_url, media_type: document, media_name: <proposal_number>.pdf}`. No `require_proposal_approval` check, no `ApproveService`, no `proposal.send` (RF-28). Download failure (`artifact_download_failed`), guard block or native `failed` → version `failed` + audit `proposal.delivery_failed`, stage untouched.
+- `sent` only from `Messaging::DeliveryReconciler` on WhatsApp acceptance (`source_id`, not `failed`): audit `proposal.sent` → `SuccessHandler` → `proposta_enviada` (enrolls its cadence) → after commit `Proposal::FollowUpService` sends 1 `proposta_acompanhamento` template (`follow_up_message_id`). A later `failed` on the same message → version `failed` + `proposal.delivery_failed_after_sent`, stage and enrollment kept (RF-30, RF-31).
+- Retry (`Proposal::RetryPolicy`, CT-10): a delivery-stage failure (generate callback applied + `value`) redelivers through `DeliveryService` with the stored PDF — no Make request, no retry count. Otherwise only `failed` with `failure_reason` ∈ `timeout network_error provider_unavailable`; same version row, new correlation id; `retry_count` ≥ 3 (`MakeRequest::DEAD_LETTER_RETRY_THRESHOLD`) → dead letter, needs `confirm_reprocess: true`. Audit `proposal.retry_requested` / `proposal.reprocess_requested`.
+- Legacy approve/send (RF-55 Etapa 1, CT-11): the routes `POST .../proposals/:id/approve|send`, `ApproveService`, `SendService` and `MakeProvider.request_send` still exist but no screen or flow calls them and the new flow emits no `proposal.send`; removal only after recorded evidence of no use (Etapa 2). Historical versions approved/sent by them stay readable.
 
 ### Make callback trust
 
@@ -243,7 +274,7 @@
 |---|---|---|
 | HMAC-SHA256 of raw body vs `X-Make-Signature` (`secure_compare`) | `invalid_signature` | 401, nothing persisted |
 | JSON parse | `malformed_json` | 422 |
-| Schema (`action` ∈ `proposal.generate proposal.send`, `status` ∈ `success failure`) | `schema_invalid` | 422 |
+| Schema (`action` ∈ `proposal.generate proposal.send` — `proposal.send` only for historical callbacks, CT-06; `status` ∈ `success failure`) | `schema_invalid` | 422 |
 | `MakeRequest` with same `correlation_id` + `action` | `unmatched_request` | 422 |
 
 - Applied redelivery of same `correlation_id` → 200 (unique index on `make_callbacks.correlation_id` where `applied`).

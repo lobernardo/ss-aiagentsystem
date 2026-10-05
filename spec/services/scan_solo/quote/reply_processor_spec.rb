@@ -125,6 +125,59 @@ RSpec.describe ScanSolo::Quote::ReplyProcessor do
     end
   end
 
+  describe 'generation failure and retry (RF-24)' do
+    let(:integration_error) { CustomExceptions::ScanSolo::ProposalIntegrationNotConfigured }
+
+    it 'keeps the reply, audits the failure and re-raises so the job retries' do
+      allow(ScanSolo::Proposal::Integration).to receive(:provider!).and_raise(integration_error)
+      message = reply(valid_block)
+
+      expect { described_class.call(message: message) }.to raise_error(integration_error)
+
+      expect(quote_request.reload).to have_attributes(status: 'replied', reply_message_id: message.id)
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
+      expect(ScanSolo::QuoteReply.count).to eq(0)
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generation_failed').sole)
+        .to have_attributes(correlation_id: quote_request.correlation_id, payload: include('error' => integration_error.name))
+    end
+
+    it 'generates on the retry of the same message instead of turning it into a late_reply' do
+      allow(ScanSolo::Proposal::Integration).to receive(:provider!).and_raise(integration_error)
+      message = reply(valid_block)
+      expect { described_class.call(message: message) }.to raise_error(integration_error)
+      allow(ScanSolo::Proposal::Integration).to receive(:provider!).and_call_original
+
+      process(message)
+
+      expect(ScanSolo::QuoteReply.count).to eq(0)
+      expect(ScanSolo::ProposalVersion.where(quote_request: quote_request).sole).to be_generating
+      expect(ScanSolo::MakeRequest.sole.action).to eq('proposal.generate')
+      expect(ScanSolo::AuditEvent.where(event_type: 'quote_reply.accepted').count).to eq(1)
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generation_requested').count).to eq(1)
+    end
+
+    it 'does nothing when the same message is processed again after a successful generation' do
+      message = reply(valid_block)
+      process(message)
+
+      expect { process(message) }.not_to(change { [ScanSolo::AuditEvent.count, quote_request.reload.attributes] })
+
+      expect(ScanSolo::ProposalVersion.count).to eq(1)
+      expect(ScanSolo::MakeRequest.count).to eq(1)
+      expect(ScanSolo::QuoteReply.count).to eq(0)
+    end
+
+    it 'still turns a new message after a failed generation into a late_reply pending (RF-23)' do
+      allow(ScanSolo::Proposal::Integration).to receive(:provider!).and_raise(integration_error)
+      expect { described_class.call(message: reply(valid_block)) }.to raise_error(integration_error)
+
+      process(reply(valid_block))
+
+      expect(ScanSolo::QuoteReply.sole).to have_attributes(kind: 'late_reply', quote_request_id: quote_request.id)
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
+    end
+  end
+
   describe 'invalid block (RF-18)' do
     it 'asks for a correction in the request thread and creates no version' do
       process(reply(block_without_payment))

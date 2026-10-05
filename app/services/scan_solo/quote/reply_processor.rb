@@ -10,6 +10,12 @@
 #   then, after commit, requests the generation (RF-24); an invalid one marks
 #   it `correction_requested` and, after commit, posts the correction in the
 #   request thread (RF-18). The read is deterministic, never an LLM (RF-21).
+# - The accepted message itself, read again (job retry after a failed
+#   generation), is not a late reply: it requests the generation again while
+#   the request has no version, and is a no-op once it has one.
+# - A generation error other than the proposal gate (e.g. the Make
+#   integration not configured) is audited and re-raised, so the job fails
+#   visibly and its retry regenerates from the kept reply.
 #
 # Every step records 1 audit with the request's correlation id (RF-22, RNF-09).
 class ScanSolo::Quote::ReplyProcessor
@@ -27,14 +33,14 @@ class ScanSolo::Quote::ReplyProcessor
     )
 
     outcome = quote_request.with_lock do
-      next :late_reply if quote_request.replied?
+      next(quote_request.reply_message_id == message.id ? :retry : :late_reply) if quote_request.replied?
 
       result.valid? ? accept!(quote_request, message, result) : reject!(quote_request, result)
     end
 
     case outcome
     when :late_reply then record_pending!(message: message, kind: :late_reply, quote_request: quote_request)
-    when :accepted then request_generation!(quote_request)
+    when :accepted, :retry then request_generation!(quote_request)
     when :rejected then post_correction!(quote_request, message, result)
     end
   end
@@ -68,6 +74,8 @@ class ScanSolo::Quote::ReplyProcessor
     end
 
     def request_generation!(quote_request)
+      return if ScanSolo::ProposalVersion.exists?(quote_request_id: quote_request.id)
+
       generate_correlation_id = SecureRandom.uuid
       version = ScanSolo::Proposal::GenerateService.call(
         opportunity: quote_request.opportunity, quote_request: quote_request, correlation_id: generate_correlation_id
@@ -76,6 +84,9 @@ class ScanSolo::Quote::ReplyProcessor
     rescue ActiveRecord::RecordInvalid => e
       audit!(quote_request, 'proposal.generation_rejected', reason: e.record.errors.full_messages.to_sentence)
       ChatwootExceptionTracker.new(e, account: quote_request.account).capture_exception
+    rescue StandardError => e
+      audit!(quote_request, 'proposal.generation_failed', error: e.class.name, message: e.message)
+      raise
     end
 
     def post_correction!(quote_request, message, result)

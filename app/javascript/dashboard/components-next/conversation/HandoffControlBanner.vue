@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ScanSoloHandoffAPI from 'dashboard/api/scansoloHandoff';
+import Dialog from 'dashboard/components-next/dialog/Dialog.vue';
+import { useAlert } from 'dashboard/composables';
 import { useAccount } from 'dashboard/composables/useAccount';
 import { useAdmin } from 'dashboard/composables/useAdmin';
 import { useMapGetter } from 'dashboard/composables/store.js';
@@ -32,7 +34,11 @@ const controlState = ref(null);
 // briefly render an intermediate/duplicate state (no flicker, RF-53).
 const pending = ref(false);
 const reason = ref('');
-const showReasonInput = ref(false);
+const reasonDialog = ref(null);
+
+watch(controlState, state => {
+  if (state !== 'ai_active') reasonDialog.value?.close();
+});
 
 // UI-01: only ScanSolo accounts, and only inboxes in the published allowlist.
 const isScanSoloEnabled = computed(
@@ -102,7 +108,7 @@ const stateLabel = computed(() => {
 });
 
 const requestTakeover = () => {
-  showReasonInput.value = true;
+  reasonDialog.value.open();
 };
 
 const confirmTakeover = async () => {
@@ -112,15 +118,15 @@ const confirmTakeover = async () => {
   try {
     await ScanSoloHandoffAPI.takeover(props.conversation.id, reason.value);
     await fetchControlState();
-    showReasonInput.value = false;
-    reason.value = '';
+  } catch {
+    useAlert(t('SCANSOLO.HANDOFF_BANNER.ERROR'));
   } finally {
+    reasonDialog.value?.close();
     pending.value = false;
   }
 };
 
-const cancelTakeover = () => {
-  showReasonInput.value = false;
+const resetReason = () => {
   reason.value = '';
 };
 
@@ -131,7 +137,10 @@ const returnToAi = async () => {
   try {
     await ScanSoloHandoffAPI.returnToAi(props.conversation.id);
     await fetchControlState();
+  } catch {
+    useAlert(t('SCANSOLO.HANDOFF_BANNER.ERROR'));
   } finally {
+    reasonDialog.value?.close();
     pending.value = false;
   }
 };
@@ -174,42 +183,25 @@ defineExpose({ fetchControlState, confirmTakeover, returnToAi });
       </button>
     </div>
 
-    <div
-      v-if="showReasonInput"
-      data-testid="takeover-reason-dialog"
-      class="fixed inset-0 flex items-center justify-center bg-n-slate-12/40"
+    <Dialog
+      ref="reasonDialog"
+      :title="t('SCANSOLO.HANDOFF_BANNER.TAKEOVER_BUTTON')"
+      :cancel-button-label="t('SCANSOLO.HANDOFF_BANNER.CANCEL')"
+      :confirm-button-label="t('SCANSOLO.HANDOFF_BANNER.TAKEOVER_BUTTON')"
+      :is-loading="pending"
+      @confirm="confirmTakeover"
+      @close="resetReason"
     >
-      <div class="bg-n-solid-1 rounded-lg p-6 max-w-sm w-full">
-        <label class="block text-sm text-n-slate-11 mb-1">
-          {{ t('SCANSOLO.HANDOFF_BANNER.REASON_LABEL') }}
-        </label>
+      <label class="block text-sm text-n-slate-11">
+        {{ t('SCANSOLO.HANDOFF_BANNER.REASON_LABEL') }}
         <input
           v-model="reason"
           type="text"
           data-testid="takeover-reason-input"
           :placeholder="t('SCANSOLO.HANDOFF_BANNER.REASON_PLACEHOLDER')"
-          class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm mb-4"
+          class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
         />
-        <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            data-testid="takeover-cancel-button"
-            class="rounded-lg border border-n-weak px-3 py-1.5 text-sm"
-            @click="cancelTakeover"
-          >
-            {{ t('SCANSOLO.HANDOFF_BANNER.CANCEL') }}
-          </button>
-          <button
-            type="button"
-            data-testid="takeover-confirm-button"
-            :disabled="pending"
-            class="rounded-lg bg-n-slate-12 text-n-slate-1 px-3 py-1.5 text-sm disabled:opacity-50"
-            @click="confirmTakeover"
-          >
-            {{ t('SCANSOLO.HANDOFF_BANNER.TAKEOVER_BUTTON') }}
-          </button>
-        </div>
-      </div>
-    </div>
+      </label>
+    </Dialog>
   </div>
 </template>

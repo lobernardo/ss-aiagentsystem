@@ -251,6 +251,7 @@
       "RETRIEVAL_EMPTY": "Nenhum trecho encontrado para essa pergunta."
     },
     "HANDOFF_BANNER": {
+      "ERROR": "Não foi possível alterar o controle da conversa. Tente novamente.",
       "STATES": {
         "AI_ACTIVE": "IA respondendo automaticamente",
         "HANDOFF_REQUESTED": "Transferência solicitada",

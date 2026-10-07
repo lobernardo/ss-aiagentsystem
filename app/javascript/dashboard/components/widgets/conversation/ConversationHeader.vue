@@ -1,11 +1,12 @@
 <script setup>
 import { computed, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useStore } from 'vuex';
 import { useElementSize } from '@vueuse/core';
 import BackButton from '../BackButton.vue';
 import InboxName from '../InboxName.vue';
 import MoreActions from './MoreActions.vue';
+import Button from 'next/button/Button.vue';
 import Avatar from 'next/avatar/Avatar.vue';
 import SLACardLabel from './components/SLACardLabel.vue';
 import ConversationCallButton from './ConversationCallButton.vue';
@@ -31,6 +32,7 @@ const props = defineProps({
 const { t } = useI18n();
 const store = useStore();
 const route = useRoute();
+const router = useRouter();
 const conversationHeader = ref(null);
 const { width } = useElementSize(conversationHeader);
 const { isAWebWidgetInbox } = useInbox();
@@ -60,6 +62,8 @@ const backButtonUrl = computed(() => {
     customViewId,
   });
 });
+
+const closeConversation = () => router.push(backButtonUrl.value);
 
 const isHMACVerified = computed(() => {
   if (!isAWebWidgetInbox.value) {
@@ -174,6 +178,16 @@ const copyConversationId = async () => {
       />
       <ConversationCallButton :inbox="inbox" :chat="currentChat" />
       <MoreActions :conversation-id="currentChat.id" />
+      <Button
+        v-if="!showBackButton"
+        data-testid="conversation-close-button"
+        icon="i-lucide-x"
+        variant="ghost"
+        color="slate"
+        :aria-label="t('CONVERSATION.HEADER.CLOSE')"
+        :title="t('CONVERSATION.HEADER.CLOSE')"
+        @click="closeConversation"
+      />
     </div>
   </div>
 </template>

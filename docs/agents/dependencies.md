@@ -6,59 +6,44 @@
 
 ### External services
 
-| Service | Purpose |
-|---|---|
-| Meta WhatsApp Cloud API | Official inbox; inbound via native `webhooks/whatsapp`, outbound replies and approved templates via native channel (`ScanSolo::Messaging::NativeTemplateSender`) |
-| OpenAI (via RubyLLM) | Turn replies, feature `scansolo_agent_response` (models `gpt-4.1-mini` default, `gpt-4.1`, `gpt-5.1`, `gpt-5.2`); embeddings `scansolo_knowledge_embedding` = `text-embedding-3-small` (`config/llm.yml`) |
-| Make | Proposal generate/send scenario (`ScanSolo::Make::OutboundRequestService`); signed callbacks to `/webhooks/scan_solo/make`; credentials `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` in Rails encrypted credentials mounted from `SCANSOLO_CREDENTIALS_DIR` |
-| S3-compatible object storage | ActiveStorage (knowledge uploads); MinIO service in `docker-compose.scansolo.yaml` (`STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`) |
-| SMTP / inbound email | Upstream Chatwoot mailers and ActionMailbox (`SMTP_*`, `MAILER_INBOUND_EMAIL_DOMAIN`, `RAILS_INBOUND_EMAIL_SERVICE`) |
-| Error tracking / APM | Sentry (`sentry-rails`, `sentry-sidekiq`), plus optional Datadog, Elastic APM, New Relic, Scout, OpenTelemetry OTLP gems (upstream) |
-| Upstream channel APIs | Facebook/Instagram, Twitter, Slack, Line, Twilio, Telegram, Shopify, Stripe, Google OAuth, Dialogflow/Translate — upstream Chatwoot, not used by `ScanSolo::` code |
+| Service | Purpose | Wiring / config |
+|---|---|---|
+| Meta WhatsApp Cloud API | Lead conversations; cadence, manual-lead and proposal templates | Native `Channel::Whatsapp`, `Whatsapp::SendOnWhatsappService`; synced `message_templates` read by `TemplateAvailabilityGuard` |
+| Make | Proposal PDF generation (`proposal.generate`) and legacy `proposal.send` | `ScanSolo::Make::OutboundRequestService` (HTTParty); credentials `scan_solo.make.scenario_url`, `secret`, `inbound_signing_secret`; callback `POST /webhooks/scan_solo/make` |
+| LLM provider (OpenAI models via RubyLLM) | Agent replies (`scansolo_agent_response`: gpt-4.1-mini default) | `ScanSolo::AiAgent::ModelResolver`, `ScanSolo::AiTurn::ModelInvoker`, `Llm::FeatureRouter`, `config/llm.yml` |
+| Embedding provider | Knowledge chunk and query vectors (`text-embedding-3-small`) | `ScanSolo::Knowledge::EmbeddingService` → `RubyLLM.embed` |
+| Email (SMTP outbound, ActionMailbox inbound) | Quote request / correction / negotiation emails and commercial replies | Native email inbox (`quote_inbox_id`), `ConversationReplyMailer`; env `SMTP_*`, `RAILS_INBOUND_EMAIL_*`, `MAILER_INBOUND_EMAIL_DOMAIN` |
+| Object storage | Knowledge uploads and proposal PDFs | ActiveStorage (`ACTIVE_STORAGE_SERVICE`, `S3_BUCKET_NAME`, `STORAGE_*`, aws-sdk-s3 / azure-blob / google-cloud-storage) |
+| Error tracking / APM | Exception capture with `scansolo_correlation_id` tag | `ChatwootExceptionTracker` → Sentry (`SENTRY_DSN`); Gemfile also ships datadog, newrelic_rpm, scout_apm, elastic-apm, opentelemetry-* |
 
 ### Internal libraries
 
-No private gems or workspace packages (`Gemfile` has no `path:`/`git:` sources in use; `package.json` has no `workspace:`/`file:` deps). In-repo first-party modules ScanSolo depends on:
-
 | Package | Role |
 |---|---|
-| `lib/llm/` (`Llm::Config`, `Llm::FeatureRouter`, `Llm::Models`) | Provider/model resolution for `ScanSolo::AiAgent::ModelResolver`, `ModelInvoker`, `Knowledge::EmbeddingService` |
-| `lib/custom_exceptions/scan_solo.rb` | `ProposalIntegrationNotConfigured`, `CadenceDefinitionMissing`, `Forbidden` |
-| `app/dispatchers/async_dispatcher.rb` + `BaseListener` | Wisper seam registering `ScanSolo::ConversationListener` |
-| `app/jobs/mutex_application_job.rb` | Redis mutex base for `ScanSolo::AiTurnJob` |
-| `Messages::MessageBuilder` | Native message/private-note creation (`PrivateNoteAction`, `HandoffService`) |
-| `ChatwootExceptionTracker` | Exception reporting with `scansolo_correlation_id` tag |
-| `rubocop/` | Custom cops: `UseFromEmail`, `CustomCopLocation`, `AttachmentDownload`, `Style/OneClassPerFile` |
-
-### Key runtime gems used by ScanSolo
-
-| Gem | Version | Use in ScanSolo |
-|---|---|---|
-| rails | 7.2.3.1 | Framework |
-| sidekiq / sidekiq-cron | ~> 7.3.10 / >= 2.4.0 | 4 ScanSolo jobs, 2 cron entries |
-| pg / pgvector / neighbor | unpinned | Storage, `vector(1536)` embeddings, cosine search |
-| ruby_llm / ruby_llm-schema | >= 1.14.1 | Model calls with structured output schema |
-| json_schemer | unpinned | Action param validation (`Actions::Executor`), Make callback schema (`CallbackVerifier`) |
-| pundit | unpinned | `app/policies/scan_solo/*` |
-| wisper | 2.0.0 | Event bus to `ConversationListener` |
-| rack-attack | >= 6.7.0 | 4 ScanSolo throttles (`RATE_LIMIT_SCANSOLO_*`) |
-| httparty | 0.24.0 (transitive, `Gemfile.lock`) | Make outbound POST |
-| jbuilder | unpinned | ScanSolo JSON views |
-| devise_token_auth | >= 1.2.3 | API auth |
-| pinia / camelcase-keys / axios | ^3.0.4 / ^9.1.3 / ^1.15.0 | ScanSolo dashboard stores and API clients |
+| `lib/llm` (`Llm::Config`, `Llm::FeatureRouter`, `Llm::Models`) | First-party LLM routing; ScanSolo resolves models only through it |
+| `lib/custom_exceptions/scan_solo.rb` | ScanSolo exception classes (`ProposalIntegrationNotConfigured`, `CadenceDefinitionMissing`, `Forbidden`, `ManualLeadRejected`, `QuoteInboxMisconfigured`, `DeliveryInsideTransaction`, `NegotiationNotificationFailed`, `QuoteRequestResendRejected`, `QuoteReplyRejected`) |
+| `MutexApplicationJob` / `Redis::LockManager` | Per-conversation AI turn lock |
+| `BaseListener` + `AsyncDispatcher` | Native event bus that `ScanSolo::ConversationListener` subscribes to |
+| `Messages::MessageBuilder`, `ConversationBuilder`, `ContactInboxBuilder` | Native builders reused for private notes and manual-lead conversations |
+| `rubocop/` custom cops | `OneClassPerFile`, `CustomCopLocation`, `AttachmentDownload`, `UseFromEmail` |
+| `enterprise/` overlay | Chatwoot Enterprise code; ScanSolo services state they do not depend on it (`EmbeddingService`, `ModelResolver`) |
 
 ### Shared infrastructure
 
 | Component | Used for | Config |
 |---|---|---|
-| PostgreSQL + pgvector | All ScanSolo tables, vector search | `config/database.yml`, `POSTGRES_*` |
-| Redis | Sidekiq, sidekiq-cron, turn mutex, ActionCable | `REDIS_URL`, `REDIS_PASSWORD`, `REDIS_SENTINELS`, `config/cable.yml` |
-| Sidekiq queues | `medium` (AI turn), `low` (ingestion), `scheduled_jobs` (cadence, stale sweeper) | `config/sidekiq.yml`, `config/schedule.yml` |
-| Logging | ScanSolo log redaction wrapper (`config/initializers/scansolo_log_redaction.rb` → `PromptRedactor`); lograge | `LOG_LEVEL`, `RAILS_LOG_TO_STDOUT` |
-| Deployment | Docker Compose (`docker-compose.production.yaml` + `docker-compose.scansolo.yaml`: rails, sidekiq, postgres, redis, minio, backup); systemd units in `deployment/` | `SCANSOLO_IMAGE_TAG`, `SCANSOLO_DOMAIN` |
+| PostgreSQL + pgvector | All `scan_solo_*` tables, `vector(1536)` embeddings, advisory locks | `config/database.yml`, `POSTGRES_*` |
+| Redis | Sidekiq backend, sidekiq-cron, AI turn mutex, rack-attack store (`velma` namespace) | `config/initializers/01_redis.rb`, `REDIS_URL`, `REDIS_SENTINELS` |
+| Sidekiq 7.3.10 | Queues `medium` (AI turn, quote, proposal delivery), `low` (knowledge ingestion), `scheduled_jobs` (cron) | `config/sidekiq.yml`, `SIDEKIQ_CONCURRENCY` |
+| sidekiq-cron 2.4.0 | `scan_solo_cadence_due_attempt_job`, `scan_solo_stale_turn_sweeper_job` every 5 min | `config/schedule.yml` |
+| rack-attack | ScanSolo throttles | `RATE_LIMIT_SCANSOLO_KNOWLEDGE_WRITES` (20), `RATE_LIMIT_SCANSOLO_RETRIEVAL_TESTS` (30), `RATE_LIMIT_SCANSOLO_PUBLISH` (10), `RATE_LIMIT_SCANSOLO_MAKE_CALLBACK` (60) per minute |
+| Log redaction | Secret-shaped tokens → `[REDACTED]` in every log line | `config/initializers/scansolo_log_redaction.rb` |
+| Rails encrypted credentials | Make URLs/secrets (server-side only) | `config/credentials.yml.enc`; `docker-compose.scansolo.yaml` mounts `SCANSOLO_CREDENTIALS_DIR` |
+| Docker Compose production overlay | Healthchecks, restart, log rotation | `docker-compose.production.yaml` + `docker-compose.scansolo.yaml` (`SCANSOLO_DOMAIN`, `SCANSOLO_IMAGE_TAG`) |
+| Operational check | Pending migrations, cadence definitions, LLM key, inbox conflicts, cron, Make integration | `ScanSolo::StatusReport` via `GET .../scan_solo/status` and `rake scansolo:smoke[account_id]` |
 
 ## Related documents
 
-- [`tech_stack.md`](tech_stack.md) — language/framework versions and test tooling
-- [`architecture.md`](architecture.md) — where each integration is wired
-- [`api_contracts.md`](api_contracts.md) — Make and dashboard contracts
+- [`tech_stack.md`](tech_stack.md) — versions of frameworks and gems
+- [`architecture.md`](architecture.md) — where each integration is called
+- [`api_contracts.md`](api_contracts.md) — Make request/callback formats

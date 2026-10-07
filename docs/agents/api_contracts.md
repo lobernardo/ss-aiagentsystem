@@ -4,112 +4,161 @@
 
 ## AS IS — Current state
 
-### Scope and auth
+### Scope
 
-- Upstream Chatwoot REST/webhook API: `config/routes.rb`, documented in `swagger/swagger.json` (built by `rake swagger:build`). `swagger.json` covers only the `scansolo_enabled` account attribute, not the ScanSolo endpoints below.
-- ScanSolo account API prefix: `/api/v1/accounts/:account_id/scan_solo` (`namespace :scan_solo`, `config/routes.rb`).
-- Auth: Devise token auth (`access-token`/`client`/`uid` headers) or `api_access_token` header (`Api::BaseController`).
-- Gate order (`Api::V1::Accounts::ScanSolo::BaseController`): `scansolo_enabled` false → 404 before auth; Pundit denial → 403 `{"error":"forbidden"}`; `ActiveRecord::RecordInvalid` → 422; `ProposalIntegrationNotConfigured` → 422 `{"error":"proposal_integration_not_configured"}`.
-- Records are scoped to `Current.account`; other-account ids → 404.
-- Responses: jbuilder under `app/views/api/v1/accounts/scan_solo/`.
-- Centralized operation contracts (CT-01..CT-12):
-  - HTTP (CT-01, CT-02, CT-08, CT-10, CT-11 disabled, CT-12): [`.spec/features/scansolo-operacao-centralizada/openapi.yaml`](../../.spec/features/scansolo-operacao-centralizada/openapi.yaml)
-  - Async (CT-03 quote e-mails, CT-04 reply block, CT-05/CT-06 Make, CT-07 negotiation notification, CT-09 templates, native message events): [`.spec/features/scansolo-operacao-centralizada/asyncapi.yaml`](../../.spec/features/scansolo-operacao-centralizada/asyncapi.yaml)
+- ScanSolo endpoints: `config/routes.rb` `namespace :scan_solo` (line 462) under `/api/v1/accounts/:account_id/scan_solo`, plus `POST /webhooks/scan_solo/make` (line 756).
+- Native Chatwoot API v1/v2, public, platform and webhooks stay unchanged. They are documented in `swagger/swagger.json` and `swagger/paths/`.
+- Frontend clients: `app/javascript/dashboard/api/scansolo*.js` (12 `ApiClient` subclasses, `accountScoped: true`).
+
+### Common behavior
+
+| Concern | Behavior | Source |
+|---|---|---|
+| Auth | Chatwoot user session (devise_token_auth headers; specs use `user.create_new_auth_token`) | `Api::V1::Accounts::BaseController` |
+| Account gate | `scansolo_enabled` false → 404, checked before auth | `BaseController#ensure_scansolo_enabled` (`prepend_before_action`) |
+| Authorization | Pundit `ScanSolo::*Policy`; denied → `403 {"error":"forbidden"}` | `BaseController#authorize` |
+| Not found / other account | 404 (`Current.account` scoping) | controllers |
+| Domain rejection | `ActiveRecord::RecordInvalid` → 422 (global handler) | services |
+| Proposal integration missing | `422 {"error":"proposal_integration_not_configured"}` | `BaseController` rescue |
+| Rate limits (rack-attack) | knowledge writes 20/min/account, retrieval tests 30/min/account, publish 10/min/account, Make callback 60/min/IP; 429 | `config/initializers/rack_attack.rb` (`RATE_LIMIT_SCANSOLO_*`) |
 
 ### HTTP endpoints
 
-| Family | Method | Path (under prefix) | Authz (Pundit `app/policies/scan_solo/`) |
+Paths are relative to `/api/v1/accounts/:account_id/scan_solo`. "Agent" means any account user, and "Admin" means an account administrator.
+
+| Method | Path | Policy | Response (jbuilder) |
 |---|---|---|---|
-| Pipeline | GET | `/pipeline_opportunities` | `PipelineOpportunityPolicy` |
-| Pipeline | POST | `/pipeline_opportunities` ("Novo lead", CT-01) | `PipelineOpportunityPolicy#create?` (any account user) |
-| Pipeline | GET / PATCH | `/pipeline_opportunities/:id` (PATCH permits `owner_id`) | `PipelineOpportunityPolicy` |
-| Pipeline | POST | `/pipeline_opportunities/:id/stage_transitions` | `PipelineOpportunityPolicy` |
-| Quote request | POST | `/pipeline_opportunities/:id/quote_request/resend` (CT-12) | `QuoteRequestPolicy#resend?` (admin) |
-| Quote replies | GET | `/quote_replies?status=pending` (CT-08) | `QuoteReplyPolicy#index?` (admin or quote inbox member) |
-| Quote replies | POST | `/quote_replies/:id/link`, `/quote_replies/:id/discard` (CT-08) | `QuoteReplyPolicy#link?/discard?` |
-| Proposals | POST | `/pipeline_opportunities/:pipeline_opportunity_id/proposals/generate` | `ProposalPolicy#generate?` |
-| Proposals | GET | `/proposals`, `/proposals/:id` | `ProposalPolicy` |
-| Proposals | POST | `/proposals/:id/retry` (CT-10) | `ProposalPolicy#retry?` |
-| Proposals (legacy, disabled — CT-11) | POST | `/proposals/:id/approve`, `/proposals/:id/send` — routes still exist; no screen or flow calls them (RF-55 Etapa 1) | `ProposalPolicy#approve?/send?` |
-| Agent config | GET | `/ai_agent_config` | `AiAgentConfigPolicy` |
-| Agent config | PUT | `/ai_agent_config/draft` | `AiAgentConfigPolicy` |
-| Agent config | POST | `/ai_agent_config/publish` | `AiAgentConfigPolicy#publish?` |
-| Knowledge | GET / POST | `/knowledge/sources` | `KnowledgeSourcePolicy` |
-| Knowledge | PATCH / DELETE | `/knowledge/sources/:id` | `KnowledgeSourcePolicy` |
-| Knowledge | POST | `/knowledge/sources/:id/reindex` | `KnowledgeSourcePolicy#reindex?` |
-| Knowledge | POST | `/knowledge/retrieval_tests` | `KnowledgeSourcePolicy#retrieval_tests?` |
-| AI turns | GET | `/ai_turns` (latest 50), `/ai_turns/:correlation_id` | `AiTurnPolicy` |
-| Cadence | GET / PUT | `/cadence_templates` (PUT admin only) | `TemplateMappingPolicy` |
-| Cadence | GET / POST | `/cadence_enrollments` (POST admin only) | `CadenceEnrollmentPolicy` |
-| Cadence | POST | `/cadence_enrollments/:id/pause`, `/resume`, `/cancel` | `CadenceEnrollmentPolicy` |
-| Opt-out | GET / DELETE | `/contacts/:contact_id/opt_out` (DELETE admin only) | `ContactOptOutPolicy` |
-| Handoff | GET | `/conversations/:conversation_id/control_state` | — |
-| Handoff | POST | `/conversations/:conversation_id/handoff`, `/return_to_ai` (assigned agent or admin) | `HandoffPolicy#takeover?/return_to_ai?` |
-| Executions | GET | `/executions` | `ExecutionPolicy` |
-| Status | GET | `/status` (admin) | `StatusPolicy` |
-| Make callback | POST | `/webhooks/scan_solo/make` (no user auth; HMAC) | `ScanSolo::Make::CallbackVerifier` |
-
-Rate limits (`config/initializers/rack_attack.rb`, per minute, env-overridable):
-
-| Throttle | Scope | Default |
-|---|---|---|
-| `webhooks/scan_solo/make` | per IP | 60 (`RATE_LIMIT_SCANSOLO_MAKE_CALLBACK`) |
-| `scan_solo/knowledge_writes` | per account: POST sources, PATCH/PUT source, POST reindex | 20 (`RATE_LIMIT_SCANSOLO_KNOWLEDGE_WRITES`) |
-| `scan_solo/retrieval_tests` | per account | 30 (`RATE_LIMIT_SCANSOLO_RETRIEVAL_TESTS`) |
-| `scan_solo/publish` | per account | 10 (`RATE_LIMIT_SCANSOLO_PUBLISH`) |
+| GET | `/pipeline_opportunities` | Agent | Array of opportunity cards |
+| POST | `/pipeline_opportunities` | Agent | 201 detail + `contact_created` |
+| GET | `/pipeline_opportunities/:id` | Agent | detail + `lead_state` + `quote_request_resend_available` |
+| PATCH | `/pipeline_opportunities/:id` | Agent | detail (`owner_id` only) |
+| POST | `/pipeline_opportunities/:id/stage_transitions` | Agent | detail |
+| POST | `/pipeline_opportunities/:id/quote_request/resend` | Admin | `{quote_request_id, status, correlation_id, recipient, resent_at}` |
+| POST | `/pipeline_opportunities/:pipeline_opportunity_id/proposals/generate` | Agent | proposal version |
+| GET | `/proposals` | Agent | Array of proposals with versions |
+| GET | `/proposals/:id` | Agent | proposal |
+| POST | `/proposals/:id/approve` | Admin | proposal version |
+| POST | `/proposals/:id/send` | Admin or opportunity owner | proposal version |
+| POST | `/proposals/:id/retry` | Admin | proposal version |
+| GET | `/quote_replies?status=pending` | Admin or quote-inbox member | Array of pending replies |
+| POST | `/quote_replies/:id/link` | Admin or quote-inbox member | `{quote_request_id, status}` |
+| POST | `/quote_replies/:id/discard` | Admin or quote-inbox member | `{id, status}` |
+| GET | `/ai_agent_config` | Agent | `{draft, published, available_models}` |
+| PUT | `/ai_agent_config/draft` | Admin | `{draft, ...}` |
+| POST | `/ai_agent_config/publish` | Admin | published config |
+| GET | `/knowledge/sources` | Agent | Array of sources |
+| POST | `/knowledge/sources` | Admin | source (`index_status: pending`) |
+| PATCH/PUT | `/knowledge/sources/:id` | Admin | source |
+| DELETE | `/knowledge/sources/:id` | Admin | 204 |
+| POST | `/knowledge/sources/:id/reindex` | Admin | source |
+| POST | `/knowledge/retrieval_tests` | Admin | `{results[], failure_reason}` |
+| GET | `/ai_turns` | Agent | Latest 50 turns |
+| GET | `/ai_turns/:correlation_id` | Agent | turn |
+| GET | `/cadence_templates` | Agent | Array of template rows |
+| PUT | `/cadence_templates` | Admin | template row |
+| GET | `/cadence_enrollments` | Agent | Active/paused enrollments |
+| POST | `/cadence_enrollments` | Admin | enrollment |
+| POST | `/cadence_enrollments/:id/pause` \| `resume` \| `cancel` | Agent | enrollment |
+| GET | `/contacts/:contact_id/opt_out` | Agent | `{contact_id, opted_out}` |
+| DELETE | `/contacts/:contact_id/opt_out` | Admin | `{contact_id, opted_out}` |
+| GET | `/conversations/:conversation_id/control_state` | (no authorize call) | `{conversation_id, ai_control_state, updated_at}` |
+| POST | `/conversations/:conversation_id/handoff` | Assigned agent or Admin | control state |
+| POST | `/conversations/:conversation_id/return_to_ai` | Assigned agent or Admin | control state |
+| GET | `/executions` | Agent | Execuções feed |
+| GET | `/status` | Admin | operational status |
 
 ### Pipeline opportunities
 
-- Request `POST .../stage_transitions` (from `spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_spec.rb`):
+Request: create a manual lead (`spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_create_spec.rb`):
+
+```json
+{
+  "name": "Ana Souza",
+  "phone_number": "+5511987654321",
+  "email": "ana@example.com",
+  "company": "Solar Ltda",
+  "owner_id": 12,
+  "inbox_id": 3
+}
+```
+
+Request: stage transition (`pipeline_opportunities_spec.rb`):
 
 ```json
 { "target_stage": "em_contato" }
 ```
 
-- Response (`_pipeline_opportunity.json.jbuilder`): `id, account_id, contact_id, contact_name, conversation_id, owner_id, stage, last_customer_interaction_at, next_follow_up_at, created_at, updated_at, stage_history[{id, from_stage, to_stage, actor_type, actor_id, created_at}]`.
-- Errors: unknown stage (`"inventado"`) → 422; from `ganho`/`perdido` → 422; same `(target_stage, actor)` within 5s → 200 replay, no new history row.
-- `lead_state` (CT-01, additive): `GET`/`PATCH .../pipeline_opportunities/:id` and `POST .../stage_transitions` (replay included) also return `lead_state` (`_lead_state.json.jbuilder`, from `ScanSolo::LeadState::Projection`): `intent, qualification{status, completed_at}, next_action{value, recorded_at, source_message_id}|null, authorized_actions[{action, source_message_id, recorded_at}], blocks{identificacao, servico, local, escopo, execucao, comercial}[{key, label, value, status, classification, updated_at, source_message_id, source_attachment_id}], status{stage, confirmed_fields, missing_fields, next_action, owner_id, last_customer_interaction_at, next_follow_up_at}, history[]`. `GET .../pipeline_opportunities` (index) has no `lead_state`. Full schema: [`.spec/features/scansolo-agent-lead-state/openapi.yaml`](../../.spec/features/scansolo-agent-lead-state/openapi.yaml).
-- CT-02 (index and show, additive): `lead_source` (`website|manual|null`), `company`, `service`, `city_uf` (lead state values, null when `faltante`), `ai_control_state`, `quote_request_status` (`awaiting_reply|correction_requested|replied|null`), `proposal_status` (current version or null). Show also: `quote_request{id, status, sent_at, replied_at, email_conversation_id}|null`, `proposal{version_number, proposal_number, status, value, currency, valid_until, document_url, failure_reason}|null`, `initial_template_failure{reason, status ∈ blocked|failed, occurred_at}|null`, `quote_request_resend_available` (RF-56 would accept).
-- CT-01 `POST .../pipeline_opportunities` body `{name, phone_number (E.164), email?, company?, owner_id?, inbox_id?}` (`inbox_id` optional only with exactly 1 allowlisted WhatsApp inbox) → 201 show JSON + `contact_created`. 422 `{error}` with `invalid_phone, missing_name, invalid_email, invalid_owner, invalid_inbox, contact_opted_out, contact_conflict`, or `{error: "opportunity_exists", opportunity_id}`; 0 records on any 422.
-- CT-12 `POST .../pipeline_opportunities/:id/quote_request/resend` (no body) → 200 `{quote_request_id, status, correlation_id, recipient, resent_at}`; 422 `{error}` with `quote_request_closed, quote_request_not_eligible, quote_inbox_misconfigured`; non-admin → 403.
+Card fields (`_pipeline_opportunity.json.jbuilder`): `id, account_id, contact_id, contact_name, conversation_id, owner_id, stage, last_customer_interaction_at, next_follow_up_at, created_at, updated_at, stage_history[{id, from_stage, to_stage, actor_type, actor_id, created_at}], lead_source, company, service, city_uf, ai_control_state, quote_request_status, proposal_status`.
 
-### Quote replies (CT-08)
+Detail adds (`_detail.json.jbuilder`):
 
-- `GET .../quote_replies?status=pending` → `[{id, conversation_id, message_id, sender_email, subject, received_at, excerpt (200 chars), kind ∈ unmatched|late_reply, quote_request_id|null}]`.
-- `POST .../quote_replies/:id/link` body `{quote_request_id}` (only `unmatched`, open request) → 200 with the resulting request status; 422 `already_linked` / `quote_request_closed`.
-- `POST .../quote_replies/:id/discard` (only `late_reply`) → 200; 422 `already_discarded`. Both audited with the actor.
+- `lead_state{intent, qualification, next_action, authorized_actions, blocks, status, history}`
+- `quote_request{id, status, sent_at, replied_at, email_conversation_id}`
+- `proposal{version_number, proposal_number, status, value, currency, valid_until, document_url, failure_reason}`
+- `initial_template_failure{reason, status, occurred_at}`
+
+Errors:
+
+| Case | Status | Body |
+|---|---|---|
+| Create boundary | 422 | `{"error":"missing_name"\|"invalid_phone"\|"invalid_email"\|"invalid_owner"\|"invalid_inbox"}` |
+| Create DB rule | 422 | `{"error":"contact_opted_out"\|"contact_conflict"}` or `{"error":"opportunity_exists","opportunity_id":N}` |
+| Unknown / terminal / unauthorized `negociacao` | 422 | RecordInvalid errors |
+| Resend refused | 422 | `{"error":"quote_request_closed"\|"quote_request_not_eligible"\|"quote_inbox_misconfigured"}` |
+
+```json
+{ "error": "invalid_phone" }
+```
 
 ### Proposals
 
-- `generate` requires `correlation_id` and an opportunity whose quote request is `replied` without a version (RF-25); otherwise 422 and no version. `retry` requires `proposal_version_id` (current version) + boolean `confirm_reprocess`; a delivery failure (CT-10) redelivers the stored PDF on WhatsApp without Make.
-- Request `POST .../proposals/:id/retry` (from `proposals_spec.rb`):
+Request: generate (`proposals_spec.rb`). `correlation_id` is required:
 
 ```json
-{ "proposal_version_id": 12, "confirm_reprocess": false }
+{ "correlation_id": "3f0c9a52-6f1e-4c8e-9a43-1d2b7c5e8f10" }
 ```
 
-- Response (`_proposal_version.json.jbuilder`): `id, proposal_id, version_number, status, is_current, value, currency, artifact_url, failure_reason, correlation_id, approved_at, approval_required, sent_at, retry_count, dead_letter, proposal_number, valid_until, document_url` (ActiveStorage PDF served by Chatwoot); the proposal adds `quote_request_status`. `approved_at`/`approval_required` and status `approved` are returned only for historical versions (RNF-10).
-- Legacy (CT-11, disabled, not removed): `approve`/`send` still accept `proposal_version_id` + `correlation_id`, but the UI no longer shows them and the new flow never calls them nor emits `proposal.send`; removal needs recorded evidence of no use (RF-55 Etapa 2).
-- Errors: integration unconfigured in production → 422 `proposal_integration_not_configured`; non-boolean `confirm_reprocess` → 422 `{"error":"confirm_reprocess must be a boolean"}`; unsafe retry / dead letter without confirmation → 422 `{"error":"<message>"}`.
+Request: approve / send (`proposal_version_id` and `correlation_id` required):
+
+```json
+{ "proposal_version_id": 41, "correlation_id": "8b1d2e44-0a9c-4f7b-b6d3-52c9e1f0a7d6" }
+```
+
+Request: retry (`confirm_reprocess` must be a JSON boolean):
+
+```json
+{ "proposal_version_id": 41, "confirm_reprocess": false }
+```
+
+- Version fields (`_proposal_version.json.jbuilder`): `id, proposal_id, version_number, status, is_current, value, currency, artifact_url, failure_reason, correlation_id, approved_at, approval_required, sent_at, retry_count, dead_letter, proposal_number, valid_until, document_url`.
+- Proposal fields: `id, opportunity_id, owner_id, contact_name, integration_state ("configured"|"blocked"), current_version_id, versions[], quote_request_status`.
+
+| Case | Status | Body |
+|---|---|---|
+| No validated quote reply | 422 | contains `sem resposta de orçamento validada` |
+| Required fields incomplete | 422 | `campos obrigatórios da proposta incompletos: ...` |
+| Non-current version / not generated / approval missing | 422 | RecordInvalid message |
+| Unsafe retry / dead letter without confirm | 422 | `{"error":"<message>"}` |
+| `confirm_reprocess` not boolean | 422 | `{"error":"confirm_reprocess must be a boolean"}` |
+
+### Quote replies
+
+```json
+{ "quote_request_id": 77 }
+```
+
+- `index` requires `status=pending`, else `422 {"error":"invalid_status"}`.
+- `link` requires an integer `quote_request_id`, else `422 {"error":"invalid_quote_request_id"}`. Refusals return `422 {"error":"already_linked"|"quote_request_closed"|"already_discarded"|"not_discardable"}`.
+- Item fields: `id, conversation_id, message_id, sender_email, subject, received_at, excerpt (200 chars), kind, quote_request_id`.
 
 ### AI agent config
 
-- `GET` → `{draft: {...}, published: {...} | null, available_models: [...]}`.
-- `PUT draft` permits: `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours, require_proposal_approval (legacy, no longer shown), quote_inbox_id, commercial_user_id, quote_recipient_email, allowed_inbox_ids[], opt_out_keywords[], qualification_playbook[], required_qualification_fields[], restricted_information[], forbidden_subjects[]`.
-- `POST publish` copies the draft to a new published row (new `id` each publish); draft unchanged.
-- Request (from `ai_agent_configs_spec.rb`):
+Request: draft update (`ai_agent_configs_spec.rb`). All keys are optional:
 
 ```json
 {
-  "name": "Agente Comercial",
+  "name": "Agente v1",
   "enabled": true,
-  "model_provider": "openai",
-  "model_selection": "gpt-4.1",
-  "role": "SDR virtual",
-  "objective": "Qualificar leads",
-  "persona": "Consultivo",
-  "tone": "Profissional",
-  "instructions": "Responda em pt-BR",
   "service_rules": "Nunca prometa desconto",
   "qualification_playbook": ["orcamento", "prazo"],
   "required_qualification_fields": ["orcamento"],
@@ -121,13 +170,12 @@ Rate limits (`config/initializers/rack_attack.rb`, per minute, env-overridable):
 }
 ```
 
-- Errors (422): `model_selection` not in `config/llm.yml` `scansolo_agent_response.models`; `allowed_inbox_ids` not integers of this account; `opt_out_keywords` not array of strings; `quote_inbox_id` not an e-mail inbox of the account or in `allowed_inbox_ids`; `commercial_user_id` outside the account; `quote_recipient_email` blank or malformed (RF-54).
+- Permitted keys: `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours, require_proposal_approval, quote_inbox_id, commercial_user_id, quote_recipient_email, allowed_inbox_ids[], opt_out_keywords[], qualification_playbook[], required_qualification_fields[], restricted_information[], forbidden_subjects[]`.
+- 422 per field: `model_selection` not available, `allowed_inbox_ids` outside the account, `opt_out_keywords` not strings, `quote_inbox_id` not an email inbox or allowlisted, `commercial_user_id` outside the account, invalid `quote_recipient_email`.
 
 ### Knowledge
 
-- `POST sources` permits `source_type` (`document|faq|company_info`), `title`, `content`, `origin`, multipart `file`; `PATCH` permits `enabled, title, content, origin`.
-- Create / content change / reindex respond `index_status: "pending"` and enqueue `ScanSolo::KnowledgeIngestionJob`; toggling `enabled` does not reindex. DELETE → 204.
-- Request (from `knowledge/sources_spec.rb`):
+Request: create source (`knowledge/sources_spec.rb`):
 
 ```json
 {
@@ -138,13 +186,20 @@ Rate limits (`config/initializers/rack_attack.rb`, per minute, env-overridable):
 }
 ```
 
-- Source response: `id, source_type, title, content, origin, enabled, added_by_id, chunk_count, file_attached, index_status, index_error, indexed_at, created_at, updated_at`.
-- Retrieval test: `{query, top_k?}`; `query` blank or `top_k` outside 1..20 → 422 `{"errors":[...]}`. Response `{results: [{chunk_id, source_id, source_type, content_snippet, similarity_score}], failure_reason}`.
+Request: retrieval test (`knowledge/retrieval_tests_spec.rb`):
+
+```json
+{ "query": "garantia", "top_k": 20 }
+```
+
+- Document upload: multipart `file` + `source_type: document`.
+- Source fields: `id, source_type, title, content, origin, enabled, added_by_id, chunk_count, file_attached, index_status, index_error, indexed_at, created_at, updated_at`.
+- Retrieval result: `results[{chunk_id, source_id, source_type, content_snippet, similarity_score}], failure_reason`.
+- 422 `{"errors":["query is required"]}` / `["top_k must be an integer between 1 and 20"]` (a string `"5"` is rejected).
 
 ### Cadence templates and enrollments
 
-- `PUT cadence_templates` body: `stage` ∈ `novo_lead em_contato em_qualificacao proposta_enviada`, `step` (1..attempt_count, or `null` only for `proposta_enviada`), `template_name`, `language`, `params[{source, value?}]` with `source` ∈ `contact_name contact_first_name agent_name stage_label static`. Invalid → 422 `{"error":"invalid_template_mapping","details":[...]}`. Audit `template_mapping.updated`.
-- Request (from `cadence_templates_spec.rb`):
+Request: upsert template mapping (`cadence_templates_spec.rb`):
 
 ```json
 {
@@ -156,31 +211,50 @@ Rate limits (`config/initializers/rack_attack.rb`, per minute, env-overridable):
 }
 ```
 
-- Row response: `stage, step, template_name, language, params, mapped, availability, block_reason, meta_status, last_synced_at`.
-- `POST cadence_enrollments` body `{opportunity_id, cadence_definition_id}`; agent → 403. Enrollment response: `id, opportunity_id, cadence_definition_id, status, current_step, next_attempt_at, contact_name, cadence_stage, cadence_version`.
+- Row fields: `stage, step, template_name, language, params, mapped, availability, block_reason, meta_status, last_synced_at`.
+- 422 `{"error":"invalid_template_mapping","details":[...]}`.
+- Manual enroll body: `{"opportunity_id": N, "cadence_definition_id": N}`.
+- Enrollment fields: `id, opportunity_id, cadence_definition_id, status, current_step, next_attempt_at, contact_name, cadence_stage, cadence_version`.
 
-### Handoff and opt-out
-
-- Request `POST .../conversations/:id/handoff` (from `conversations/handoff_controller_spec.rb`):
+### Handoff
 
 ```json
 { "reason": "Cliente pediu para falar com humano" }
 ```
 
-- Response: `{conversation_id, ai_control_state, updated_at}`; repeat call → same state, no new audit/note. Non-assigned agent → 403.
-- Opt-out response: `{contact_id, opted_out}`.
+`ai_control_state` ∈ `ai_active, handoff_requested, awaiting_human, human_active, paused, closed`. Both POSTs are idempotent.
 
-### Make callback
+### Read-only feeds
 
-- `POST /webhooks/scan_solo/make`, header `X-Make-Signature` = hex HMAC-SHA256 of raw body with credential `scan_solo.make.inbound_signing_secret`.
-- Responses: 401 invalid/missing signature (nothing persisted); 422 `malformed_json` / `schema_invalid` / `unmatched_request`; 200 applied or redelivery of applied `correlation_id`.
-- `result` is one of: generate success `{proposal_version_id, artifact_url, total_value, currency(3), valid_until}` (`artifact_url` = PDF download source for Rails; `valid_until` persisted); send success `{proposal_version_id, sent_at, transport_message_id}` (historical `proposal.send` callbacks only — the new flow emits none); failure `{proposal_version_id, error_code, error_message, retryable}`.
-- Example (from `spec/requests/webhooks/scan_solo/make_spec.rb`):
+- `GET /ai_turns`: `id, correlation_id, conversation_id, message_id, response_message_id, invocation_status, model_provider, model_reference, input_tokens, output_tokens, cost_estimate, latency_ms, failure_reason, guardrail_outcome, knowledge_evidence, action_evidence, response_delivery_status, context_snapshot, created_at`.
+- `GET /executions` sections:
+  - `cadence_evidence[]` (enrollment + `attempts[]`)
+  - `template_availability[]`
+  - `make_errors{dead_letters[], callback_errors[]}`
+  - `handoff_events[]`
+  - `recent_errors[]` (≤100)
+  - `audit_events[]`
+- `GET /status`: `git_sha, pending_migrations, cadence_definitions, llm_key_configured, agent, inbox_conflicts, cadence_cron_registered, proposal_integration, templates_last_synced_at`. Credentials appear only as booleans.
+
+### Make callback webhook
+
+`POST /webhooks/scan_solo/make` (`Webhooks::ScanSolo::MakeController < ActionController::API`, no user auth):
+
+| Step | Rule | Outcome |
+|---|---|---|
+| 1 | Header `X-Make-Signature` = `HMAC-SHA256(credentials scan_solo.make.inbound_signing_secret, raw body)` hex | invalid → 401, nothing persisted |
+| 2 | JSON parse | fail → 422, `MakeCallback` `malformed_json` |
+| 3 | JSON schema (`CallbackVerifier::SCHEMA`) | fail → 422 `schema_invalid` |
+| 4 | `MakeRequest` with same `correlation_id` + `action` | none → 422 `unmatched_request` |
+| 5 | Already applied correlation id | 200, no change |
+| 6 | Apply in 1 transaction | 200 |
+
+Success callback (`spec/requests/webhooks/scan_solo/make_spec.rb`):
 
 ```json
 {
-  "correlation_id": "0b8e6c3a-2f4d-4a51-9a7e-1d2c3b4a5f60",
-  "idempotency_key": "7c9d1e2f-3a4b-4c5d-8e6f-0a1b2c3d4e5f",
+  "correlation_id": "c1a5f7e0-2b3d-4c8e-9f10-6a7b8c9d0e1f",
+  "idempotency_key": "d2b6e8f1-3c4e-4d9f-8a21-7b8c9d0e1f2a",
   "action": "proposal.generate",
   "status": "success",
   "result": {
@@ -188,37 +262,77 @@ Rate limits (`config/initializers/rack_attack.rb`, per minute, env-overridable):
     "artifact_url": "https://make.example/proposals/7.pdf",
     "total_value": 4321.5,
     "currency": "BRL",
-    "valid_until": "2026-10-06T12:00:00Z"
+    "valid_until": "2026-11-04T00:00:00Z"
   }
 }
 ```
 
-### Outbound Make request
+Failure callback (`retryable: true` is stored as `failure_reason: provider_unavailable`):
 
-- `ScanSolo::Make::OutboundRequestService`: `POST <scenario_url>`, headers `Authorization: Bearer <secret>`, `X-Idempotency-Key`, `Content-Type: application/json`; timeout 10s.
-- Body built by `ScanSolo::Proposal::MakeProvider` (CT-05): `account_id, opportunity_id, proposal_version_id, proposal_number, qualification{present MAKE_KEYS only}, commercial{total_value, total_value_in_words, currency: BRL, schedule, scope, payment_terms, notes?, quote_request_id}, requested_by_user_id, requested_at, correlation_id, idempotency_key, action` (`action` = `proposal.generate`; `commercial` absent only for legacy versions without a quote request).
+```json
+{
+  "correlation_id": "c1a5f7e0-2b3d-4c8e-9f10-6a7b8c9d0e1f",
+  "idempotency_key": "d2b6e8f1-3c4e-4d9f-8a21-7b8c9d0e1f2a",
+  "action": "proposal.generate",
+  "status": "failure",
+  "result": { "proposal_version_id": 7, "error_code": "provider_timeout", "error_message": "timed out", "retryable": true }
+}
+```
+
+`proposal.send` result shape: `{proposal_version_id, sent_at, transport_message_id}`.
 
 ### Message formats
 
-- Sidekiq queues (`config/sidekiq.yml`): `critical, high, medium, default, mailers, action_mailbox_routing, low, scheduled_jobs, deferred, purgable, housekeeping, async_database_migration, bulk_reindex_low, active_storage_*`.
+Outbound Make request (`ScanSolo::Proposal::MakeProvider` → `ScanSolo::Make::OutboundRequestService`):
 
-| Job | Queue | Args | Retry / DLQ |
+- `POST credentials scan_solo.make.scenario_url`, headers `Authorization: Bearer <scan_solo.make.secret>`, `X-Idempotency-Key`, `Content-Type: application/json`, timeout 10 s.
+- The body merges `correlation_id`, `idempotency_key` (= correlation id) and `action` (`proposal.generate` | `proposal.send`).
+- `qualification` holds the canonical present-only keys from `FieldResolver#make_qualification`.
+- `commercial` values come from `spec/services/scan_solo/proposal/make_provider_spec.rb`:
+
+```json
+{
+  "account_id": 1,
+  "opportunity_id": 10,
+  "proposal_version_id": 41,
+  "proposal_number": "SS-2026-000041",
+  "qualification": { "nome": "Leonardo", "telefone": "+5521999990000" },
+  "requested_by_user_id": null,
+  "requested_at": "2026-10-01T12:00:00-03:00",
+  "commercial": {
+    "total_value": 12500.0,
+    "total_value_in_words": "doze mil e quinhentos reais",
+    "currency": "BRL",
+    "schedule": "30 dias",
+    "scope": "Sondagem SPT\n3 furos",
+    "payment_terms": "50% na assinatura",
+    "quote_request_id": 5
+  },
+  "correlation_id": "c1a5f7e0-2b3d-4c8e-9f10-6a7b8c9d0e1f",
+  "idempotency_key": "c1a5f7e0-2b3d-4c8e-9f10-6a7b8c9d0e1f",
+  "action": "proposal.generate"
+}
+```
+
+- Every request persists a `ScanSolo::MakeRequest` (`pending → sent | failed`, `completed` on success callback).
+- Retry/DLQ: there is no automatic retry. An administrator retries through `POST /proposals/:id/retry`. `retry_count >= 3` puts the request in the dead letter (`MakeRequest.dead_letter`), which then needs `confirm_reprocess: true`.
+
+Sidekiq jobs (`config/sidekiq.yml` queues):
+
+| Job | Queue | Args | Retry |
 |---|---|---|---|
-| `ScanSolo::AiTurnJob` | `medium` | `message_id`, `llm_provider:` (optional class name string) | `retry_on LockAcquisitionError`, wait 5s, attempts `ceil(180/5)+1`; failures recorded on `AiTurn` |
-| `ScanSolo::CadenceDueAttemptJob` | `scheduled_jobs` (cron `*/5 * * * *`) | none | Send errors → attempt `failed` + `external_error`; no job retry path in code |
-| `ScanSolo::StaleTurnSweeperJob` | `scheduled_jobs` (cron `*/5 * * * *`) | none | — |
-| `ScanSolo::KnowledgeIngestionJob` | `low` | `source_id` | Missing source → no-op; failure → `index_status: failed` |
-| `ScanSolo::QuoteRequestJob` | `medium` | `opportunity_id` | Idempotent (unique request per opportunity; notice guarded by `customer_notice_message_id`) |
-| `ScanSolo::QuoteReplyJob` | `medium` | `message_id` | Idempotent (unique `QuoteReply.message_id`, request lock) |
-| `ScanSolo::ProposalDeliveryJob` | `medium` | `proposal_version_id` | Idempotent (version claimed under lock) |
+| `ScanSolo::AiTurnJob` | `medium` | `message_id`, `llm_provider:` (String class name, specs only) | `retry_on LockAcquisitionError`, wait 5 s, attempts `ceil(180/5)+1` = 37 |
+| `ScanSolo::QuoteRequestJob` | `medium` | `opportunity_id` | Sidekiq default |
+| `ScanSolo::QuoteReplyJob` | `medium` | `message_id` | Sidekiq default; generation errors re-raised |
+| `ScanSolo::ProposalDeliveryJob` | `medium` | `proposal_version_id` | Sidekiq default |
+| `ScanSolo::KnowledgeIngestionJob` | `low` | `source_id` | Sidekiq default; failures recorded on source |
+| `ScanSolo::CadenceDueAttemptJob` | `scheduled_jobs` | — (cron `*/5 * * * *`) | per-attempt rescue → attempt `failed` |
+| `ScanSolo::StaleTurnSweeperJob` | `scheduled_jobs` | — (cron `*/5 * * * *`) | — |
 
-- Wisper events consumed by `ScanSolo::ConversationListener` (registered in `app/dispatchers/async_dispatcher.rb`): `message_created`, `message_updated` with `event.data[:message]`.
-- Message marker: `additional_attributes.scansolo_origin` ∈ `ai` (`AiTurn::ResponseSender`), `cadence`, `proposal`, `manual_lead`, `proposal_follow_up` (`Messaging::NativeTemplateSender`), `quote_notice` (`Quote::RequestService`) distinguishes ScanSolo-originated messages from human replies; only `cadence`/`proposal`/`manual_lead` trigger `DeliveryReconciler`.
-- E-mail thread marker: `conversation.additional_attributes.scansolo_thread` ∈ `quote_request`, `negotiation_notification` (quote inbox conversations, CT-03).
-- Make dead letter: `MakeRequest` `failed` with `retry_count >= 3` (`scope :dead_letter`), surfaced by `Make::DeadLetterQuery` and `/executions`.
+Message markers: `additional_attributes.scansolo_origin` ∈ `ai`, `cadence`, `proposal`, `manual_lead`, `proposal_follow_up`, `quote_notice` tags ScanSolo-created messages. The listener uses it to exclude them from implicit takeover and to route delivery reconciliation.
 
 ## Related documents
 
-- [`domain_rules.md`](domain_rules.md) — rules behind each endpoint
-- [`data_model.md`](data_model.md) — tables returned by these endpoints
-- [`architecture.md`](architecture.md) — request and job flows
+- [`domain_rules.md`](domain_rules.md) — rules behind each 422/403
+- [`data_model.md`](data_model.md) — persisted shapes returned by these endpoints
+- [`architecture.md`](architecture.md) — controller/service/job layering

@@ -9,7 +9,7 @@ RSpec.describe Captain::Tools::SimplePageCrawlService do
   end
 
   after do
-    WebMock.allow_net_connect!
+    WebMock.disable_net_connect!(allow_localhost: true)
   end
 
   describe '#page_title' do

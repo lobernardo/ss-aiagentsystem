@@ -3,6 +3,18 @@
 Versão 1.0 — 2026-10-01. Fonte do objetivo: `.spec/inputs/scansolo-objetivo-operacao-centralizada.md`.
 Substitui o fatiamento antigo (slices 2–4 citadas em `.spec/features/scansolo-agent-lead-state/.handoff/confirmed-input.md`).
 
+## Atualização 2026-10-07 — estado real
+
+A feature `.spec/features/scansolo-operacao-centralizada/` (branch `feat/scansolo-operacao-centralizada`, publicada, sem PR) absorveu
+as Fatias 2 (proposta ponta a ponta), 3 (origem/cadastro manual) e 4 (interrupção da cadência), e parte da 5 (card enxuto, tela do
+lead, "Novo lead") e da 6 (indicador humano no card). `scansolo-proposal-request-e2e` ficou só no SPEC e foi superada por ela.
+
+- Concluído (código + specs): Phases 1–6 e 8–15 do `PHASES.md` (T01–T16, T19–T31, T33–T35, T40) e o fix `e545ce5b03`.
+- Pendente (operador/humano): Phase 7 (HG-A/B/C), 16 (HG-D), 17 (Make), 18 (HG-03 + smoke), 19 (`make/REGISTRO-LEGADO.md`, ainda não criado).
+- Pendente (código, condicional à Phase 19): Phase 20 / T32 (`PHASES.run-3.md`).
+- Seguem abertas: Fatia 5 (menu reorganizado, lista "Leads"), Fatia 6 (pausar/encerrar/reabrir, indicador na lista de conversas),
+  Fatias 7 (campos por serviço), 8 (tarefas) e 9 (relatórios).
+
 **Restrições fixas**
 - Não mexer na API oficial do WhatsApp (já configurada) nem no agente de IA/treinamento (prompt, base de conhecimento, config publicada). Fatias que precisarem tocar o agente sinalizam isso como decisão explícita.
 - Reaproveitar o que existe; só adicionar o que a operação ScanSolo precisa.

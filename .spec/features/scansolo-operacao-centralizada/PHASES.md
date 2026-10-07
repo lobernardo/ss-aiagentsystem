@@ -21,7 +21,7 @@ Antes de implementar, leia:
 1. `.spec/features/scansolo-operacao-centralizada/SPEC.md` — requisitos RIGID que esta fase cobre
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 
-- [ ] T01 — Migrações aditivas da feature
+- [x] T01 — Migrações aditivas da feature
       Arquivos: `db/migrate/20261001000001_add_lead_source_to_scan_solo_pipeline_opportunities.rb`, `db/migrate/20261001000002_create_scan_solo_quote_requests.rb`, `db/migrate/20261001000003_create_scan_solo_quote_replies.rb`, `db/migrate/20261001000004_add_delivery_columns_to_scan_solo_proposal_versions.rb`, `db/migrate/20261001000005_add_commercial_settings_to_scan_solo_ai_agent_configs.rb` (novos), `db/schema.rb`
       Mudança:
         • `lead_source` string nullable com check `IN ('website','manual')`.
@@ -41,7 +41,7 @@ Antes de implementar, leia:
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 3. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — `ai_agent_config` (RF-54) e `cadence_templates` (slots CT-09)
 
-- [ ] T02 — Modelos `QuoteRequest`/`QuoteReply` e associações da oportunidade
+- [x] T02 — Modelos `QuoteRequest`/`QuoteReply` e associações da oportunidade
       Arquivos: `app/models/scan_solo/quote_request.rb` (novo), `app/models/scan_solo/quote_reply.rb` (novo), `app/models/scan_solo/pipeline_opportunity.rb`, `spec/models/scan_solo/quote_request_spec.rb` (novo), `spec/models/scan_solo/quote_reply_spec.rb` (novo), `spec/models/scan_solo/pipeline_opportunity_spec.rb`
       Mudança:
         • `QuoteRequest`: enum `awaiting_reply/correction_requested/replied`, associações (`opportunity`, `account`, `email_conversation`, `reply_message`, `has_one :proposal_version`), `open?`.
@@ -50,13 +50,13 @@ Antes de implementar, leia:
       Cobre: RF-01, RF-15, RF-19, RF-22, RF-23, CT-02
       Acceptance criteria: 2ª solicitação na mesma oportunidade → `RecordNotUnique`; `message_id` duplicado em `QuoteReply` → `RecordNotUnique`; `lead_source: 'site'` inválido e `nil`/`website`/`manual` válidos; `opportunity.conversation_extension` resolve pela conversa.
       Testes: os 3 specs de modelo — unicidade, enums, validação e associação.
-- [ ] T03 — `ProposalVersion`: número, validade, PDF e vínculo com a solicitação
+- [x] T03 — `ProposalVersion`: número, validade, PDF e vínculo com a solicitação
       Arquivos: `app/models/scan_solo/proposal_version.rb`, `spec/models/scan_solo/proposal_version_spec.rb`
       Mudança: `has_one_attached :document`, `belongs_to :quote_request`/`:follow_up_message` (optional), `after_create` que grava `proposal_number = format('SS-%<year>d-%<id>06d', …)` e `document_url` (`rails_blob_url` com host `FRONTEND_URL`, ou nil).
       Cobre: RF-26, RF-29, CT-02, CT-09
       Acceptance criteria: 2 versões → 2 números distintos no formato `SS-AAAA-NNNNNN`; com PDF anexado, `document_url` começa com `FRONTEND_URL` e ≠ `artifact_url`; sem documento → nil.
       Testes: `spec/models/scan_solo/proposal_version_spec.rb` — número, `document_url`.
-- [ ] T04 — Configuração RF-54 no backend (3 campos)
+- [x] T04 — Configuração RF-54 no backend (3 campos)
       Arquivos: `app/models/scan_solo/ai_agent_config.rb`, `app/controllers/api/v1/accounts/scan_solo/ai_agent_configs_controller.rb`, `app/views/api/v1/accounts/scan_solo/ai_agent_configs/_ai_agent_config.json.jbuilder`, `spec/requests/api/v1/accounts/scan_solo/ai_agent_configs_spec.rb`
       Mudança:
         • `FIELDS` ganha `quote_inbox_id`/`commercial_user_id`/`quote_recipient_email` (snapshot de publicação; fluxos leem só o publicado); `draft_params` permite os 3; `require_proposal_approval` continua aceito.
@@ -65,7 +65,7 @@ Antes de implementar, leia:
       Cobre: RF-54, RF-14, RF-16, RNF-05
       Acceptance criteria: salvar e publicar → os 3 valores em `draft` e `published`; cada condição inválida (inclusive destinatário vazio/malformado) → 422; destinatário editado só no rascunho não muda o publicado; exemplos existentes verdes.
       Testes: `spec/requests/api/v1/accounts/scan_solo/ai_agent_configs_spec.rb` — persistência e 5 rejeições.
-- [ ] T05 — Slots de template CT-09 e cabeçalho de documento
+- [x] T05 — Slots de template CT-09 e cabeçalho de documento
       Arquivos: `app/models/scan_solo/template_mapping.rb`, `app/services/scan_solo/messaging/template_resolver.rb`, `app/services/scan_solo/messaging/template_availability_report.rb`, `app/controllers/api/v1/accounts/scan_solo/cadence_templates_controller.rb`, `spec/models/scan_solo/template_mapping_spec.rb`, `spec/services/scan_solo/messaging/template_resolver_spec.rb`, `spec/requests/api/v1/accounts/scan_solo/cadence_templates_spec.rb`
       Mudança:
         • `SINGLE_TEMPLATES` (`proposta_enviada`, `lead_manual_inicial`, `proposta_acompanhamento` → convenções), com `step` nulo só para slots.
@@ -74,7 +74,7 @@ Antes de implementar, leia:
       Cobre: CT-09, RF-07, RF-29, RF-31
       Acceptance criteria: `lead_manual_inicial` sem mapeamento → `scansolo_lead_manual_inicial`, com mapeamento → nome mapeado; `document:` → header com os 3 campos; sem `document:` → `processed_params` igual ao de hoje; `GET cadence_templates` inclui 3 linhas de slot; `PUT proposta_acompanhamento` com `step: null` → 200; `lead_manual_inicial` com step → inválido.
       Testes: os 3 specs listados — resolução, header, validação e endpoint.
-- [ ] T06 — Textos backend (`en.yml`)
+- [x] T06 — Textos backend (`en.yml`)
       Arquivos: `config/locales/en.yml`, `spec/lib/scansolo_locale_spec.rb` (novo)
       Mudança: seção `en.scan_solo` com assunto/seções/instruções do e-mail de orçamento, bloco CT-04 (delimitadores + 5 rótulos), correção, aviso do RF-53 com o texto exato ("Recebi todas as informações, obrigado! Nosso comercial já está preparando seu orçamento. Assim que estiver pronto, envio por aqui."), resposta padrão de negociação, e-mail de negociação e palavras do extenso.
       Cobre: RNF-08, CT-03, CT-04, RF-35, RF-53
@@ -87,13 +87,13 @@ Antes de implementar, leia:
 1. `.spec/features/scansolo-operacao-centralizada/SPEC.md` — requisitos RIGID que esta fase cobre
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 
-- [ ] T07 — Valor por extenso determinístico (`AmountInWords`)
+- [x] T07 — Valor por extenso determinístico (`AmountInWords`)
       Arquivos: `app/services/scan_solo/quote/amount_in_words.rb` (novo), `spec/services/scan_solo/quote/amount_in_words_spec.rb` (novo)
       Mudança: função pura pt-BR (reais/centavos, até 999.999.999,99, `ArgumentError` para ≤ 0), com palavras de `scan_solo.amount_in_words.*`.
       Cobre: RF-47, CT-05
       Acceptance criteria: `12500.00` → "doze mil e quinhentos reais"; `1.00` → "um real"; `1000.00` → "mil reais"; `1234567.89` → "um milhão, duzentos e trinta e quatro mil, quinhentos e sessenta e sete reais e oitenta e nove centavos"; `0.50` → "cinquenta centavos"; `0` → `ArgumentError`.
       Testes: `spec/services/scan_solo/quote/amount_in_words_spec.rb` — tabela acima.
-- [ ] T08 — Origem do lead: classificador, bootstrap e backfill
+- [x] T08 — Origem do lead: classificador, bootstrap e backfill
       Arquivos: `app/services/scan_solo/pipeline/lead_source_classifier.rb` (novo), `app/services/scan_solo/pipeline/opportunity_bootstrap_service.rb`, `lib/tasks/scansolo.rake`, `spec/services/scan_solo/pipeline/lead_source_classifier_spec.rb` (novo), `spec/services/scan_solo/pipeline/opportunity_bootstrap_service_spec.rb`, `spec/lib/tasks/scansolo_rake_spec.rb`
       Mudança:
         • O classificador pega a 1ª mensagem não privada `incoming`/`outgoing` por `created_at`: `incoming` → `website`; `outgoing` de `User` → `manual`; senão nil.
@@ -102,7 +102,7 @@ Antes de implementar, leia:
       Cobre: RF-01, RF-02, RF-03
       Acceptance criteria: os 3 casos do RF-02 e os 4 do RF-03 corretos; nota privada/`activity` ignoradas; 2ª execução do backfill → 0 alterações; contagens de `PipelineStageEvent`/`CadenceEnrollment`/`LeadStateEvent` e `updated_at` inalterados; `website` × `manual` em `em_contato` → mesma `CadenceDefinition` e mesmos `scheduled_at` relativos.
       Testes: os 3 specs listados — classificação, bootstrap e backfill idempotente.
-- [ ] T09 — `ManualLeadService` (cadastro "Novo lead")
+- [x] T09 — `ManualLeadService` (cadastro "Novo lead")
       Arquivos: `app/services/scan_solo/pipeline/manual_lead_service.rb` (novo), `lib/custom_exceptions/scan_solo.rb`, `spec/services/scan_solo/pipeline/manual_lead_service_spec.rb` (novo)
       Mudança: numa transação, nesta ordem:
         1. `pg_advisory_xact_lock` por conta+telefone;
@@ -131,7 +131,7 @@ Antes de implementar, leia:
 3. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — `PipelineOpportunity`, `PipelineOpportunityDetail`, `Proposal`, `ProposalVersion`
 4. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — `nativeMessageUpdated` (`manual_lead`)
 
-- [ ] T10 — Template inicial do lead manual e falha visível (RF-07, RF-08)
+- [x] T10 — Template inicial do lead manual e falha visível (RF-07, RF-08)
       Arquivos: `app/services/scan_solo/pipeline/manual_lead_outreach.rb` (novo), `app/services/scan_solo/pipeline/manual_lead_service.rb`, `app/services/scan_solo/conversation_listener.rb`, `app/services/scan_solo/messaging/delivery_reconciler.rb`, `spec/services/scan_solo/pipeline/manual_lead_outreach_spec.rb` (novo), `spec/services/scan_solo/messaging/delivery_reconciler_spec.rb`
       Mudança:
         • `ManualLeadOutreach`: resolve o slot `lead_manual_inicial` + guard; bloqueado → auditoria `pipeline.manual_lead_template_blocked`; senão `NativeTemplateSender` com origem `manual_lead`.
@@ -141,7 +141,7 @@ Antes de implementar, leia:
       Cobre: RF-07, RF-08, RNF-01
       Acceptance criteria: 1 `Message` de template com `scansolo_origin: 'manual_lead'` e o nome mapeado; 0 HTTP direto; `ai_control_state` `ai_active`; guard bloqueado → 0 mensagens + 1 auditoria com `reason`; mensagem `failed` → 1 auditoria com `external_error`, sem duplicar em novo update; `transaction_open?` falso no envio.
       Testes: `manual_lead_outreach_spec.rb`, `delivery_reconciler_spec.rb` — envio, bloqueio, falha e RNF-01.
-- [ ] T11 — Leitura CT-02 (index/show/proposals) com queries constantes
+- [x] T11 — Leitura CT-02 (index/show/proposals) com queries constantes
       Arquivos: `app/controllers/api/v1/accounts/scan_solo/pipeline_opportunities_controller.rb`, `app/views/api/v1/accounts/scan_solo/pipeline_opportunities/_pipeline_opportunity.json.jbuilder`, `app/views/api/v1/accounts/scan_solo/pipeline_opportunities/show.json.jbuilder`, `app/views/api/v1/accounts/scan_solo/pipeline_opportunities/index.json.jbuilder`, `app/views/api/v1/accounts/scan_solo/proposals/_proposal.json.jbuilder`, `app/views/api/v1/accounts/scan_solo/proposals/_proposal_version.json.jbuilder`, `app/controllers/api/v1/accounts/scan_solo/proposals_controller.rb`, `spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_centralized_spec.rb` (novo), `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb`
       Mudança:
         • `index` com `includes` (contato, eventos, estado, solicitação, extensão, proposta atual) e `next_follow_up_at` agrupado numa query; `stage_history` ordenado em Ruby.
@@ -160,7 +160,7 @@ Antes de implementar, leia:
 3. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — `createPipelineOpportunity` (CT-01)
 4. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — `nativeMessageCreated` (RF-43)
 
-- [ ] T12 — Endpoint `POST /pipeline_opportunities` (CT-01)
+- [x] T12 — Endpoint `POST /pipeline_opportunities` (CT-01)
       Arquivos: `config/routes.rb`, `app/controllers/api/v1/accounts/scan_solo/pipeline_opportunities_controller.rb`, `app/policies/scan_solo/pipeline_opportunity_policy.rb`, `app/views/api/v1/accounts/scan_solo/pipeline_opportunities/create.json.jbuilder` (novo), `spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_create_spec.rb` (novo)
       Mudança:
         • Rota `create`; `create?` = `account_user.present?`.
@@ -170,7 +170,7 @@ Antes de implementar, leia:
       Cobre: CT-01, RF-05, RF-09, UI-01
       Acceptance criteria: as 7 condições do RF-05 → 422 com o código e contagens de `Contact`/`Conversation`/`PipelineOpportunity`/`Message` inalteradas; `opportunity_exists` → 422 com `opportunity_id`; 201 com `lead_source: manual`, `stage: novo_lead`, `contact_created` e `lead_state`; 404 com o flag desligado; regra do inbox único/múltiplo.
       Testes: `pipeline_opportunities_create_spec.rb` — 422s, 201 e 404.
-- [ ] T13 — Interrupção da tentativa pendente a cada resposta (RF-43)
+- [x] T13 — Interrupção da tentativa pendente a cada resposta (RF-43)
       Arquivos: `app/services/scan_solo/cadence/reply_interruption_service.rb` (novo), `app/services/scan_solo/conversation_listener.rb`, `app/services/scan_solo/cadence/reply_completeness_detector.rb`, `app/services/scan_solo/ai_turn/turn_orchestrator.rb` (só comentário), `spec/services/scan_solo/cadence/reply_interruption_service_spec.rb` (novo), `spec/services/scan_solo/cadence/reply_completeness_detector_spec.rb`, `spec/services/scan_solo/conversation_listener_spec.rb`
       Mudança:
         • Serviço com `enrollment.with_lock`: ciclo = última `outgoing` não privada antes da mensagem.
@@ -188,7 +188,7 @@ Antes de implementar, leia:
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 3. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — `quoteRequestEmail` (CT-03), `quoteReplyEmail` (CT-04), `ParsedQuoteBlock`
 
-- [ ] T14 — Composição dos e-mails (CT-03): solicitação, correção e negociação
+- [x] T14 — Composição dos e-mails (CT-03): solicitação, correção e negociação
       Arquivos: `app/services/scan_solo/quote/email_composer.rb` (novo), `spec/services/scan_solo/quote/email_composer_spec.rb` (novo)
       Mudança:
         • Puro; devolve `Email(subject, text, html)`, com HTML em `<br>` e valores escapados.
@@ -198,7 +198,7 @@ Antes de implementar, leia:
       Cobre: CT-03, RF-13, RF-18, RF-37, RNF-07, RNF-08
       Acceptance criteria: `request` contém id, rótulos e valores `confirmado`/`inferido`, "(a confirmar)" só nos inferidos e as 5 linhas de rótulo entre delimitadores; sem valor `faltante` nem `api_access_token`; `<br>` entre campos; `correction([:payment_terms])` contém "Condições de pagamento" e o bloco; `negotiation` contém os 9 itens e o link.
       Testes: `spec/services/scan_solo/quote/email_composer_spec.rb` — 3 composições.
-- [ ] T15 — Caixa de orçamento e thread de e-mail nativa
+- [x] T15 — Caixa de orçamento e thread de e-mail nativa
       Arquivos: `app/services/scan_solo/quote/mailbox.rb` (novo), `app/services/scan_solo/quote/email_thread.rb` (novo), `lib/custom_exceptions/scan_solo.rb`, `spec/services/scan_solo/quote/mailbox_spec.rb` (novo), `spec/services/scan_solo/quote/email_thread_spec.rb` (novo)
       Mudança:
         • sem destinatário fixo no código; `.resolve!(account)` devolve `Settings(inbox, recipient)` da config publicada (`quote_inbox_id`, `quote_recipient_email`) ou levanta `QuoteInboxMisconfigured` (`quote_inbox_missing|quote_inbox_not_email|quote_inbox_allowlisted`).
@@ -207,7 +207,7 @@ Antes de implementar, leia:
       Cobre: CT-03, RF-12, RF-14, RF-16, RF-37, RF-42, RNF-01, RNF-04
       Acceptance criteria: as 3 condições → exceção com o `reason`; destinatário alterado só no rascunho → `Settings` usa o publicado; `post!` → 1 e-mail (ActionMailer `:test`) com From = e-mail do canal, To = `[destinatário publicado]`, Subject = `mail_subject` e HTML com `<br>`; 2º `open!` reusa o contato; `post!` com `transaction_open?` falso.
       Testes: `mailbox_spec.rb`, `email_thread_spec.rb` — configuração e envio nativo.
-- [ ] T16 — Leitura determinística do bloco (CT-04)
+- [x] T16 — Leitura determinística do bloco (CT-04)
       Arquivos: `app/services/scan_solo/quote/response_block_parser.rb` (novo), `spec/services/scan_solo/quote/response_block_parser_spec.rb` (novo)
       Mudança:
         • Puro, sem LLM.
@@ -255,7 +255,7 @@ Antes de implementar, leia:
 3. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — `quoteRequestEmail` (CT-03), `MakeIntegrationRequestPayload`/`Commercial` (CT-05)
 4. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — `generateProposal` (RF-25)
 
-- [ ] T19 — Solicitação de orçamento na conclusão + aviso único ao cliente
+- [x] T19 — Solicitação de orçamento na conclusão + aviso único ao cliente
       Arquivos: `app/services/scan_solo/quote/request_service.rb` (novo), `app/jobs/scan_solo/quote_request_job.rb` (novo), `app/services/scan_solo/lead_state/completion_service.rb`, `spec/services/scan_solo/quote/request_service_spec.rb` (novo), `spec/services/scan_solo/lead_state/completion_service_spec.rb`
       Mudança:
         • `CompletionService`: com próxima ação `proposta`, `after_all_transactions_commit` → `QuoteRequestJob`.
@@ -273,7 +273,7 @@ Antes de implementar, leia:
         • 1 aviso com o texto exato, `scansolo_origin: quote_notice` e `ai_active`; 2 turnos seguintes e job repetido → continua 1; mal configurado → 0 avisos;
         • nenhum envio com `transaction_open?`.
       Testes: `request_service_spec.rb`, `completion_service_spec.rb` — disparo, idempotência, configuração e aviso.
-- [ ] T20 — Geração com dados comerciais (CT-05) e IA sem `proposal_generate`
+- [x] T20 — Geração com dados comerciais (CT-05) e IA sem `proposal_generate`
       Arquivos: `app/services/scan_solo/proposal/generate_service.rb`, `app/services/scan_solo/proposal/make_provider.rb`, `app/services/scan_solo/qualification/field_resolver.rb`, `app/services/scan_solo/ai_turn/input_guardrail.rb`, `app/services/scan_solo/actions/proposal_actions.rb`, `app/controllers/api/v1/accounts/scan_solo/proposals_controller.rb`, `spec/services/scan_solo/proposal/generate_service_spec.rb`, `spec/services/scan_solo/proposal/make_provider_spec.rb`, `spec/services/scan_solo/ai_turn/input_guardrail_spec.rb`, `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb`
       Mudança:
         • `GenerateService(quote_request:)`: exige solicitação `replied`, da oportunidade e sem versão (senão `RecordInvalid` → 422); cria a versão com `quote_request_id`; gate de campos mantido.
@@ -293,7 +293,7 @@ Antes de implementar, leia:
 3. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — `quoteReplyEmail` (CT-04), `negotiationRequested` (CT-07), `nativeMessageCreated`
 4. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — `resendQuoteRequest` (CT-12) e `PipelineOpportunityDetail.quote_request_resend_available`
 
-- [ ] T21 — Processamento da resposta do Luciano e roteamento no listener
+- [x] T21 — Processamento da resposta do Luciano e roteamento no listener
       Arquivos: `app/services/scan_solo/quote/reply_processor.rb` (novo), `app/jobs/scan_solo/quote_reply_job.rb` (novo), `app/services/scan_solo/conversation_listener.rb`, `spec/services/scan_solo/quote/reply_processor_spec.rb` (novo), `spec/services/scan_solo/conversation_listener_spec.rb`
       Mudança:
         • Listener: `incoming` de inbox de e-mail igual ao `quote_inbox_id` publicado → `QuoteReplyJob`, antes do gate de elegibilidade.
@@ -310,7 +310,7 @@ Antes de implementar, leia:
         • cadeia RF-22 navegável pelo id da oportunidade com o mesmo `correlation_id`;
         • inbox de orçamento → 0 `PipelineOpportunity`/`AiTurn`/`ConversationExtension`; WhatsApp sem query de config a mais.
       Testes: `reply_processor_spec.rb`, `conversation_listener_spec.rb` — roteamento e os ramos acima.
-- [ ] T22 — Publicador de notificação (CT-07) e adaptador de e-mail
+- [x] T22 — Publicador de notificação (CT-07) e adaptador de e-mail
       Arquivos: `app/services/scan_solo/notifications/publisher.rb` (novo), `app/services/scan_solo/notifications/email_adapter.rb` (novo), `app/services/scan_solo/notifications/negotiation_payload.rb` (novo), `spec/services/scan_solo/notifications/publisher_spec.rb` (novo), `spec/services/scan_solo/notifications/email_adapter_spec.rb` (novo), `spec/services/scan_solo/notifications/negotiation_payload_spec.rb` (novo)
       Mudança:
         • `NegotiationPayload.build` monta exatamente o CT-07.
@@ -319,7 +319,7 @@ Antes de implementar, leia:
       Cobre: CT-07, RF-37, RF-39, RF-41, RF-42
       Acceptance criteria: payload com chaves e tipos do CT-07 (`proposal`/`current_value` nulos sem proposta, ≤ 3 mensagens); adaptador de teste recebe payload idêntico; adaptador que levanta → 1 auditoria + 1 exceção, sem propagar; e-mail com os 9 itens e o link; inbox ausente → falha registrada.
       Testes: os 3 specs listados — payload, publicador e adaptador.
-- [ ] T40 — Reenvio manual auditado e idempotente da solicitação de orçamento (RF-56, CT-12)
+- [x] T40 — Reenvio manual auditado e idempotente da solicitação de orçamento (RF-56, CT-12)
       Arquivos: `app/services/scan_solo/quote/resend_service.rb` (novo), `app/controllers/api/v1/accounts/scan_solo/quote_requests_controller.rb` (novo), `app/policies/scan_solo/quote_request_policy.rb` (novo), `config/routes.rb`, `app/views/api/v1/accounts/scan_solo/pipeline_opportunities/show.json.jbuilder`, `lib/custom_exceptions/scan_solo.rb`, `spec/services/scan_solo/quote/resend_service_spec.rb` (novo), `spec/requests/api/v1/accounts/scan_solo/quote_request_resend_spec.rb` (novo)
       Mudança:
         • Rota `POST pipeline_opportunities/:id/quote_request/resend` → `quote_requests#resend`; policy só `administrator?`.
@@ -339,7 +339,7 @@ Antes de implementar, leia:
 3. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — `quote_replies` (CT-08), `retryProposal` (CT-10)
 4. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — `makeIntegrationCallback` (CT-06), `nativeMessageUpdated`
 
-- [ ] T23 — API de pendentes de vínculo (CT-08)
+- [x] T23 — API de pendentes de vínculo (CT-08)
       Arquivos: `config/routes.rb`, `app/controllers/api/v1/accounts/scan_solo/quote_replies_controller.rb` (novo), `app/policies/scan_solo/quote_reply_policy.rb` (novo), `app/services/scan_solo/quote/pending_reply_resolution.rb` (novo), `app/views/api/v1/accounts/scan_solo/quote_replies/index.json.jbuilder` (novo), `app/views/api/v1/accounts/scan_solo/quote_replies/_quote_reply.json.jbuilder` (novo), `spec/requests/api/v1/accounts/scan_solo/quote_replies_spec.rb` (novo), `spec/services/scan_solo/quote/pending_reply_resolution_spec.rb` (novo)
       Mudança:
         • Rotas `index`, `link` e `discard`; policy admin ou membro do inbox de orçamento.
@@ -355,7 +355,7 @@ Antes de implementar, leia:
         • `discard` de `late_reply` → 200, fora da lista, 1 auditoria e 0 versões; repetido → `already_discarded`; `unmatched` → `not_discardable`;
         • 2 vínculos concorrentes → 1 processamento.
       Testes: `quote_replies_spec.rb`, `pending_reply_resolution_spec.rb` — endpoints e concorrência.
-- [ ] T24 — Entrega da proposta pelo WhatsApp com PDF e reenvio sem Make (RF-29, RF-32, CT-10)
+- [x] T24 — Entrega da proposta pelo WhatsApp com PDF e reenvio sem Make (RF-29, RF-32, CT-10)
       Arquivos: `app/services/scan_solo/proposal/callback_handler.rb`, `app/services/scan_solo/make/callback_application_service.rb`, `app/services/scan_solo/proposal/delivery_service.rb` (novo), `app/jobs/scan_solo/proposal_delivery_job.rb` (novo), `app/services/scan_solo/proposal/retry_policy.rb`, `spec/services/scan_solo/proposal/delivery_service_spec.rb` (novo), `spec/services/scan_solo/proposal/callback_handler_spec.rb`, `spec/services/scan_solo/proposal/retry_policy_spec.rb`, `spec/requests/webhooks/scan_solo/make_spec.rb`
       Mudança:
         • O callback de sucesso grava `valid_until` e agenda `ProposalDeliveryJob` depois do commit.
@@ -372,7 +372,7 @@ Antes de implementar, leia:
         • 2 jobs → 1 mensagem; `retry` → 1 nova mensagem com o mesmo blob, 0 downloads e 0 `MakeRequest`;
         • download e envio fora de transação; `generated` não move etapa.
       Testes: os 4 specs listados — entrega, falhas, reenvio e callback.
-- [ ] T25 — Aceite real, falha posterior e acompanhamento (RF-30, RF-31)
+- [x] T25 — Aceite real, falha posterior e acompanhamento (RF-30, RF-31)
       Arquivos: `app/services/scan_solo/messaging/delivery_reconciler.rb`, `app/services/scan_solo/proposal/success_handler.rb`, `app/services/scan_solo/proposal/follow_up_service.rb` (novo), `spec/services/scan_solo/messaging/delivery_reconciler_spec.rb`, `spec/services/scan_solo/proposal/success_handler_spec.rb`, `spec/services/scan_solo/proposal/follow_up_service_spec.rb` (novo)
       Mudança:
         • Reconciliador: versão `sent` + mensagem `failed` → `failed` + auditoria, sem etapa nem matrícula.
@@ -389,7 +389,7 @@ Antes de implementar, leia:
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 3. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — `negotiationRequested` (CT-07)
 
-- [ ] T26 — Negociação: sinal, resposta padrão, etapa, handoff, notificação e atribuição (RF-35..RF-40)
+- [x] T26 — Negociação: sinal, resposta padrão, etapa, handoff, notificação e atribuição (RF-35..RF-40)
       Arquivos: `app/services/scan_solo/negotiation/request_service.rb` (novo), `app/services/scan_solo/actions/lead_state_update_action.rb`, `app/services/scan_solo/ai_turn/attempt_runner.rb`, `app/services/scan_solo/ai_turn/prompt_builder.rb`, `spec/services/scan_solo/negotiation/request_service_spec.rb` (novo), `spec/services/scan_solo/actions/lead_state_update_action_spec.rb`, `spec/services/scan_solo/ai_turn/attempt_runner_spec.rb`, `spec/services/scan_solo/ai_turn/prompt_builder_spec.rb`, `spec/services/scan_solo/actions/stage_transition_action_spec.rb`
       Mudança:
         • `lead_state_update` ganha `negotiation_requested` (boolean, só evidência).
@@ -417,7 +417,7 @@ Antes de implementar, leia:
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 3. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — CT-01, CT-02, CT-08, CT-12
 
-- [ ] T27 — Frontend base: textos, API e stores
+- [x] T27 — Frontend base: textos, API e stores
       Arquivos: `app/javascript/dashboard/i18n/locale/en/scansolo.json`, `app/javascript/dashboard/api/scansoloPipelineOpportunities.js`, `app/javascript/dashboard/api/scansoloQuoteReplies.js` (novo), `app/javascript/dashboard/store/scansolo/pipelineOpportunities.js`, `app/javascript/dashboard/store/scansolo/quoteReplies.js` (novo), `app/javascript/dashboard/routes/dashboard/scansolo/scansoloLabels.js`, `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/pipelineConstants.js`, `app/javascript/dashboard/store/scansolo/specs/quoteReplies.spec.js` (novo), `app/javascript/dashboard/store/scansolo/specs/pipelineOpportunities.spec.js`
       Mudança:
         • Todas as chaves i18n de UI-01..UI-07, RF-54 (3 campos), slots e erros do CT-12 (`quote_request_closed`, `quote_request_not_eligible`, `quote_inbox_misconfigured`).
@@ -436,7 +436,7 @@ Antes de implementar, leia:
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 3. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` — CT-01, CT-02, CT-08, CT-12, `ai_agent_config`, `cadence_templates`
 
-- [ ] T28 — Kanban: card enxuto, navegação e formulário "Novo lead" (UI-01, UI-02, UI-03)
+- [x] T28 — Kanban: card enxuto, navegação e formulário "Novo lead" (UI-01, UI-02, UI-03)
       Arquivos: `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/KanbanBoard.vue`, `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/NewLeadDialog.vue` (novo), `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/specs/KanbanBoard.spec.js`, `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/specs/NewLeadDialog.spec.js` (novo)
       Mudança:
         • Botão "Novo lead" no cabeçalho.
@@ -446,13 +446,13 @@ Antes de implementar, leia:
       Cobre: UI-01, UI-02, UI-03, RF-33
       Acceptance criteria: sem telefone → erro e 0 requisições; `contact_conflict` → mensagem i18n; `opportunity_exists` com `opportunity_id: 7` → `router.push` ao detalhe 7; 201 → card `novo_lead` com "COMERCIAL"; card sem empresa mostra o contato; −49 h → "Sem interação há 2 dias"; `awaiting_human` mostra o indicador e `ai_active` oculta; clique → `router.push` com `opportunityId`; arrasto igual; menu idêntico.
       Testes: `KanbanBoard.spec.js`, `NewLeadDialog.spec.js` — componente.
-- [ ] T29 — Tela do lead (`OpportunityDetail`, UI-04, UI-07)
+- [x] T29 — Tela do lead (`OpportunityDetail`, UI-04, UI-07)
       Arquivos: `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/OpportunityDetail.vue`, `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/specs/OpportunityDetail.spec.js`
       Mudança: origem, responsável, seções "Coletado"/"A confirmar"/"Faltante" a partir de `leadState.blocks`, status do orçamento (datas), status da proposta (versão, número, status, valor/validade quando `generated`/`sent`, link `documentUrl`) falha do template inicial com motivo e status (oculta quando `null`) e a ação UI-07 "Reenviar solicitação de orçamento" (só admin via `useScanSoloRole` e com `quoteRequestResendAvailable`), com sucesso/erro 422 por código e recarga do `show`.
       Cobre: UI-04, UI-07, RF-45, RF-08, RF-56
       Acceptance criteria: fixture do `show` → as 3 seções com os campos certos; origem, orçamento e proposta exibidos; `initialTemplateFailure` → motivo e status visíveis, `null` → oculto; admin com `quoteRequestResendAvailable: true` → ação visível e clique → POST do CT-12 + sucesso; não admin ou `false` → oculta; 422 `quote_request_closed` → mensagem i18n; textos só do i18n.
       Testes: `OpportunityDetail.spec.js` — componente.
-- [ ] T30 — Tela de Propostas: pendentes de vínculo e desativação de Aprovar/Enviar (UI-05, UI-06, RF-55 Etapa 1)
+- [x] T30 — Tela de Propostas: pendentes de vínculo e desativação de Aprovar/Enviar (UI-05, UI-06, RF-55 Etapa 1)
       Arquivos: `app/javascript/dashboard/routes/dashboard/scansolo/proposals/Proposals.vue`, `app/javascript/dashboard/routes/dashboard/scansolo/proposals/QuoteRepliesPending.vue` (novo), `app/javascript/dashboard/routes/dashboard/scansolo/proposals/specs/Proposals.spec.js`, `app/javascript/dashboard/routes/dashboard/scansolo/proposals/specs/QuoteRepliesPending.spec.js` (novo)
       Mudança:
         • Seção de pendentes: "Vincular" para `unmatched`, com escolha de solicitação aberta; "Descartar" + solicitação de origem para `late_reply`.
@@ -461,7 +461,7 @@ Antes de implementar, leia:
       Cobre: UI-05, UI-06, RF-55 (Etapa 1), RF-19, RF-20, RF-23
       Acceptance criteria: 2 pendentes → 2 linhas; "Vincular" → POST com ids certos e a linha some; vazio → estado vazio; `late_reply` → origem + "Descartar" → POST `discard` e some; versões `generated`/`approved`/`sent` → 0 botões Aprovar/Enviar e status exibidos; `failed` → "Reenviar"; `grep -n "approveProposal\|sendProposal" routes/dashboard/scansolo` vazio; testes de clique em aprovar/enviar trocados pela ausência dos botões, citando RF-55/UI-06 (RNF-11).
       Testes: `Proposals.spec.js`, `QuoteRepliesPending.spec.js` — componente.
-- [ ] T31 — Configuração e Templates: 3 campos, sem toggle, rótulos dos slots (RF-54, UI-06)
+- [x] T31 — Configuração e Templates: 3 campos, sem toggle, rótulos dos slots (RF-54, UI-06)
       Arquivos: `app/javascript/dashboard/routes/dashboard/scansolo/agent/AgentCenter.vue`, `app/javascript/dashboard/routes/dashboard/scansolo/agent/agentCenterFields.js`, `app/javascript/dashboard/routes/dashboard/scansolo/followups/TemplatesPanel.vue`, `app/javascript/dashboard/routes/dashboard/scansolo/agent/specs/AgentCenter.spec.js`, `app/javascript/dashboard/routes/dashboard/scansolo/followups/specs/TemplatesPanel.spec.js`
       Mudança: remove o toggle `requireProposalApproval` (sem enviá-lo); acrescenta os selects `quoteInboxId` (inboxes de e-mail) e `commercialUserId` (agentes) e o campo `quoteRecipientEmail` (obrigatório, validação de e-mail); `TemplatesPanel` rotula `lead_manual_inicial` e `proposta_acompanhamento`.
       Cobre: RF-54, UI-06, CT-09
@@ -475,7 +475,7 @@ Antes de implementar, leia:
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 3. `.spec/features/scansolo-operacao-centralizada/openapi.yaml` e `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — contratos a referenciar na documentação
 
-- [ ] T33 — Provas ponta a ponta e RNF transversais
+- [x] T33 — Provas ponta a ponta e RNF transversais
       Arquivos: `spec/integration/scan_solo/operacao_centralizada_spec.rb` (novo), `spec/integration/scan_solo/legacy_compatibility_spec.rb` (novo), `spec/integration/scan_solo/acceptance_traceability_spec.rb`
       Mudança: cenários com mocks de LLM e Make, WebMock e ActionMailer `:test`:
         • (a) lead manual → qualificação → e-mail + aviso;
@@ -489,7 +489,7 @@ Antes de implementar, leia:
       Cobre: RF-11, RF-22, RF-34, RF-55 (Etapa 1), RF-56, RNF-01, RNF-02, RNF-04, RNF-09, RNF-10
       Acceptance criteria: os 7 cenários passam; 0 chamadas a `ApproveService`/`SendService` e 0 `MakeRequest` `proposal.send` no fluxo novo; uma busca por `correlation_id` da solicitação devolve envio, resposta, geração, callback e entrega; fixtures legadas → 0 erros nos `GET`.
       Testes: os 3 arquivos listados.
-- [ ] T34 — Documentação de arquitetura e contratos
+- [x] T34 — Documentação de arquitetura e contratos
       Arquivos: `docs/agents/domain_rules.md`, `docs/agents/architecture.md`, `docs/agents/data_model.md`, `docs/agents/api_contracts.md`
       Mudança: atualizar só as seções citadas no PLAN (pipeline, cadência, proposta, guardrails, registry, handoff, "Quote request" com reenvio RF-56, fluxos, tabelas, endpoints com CT-12 e CT-11 desativado) com ponteiros para `openapi.yaml`/`asyncapi.yaml` desta feature.
       Cobre: CT-01, CT-02, CT-03, CT-04, CT-05, CT-06, CT-07, CT-08, CT-09, CT-10, CT-11, CT-12
@@ -502,7 +502,7 @@ Antes de implementar, leia:
 1. `.spec/features/scansolo-operacao-centralizada/SPEC.md` — requisitos RIGID que esta fase cobre
 2. `.spec/features/scansolo-operacao-centralizada/PLAN.md` — decomposição completa, dependências e riscos
 
-- [ ] T35 — Gates de qualidade e regressão
+- [x] T35 — Gates de qualidade e regressão
       Arquivos: nenhum arquivo novo (corrige só quebras residuais nos arquivos já alterados)
       Mudança:
         • rubocop nos `.rb` alterados; `pnpm eslint` com os `.js`/`.vue` explícitos; `pnpm test` nos specs tocados; `./scripts/ralph-test.sh`.

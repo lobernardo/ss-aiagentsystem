@@ -1512,7 +1512,8 @@ gate3_independent_verify() {
   run_engine "$prompt_file" "$verify_log" verify || true
 
   local task_lines
-  task_lines=$(sed 's/^[[:space:]]*//' "$verify_log" | grep -E '^TASK [0-9]+: (DONE|INCOMPLETE)' || true)
+  # codex exec repete a mensagem final no log: conta cada task uma vez so.
+  task_lines=$(sed 's/^[[:space:]]*//' "$verify_log" | grep -E '^TASK [0-9]+: (DONE|INCOMPLETE)' | awk -F: '!seen[$1]++' || true)
 
   local parsed
   parsed=$(printf '%s' "$task_lines" | grep -c . || true)

@@ -1,0 +1,616 @@
+asyncapi: 3.0.0
+info:
+  title: ScanSolo Proposta com Aprovação e E-mail — async contract delta (CT-05, CT-06, CT-07, CT-08, lead reply, native events)
+  version: "1.0.0"
+  description: >
+    Delta over `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` (v1.5.0). Channels
+    listed here are NEW or CHANGED by SPEC `scansolo-proposta-aprovacao-email` v1.1; every other
+    channel of the prior contracts is unchanged (including the `proposal.generate` request,
+    CT-05 of the OC, which keeps its envelope, transport and payload).
+
+    COMPAT notes:
+    (1) CT-08 — `ProposalGeneratedResult` gains two OPTIONAL fields, `artifact_sha256` (64 hex)
+    and `template_version` (RF-25). `ScanSolo::Make::CallbackVerifier::SCHEMA` does not set
+    `additionalProperties: false` (verified at `app/services/scan_solo/make/callback_verifier.rb:12-56`),
+    so emitters with or without the fields stay valid. The rule "`total_value` equals the
+    request's `commercial.total_value`" (already documented in OC v1.5.0) is now ENFORCED:
+    a mismatch is rejected with 422 and `rejection_reason: total_value_mismatch` (RF-19).
+    `proposal.send` callbacks remain accepted by the schema for history only; no request emits
+    `proposal.send` (RF-21).
+    (2) CHANGED semantics, flagged: a successful `proposal.generate` callback now leaves the
+    version `awaiting_approval` and requests a human approval by e-mail (CT-05); it no longer
+    triggers the WhatsApp delivery with PDF (OC/RF-29 superseded by RF-01/RF-11).
+    (3) NEW channels: approval request e-mail (CT-05), proposal e-mail to the lead (CT-06),
+    WhatsApp notice without PDF (CT-07) and the lead's e-mail reply in the proposal thread
+    (RF-16). They do not alter existing channels.
+    (4) Native events — `scansolo_origin` gains `proposal_email` and `proposal_notice`
+    (additive); the e-mail `source_id` update drives `sent` (RF-13).
+    (5) `negotiationRequested` (OC CT-07) is published at most once per `correlation_id`
+    (RF-23); payload unchanged.
+    (6) Protocol values `smtp` and `wisper` follow the OC precedent (documentation-only).
+servers:
+  scanSoloWebhooks:
+    host: "{scanSoloHost}"
+    protocol: https
+    description: ScanSolo inbound callback receiver (`Webhooks::ScanSolo::MakeController`).
+    variables:
+      scanSoloHost:
+        default: app.scansolo.local
+    security:
+      - $ref: '#/components/securitySchemes/makeInboundSignature'
+  chatwootEmailInbox:
+    host: "{quoteInboxHost}"
+    protocol: smtp
+    description: >
+      The Chatwoot native e-mail inbox published as the account's quote inbox
+      (`AiAgentConfig#quote_inbox_id`). Used for the quote thread (OC CT-03/CT-04), the approval
+      request (CT-05) and the proposal e-mail to the lead (CT-06; D2: the "agent e-mail inbox"
+      is this same inbox). Outbound: `Message` → `SendReplyJob` → `Email::SendOnEmailService` →
+      `ConversationReplyMailer#email_reply` (`prepare_mail(true)`: `cc_emails` and message
+      attachments honored). Inbound threaded by `Mailbox::ConversationFinder`
+      (`In-Reply-To`/`References`). HG-G: SMTP verified with CC and PDF before activation.
+    variables:
+      quoteInboxHost:
+        default: mail.scansolo.com.br
+  chatwootWhatsappInbox:
+    host: "{whatsappInboxHost}"
+    protocol: https
+    description: >
+      The opportunity's native WhatsApp inbox (Meta Cloud API through the unchanged
+      `Channel::Whatsapp`/`Whatsapp::*` services). ScanSolo only creates the template message
+      through `ScanSolo::Messaging::NativeTemplateSender` (RNF-05).
+    variables:
+      whatsappInboxHost:
+        default: graph.facebook.com
+  chatwootEventBus:
+    host: in-process
+    protocol: wisper
+    description: Internal Chatwoot dispatcher (`AsyncDispatcher` → `ScanSolo::ConversationListener`) and in-process publisher. Not network-exposed.
+
+channels:
+  makeIntegrationCallback:
+    address: /webhooks/scan_solo/make
+    servers:
+      - $ref: '#/servers/scanSoloWebhooks'
+    description: >
+      CHANGED (CT-08; RF-01, RF-19, RF-20, RF-25). Order unchanged: HMAC over raw body → JSON
+      parse → schema → MakeRequest match, then (new) `total_value` check in cents against the
+      version's quote request. Invalid signature → 401, nothing persisted, no AuditEvent. Any
+      other rejection (`malformed_json`, `schema_invalid`, `unmatched_request`,
+      `total_value_mismatch`) → 422, 1 `MakeCallback` `applied: false` and 1 AuditEvent
+      `make.callback_rejected`. A valid success is applied by `ScanSolo::Proposal::CallbackHandler`:
+      `value`, `currency`, `artifact_url`, `valid_until`, `artifact_sha256` stored, version
+      `awaiting_approval`, audit `proposal.generated` (with `template_version` when present);
+      after commit `ProposalApprovalRequestJob` downloads the PDF (checksum compared when
+      `artifact_sha256` is present) and sends CT-05. A failure keeps the mapping
+      (`provider_unavailable` when `retryable`, else `error_code`) and adds 1 AuditEvent
+      `proposal.generation_failed`. No message to the lead, no stage change, no enrollment.
+    messages:
+      makeIntegrationCallback:
+        $ref: '#/components/messages/MakeIntegrationCallback'
+
+  proposalApprovalRequestEmail:
+    address: proposal-approval-request
+    servers:
+      - $ref: '#/servers/chatwootEmailInbox'
+    description: >
+      NEW (CT-05; RF-02, RF-08). Exactly 1 per version (idempotent: `approval_requested_at` +
+      `approval_request_message_id`), posted in the quote request's e-mail conversation (same
+      thread as OC CT-03) to the published `quote_recipient_email`, after the PDF is stored and
+      outside any transaction (RNF-01). Any reply to it in that thread follows the quote reply
+      rules: `late_reply` while a version is generating/awaiting/approved/sent/failed (RF-03),
+      a new CT-04 block after a rejection creates the next version (RF-06). Approval happens
+      only in the Proposals screen, never by e-mail reply.
+    messages:
+      proposalApprovalRequest:
+        $ref: '#/components/messages/ProposalApprovalRequestEmail'
+
+  proposalLeadEmail:
+    address: proposal-lead-email
+    servers:
+      - $ref: '#/servers/chatwootEmailInbox'
+    description: >
+      NEW (CT-06; RF-11, RF-12, RF-14, RF-17). Sent after the approval commits
+      (`ProposalDeliveryJob` → `ScanSolo::Proposal::DeliveryService`). One proposal e-mail
+      conversation per opportunity (marker `additional_attributes.scansolo_thread =
+      proposal_delivery`, stored in `scan_solo_proposals.email_conversation_id`), created on the
+      first delivery and reused by later versions. Each message carries
+      `additional_attributes.scansolo_origin = proposal_email` and
+      `scansolo_proposal_version_id`. At most 1 e-mail per version except the explicit retry
+      (RF-15 a). Confirmation = the message has `source_id` and status ≠ `failed` (RF-13).
+    messages:
+      proposalLeadEmail:
+        $ref: '#/components/messages/ProposalLeadEmail'
+
+  proposalLeadEmailReply:
+    address: proposal-lead-email-reply
+    servers:
+      - $ref: '#/servers/chatwootEmailInbox'
+    description: >
+      NEW (RF-16, RF-17, RF-18). An incoming e-mail matched by native threading to a
+      `proposal_delivery` conversation. Routed by `ConversationListener` → `QuoteReplyJob` →
+      `Quote::ReplyProcessor` → `Proposal::LeadEmailReplyService`. Sender equal to the
+      opportunity contact's e-mail: refresh `last_customer_interaction_at`, cadence interruption
+      (all scheduled attempts when the stage is `proposta_enviada`) and 1 AuditEvent
+      `proposal.lead_email_reply`. Any other sender (including `quote_recipient_email` replying
+      to all): stored in the conversation with no effect. Never a `QuoteReply`, an opportunity,
+      an AI turn or a CT-04 read. A lead e-mail outside this thread keeps the `unmatched` rule.
+    messages:
+      proposalLeadEmailReply:
+        $ref: '#/components/messages/ProposalLeadEmailReply'
+
+  proposalLeadNotice:
+    address: proposal-lead-notice
+    servers:
+      - $ref: '#/servers/chatwootWhatsappInbox'
+    description: >
+      NEW (CT-07; RF-11, RF-12, RF-14). WhatsApp template "proposta enviada para seu e-mail" in
+      the opportunity's WhatsApp conversation, created by `ScanSolo::Proposal::LeadNoticeService`
+      after the commit of the `sent` transition (never before `sent`). Slot
+      `proposta_aviso_email` resolved by `TemplateMapping` (HG-E), checked by
+      `TemplateAvailabilityGuard`; no document header, no link. At most 1 accepted notice per
+      version. Blocked or `failed` → 1 AuditEvent `proposal.lead_notice_failed`, version status
+      unchanged. Its outcome never marks `sent` nor changes the stage.
+    messages:
+      proposalLeadNotice:
+        $ref: '#/components/messages/ProposalLeadNotice'
+
+  negotiationRequested:
+    address: negotiation.requested
+    servers:
+      - $ref: '#/servers/chatwootEventBus'
+    description: >
+      CHANGED (RF-23). Same payload as OC CT-07. `ScanSolo::Notifications::Publisher` claims the
+      publication under the opportunity lock with an AuditEvent `negotiation.notification_claimed`
+      keyed by `correlation_id`; a second publish with the same `correlation_id` (job retry,
+      turn reprocessing) is a no-op.
+    messages:
+      negotiationRequested:
+        $ref: '#/components/messages/NegotiationRequested'
+
+  nativeMessageUpdated:
+    address: message.updated
+    servers:
+      - $ref: '#/servers/chatwootEventBus'
+    description: >
+      CHANGED (RF-13, RF-14). Reconciled origins: `cadence`, `proposal`, `manual_lead`,
+      `proposal_email`, `proposal_notice`. E-mail of the proposal gets `source_id` and is not
+      failed → version `sent`, AuditEvent `proposal.sent`, `SuccessHandler` →
+      `proposta_enviada` + enrollment, then after commit the notice (CT-07) and the follow-up
+      (OC/RF-31). E-mail `failed` before `sent` → version `failed` + `proposal.delivery_failed`;
+      after `sent` → `proposal.delivery_failed_after_sent`, stage kept. Notice `failed` →
+      `proposal.lead_notice_failed`. For e-mail and WhatsApp, acceptance requires `source_id`.
+    messages:
+      nativeMessageEvent:
+        $ref: '#/components/messages/NativeMessageEvent'
+
+operations:
+  receiveMakeIntegrationCallback:
+    action: receive
+    channel:
+      $ref: '#/channels/makeIntegrationCallback'
+    summary: Apply a verified Make result; on success the version awaits approval (RF-01).
+    messages:
+      - $ref: '#/channels/makeIntegrationCallback/messages/makeIntegrationCallback'
+
+  sendProposalApprovalRequest:
+    action: send
+    channel:
+      $ref: '#/channels/proposalApprovalRequestEmail'
+    summary: Approval request to the commercial recipient with the PDF and the screen link (RF-02).
+    messages:
+      - $ref: '#/channels/proposalApprovalRequestEmail/messages/proposalApprovalRequest'
+
+  sendProposalLeadEmail:
+    action: send
+    channel:
+      $ref: '#/channels/proposalLeadEmail'
+    summary: Proposal e-mail to the lead with the commercial recipient in CC (RF-11).
+    messages:
+      - $ref: '#/channels/proposalLeadEmail/messages/proposalLeadEmail'
+
+  receiveProposalLeadEmailReply:
+    action: receive
+    channel:
+      $ref: '#/channels/proposalLeadEmailReply'
+    summary: Correlate the lead's e-mail reply to the opportunity (RF-16).
+    messages:
+      - $ref: '#/channels/proposalLeadEmailReply/messages/proposalLeadEmailReply'
+
+  sendProposalLeadNotice:
+    action: send
+    channel:
+      $ref: '#/channels/proposalLeadNotice'
+    summary: Short WhatsApp notice after the e-mail is confirmed (RF-11, RF-13).
+    messages:
+      - $ref: '#/channels/proposalLeadNotice/messages/proposalLeadNotice'
+
+  publishNegotiationRequested:
+    action: send
+    channel:
+      $ref: '#/channels/negotiationRequested'
+    summary: Negotiation notification, at most once per correlation id (RF-23).
+    messages:
+      - $ref: '#/channels/negotiationRequested/messages/negotiationRequested'
+
+  consumeNativeMessageUpdated:
+    action: receive
+    channel:
+      $ref: '#/channels/nativeMessageUpdated'
+    summary: Delivery reconciliation of the proposal e-mail and the notice (RF-13, RF-14).
+    messages:
+      - $ref: '#/channels/nativeMessageUpdated/messages/nativeMessageEvent'
+
+components:
+  securitySchemes:
+    makeInboundSignature:
+      type: httpApiKey
+      in: header
+      name: X-Make-Signature
+      description: HMAC-SHA256 hex of the raw body with `scan_solo.make.inbound_signing_secret`.
+
+  messages:
+    MakeIntegrationCallback:
+      name: MakeIntegrationCallback
+      title: Inbound signed Make callback (CT-08 over OC CT-06)
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/MakeCallbackHeaders'
+      payload:
+        $ref: '#/components/schemas/MakeIntegrationCallbackPayload'
+      examples:
+        - name: generateSuccessWithChecksum
+          summary: Success with the optional RF-25 fields; total_value equals the request's commercial.total_value.
+          payload:
+            correlation_id: 6f1c2a9e-3b7d-4e51-9a0c-2d8f7b1e4c11
+            idempotency_key: 6f1c2a9e-3b7d-4e51-9a0c-2d8f7b1e4c11
+            action: proposal.generate
+            status: success
+            result:
+              proposal_version_id: 42
+              artifact_url: https://drive.example.com/uc?export=download&id=abc123
+              total_value: 12500.0
+              currency: BRL
+              valid_until: "2026-11-06T23:59:59-03:00"
+              artifact_sha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+              template_version: proposta-v3
+
+    ProposalApprovalRequestEmail:
+      name: ProposalApprovalRequestEmail
+      title: Approval request e-mail (CT-05)
+      contentType: message/rfc822
+      payload:
+        $ref: '#/components/schemas/ProposalApprovalRequestEmailPayload'
+
+    ProposalLeadEmail:
+      name: ProposalLeadEmail
+      title: Proposal e-mail to the lead (CT-06)
+      contentType: message/rfc822
+      payload:
+        $ref: '#/components/schemas/ProposalLeadEmailPayload'
+
+    ProposalLeadEmailReply:
+      name: ProposalLeadEmailReply
+      title: Lead e-mail reply in the proposal thread (RF-16)
+      contentType: message/rfc822
+      payload:
+        $ref: '#/components/schemas/ProposalLeadEmailReplyPayload'
+
+    ProposalLeadNotice:
+      name: ProposalLeadNotice
+      title: WhatsApp notice without PDF (CT-07)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProposalLeadNoticePayload'
+
+    NegotiationRequested:
+      name: NegotiationRequested
+      title: Negotiation requested (OC CT-07, idempotent per correlation id)
+      contentType: application/json
+      payload:
+        $ref: '../scansolo-operacao-centralizada/asyncapi.yaml#/components/schemas/NegotiationRequestedPayload'
+
+    NativeMessageEvent:
+      name: NativeMessageEvent
+      title: Native Chatwoot message created/updated event (subset read by ScanSolo)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/NativeMessageEventPayload'
+
+  schemas:
+    MakeCallbackHeaders:
+      type: object
+      required: [X-Make-Signature]
+      properties:
+        X-Make-Signature:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+
+    MakeIntegrationCallbackPayload:
+      type: object
+      required: [correlation_id, idempotency_key, action, status]
+      properties:
+        correlation_id:
+          type: string
+          minLength: 1
+        idempotency_key:
+          type: string
+          minLength: 1
+        action:
+          type: string
+          enum: [proposal.generate, proposal.send]
+          description: "`proposal.send` accepted only for historical callbacks (RF-21)."
+        status:
+          type: string
+          enum: [success, failure]
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalGeneratedResult'
+            - $ref: '../scansolo-operacao-centralizada/asyncapi.yaml#/components/schemas/ProposalSendConfirmedResult'
+            - $ref: '../scansolo-operacao-centralizada/asyncapi.yaml#/components/schemas/ProposalFailureResult'
+
+    ProposalGeneratedResult:
+      type: object
+      description: OC v1.5.0 `ProposalGeneratedResult` + 2 optional fields (RF-25).
+      required: [proposal_version_id, artifact_url, total_value, currency, valid_until]
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        artifact_url:
+          type: string
+          format: uri
+          description: HTTPS download source of the final PDF, fetched by Rails (`SafeFetch`, `application/pdf`); never sent to the lead.
+        total_value:
+          type: number
+          description: >
+            ENFORCED (RF-19): must equal the request's `commercial.total_value` (compared in
+            cents); otherwise 422 `total_value_mismatch`, version stays `generating`, nothing written.
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        valid_until:
+          type: string
+          format: date-time
+        artifact_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: >
+            OPTIONAL (RF-25). SHA-256 hex of the PDF. When present Rails compares it with the
+            downloaded file; mismatch → version `failed`/`artifact_checksum_mismatch`, 1 audit,
+            no approval request.
+        template_version:
+          type: string
+          minLength: 1
+          description: OPTIONAL (RF-25). Recorded in the `proposal.generated` audit.
+
+    EmailAddress:
+      type: string
+      format: email
+
+    PdfAttachment:
+      type: object
+      required: [filename, content_type, byte_size, checksum]
+      properties:
+        filename:
+          type: string
+          pattern: '^SS-\d{4}-\d{6}\.pdf$'
+          description: "`<proposal_number>.pdf`."
+        content_type:
+          type: string
+          enum: [application/pdf]
+        byte_size:
+          type: integer
+          minimum: 1
+        checksum:
+          type: string
+          description: ActiveStorage blob checksum (base64 MD5) of the version's stored PDF; identical in CT-05 and CT-06.
+
+    ProposalApprovalRequestEmailPayload:
+      type: object
+      description: >
+        CT-05. Body texts from `config/locales/en.yml` `scan_solo.proposal.approval_request.*`:
+        proposal number, version, value and currency, lead name/company, the warning "falta
+        e-mail do lead" when the contact has no valid e-mail (RF-08), the link and the sentence
+        that approval is only valid in the screen, never by e-mail reply. No token, secret or
+        webhook URL (RNF-09).
+      required: [from, to, subject, in_reply_to, attachments, approval_url, proposal_number, version_number, value, currency, lead_email_missing, html_body, text_body]
+      properties:
+        from:
+          $ref: '#/components/schemas/EmailAddress'
+          description: E-mail of the quote inbox channel.
+        to:
+          type: array
+          minItems: 1
+          maxItems: 1
+          description: Published `quote_recipient_email` (initial value `comercial@scansolo.com.br`).
+          items:
+            $ref: '#/components/schemas/EmailAddress'
+        subject:
+          type: string
+          description: Thread subject of the quote request (native "Re:" prefix).
+        in_reply_to:
+          type: [string, "null"]
+          description: Native threading header of the quote conversation.
+        attachments:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: '#/components/schemas/PdfAttachment'
+        approval_url:
+          type: string
+          format: uri
+          pattern: '^https?://[^/]+/app/accounts/\d+/scansolo/proposals$'
+          description: "`<FRONTEND_URL>/app/accounts/<account_id>/scansolo/proposals`."
+        proposal_number:
+          type: string
+          pattern: '^SS-\d{4}-\d{6}$'
+        version_number:
+          type: integer
+          minimum: 1
+        value:
+          type: number
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        lead_email_missing:
+          type: boolean
+          description: True renders the "falta e-mail do lead" warning (RF-08).
+        html_body:
+          type: string
+        text_body:
+          type: string
+
+    ProposalLeadEmailPayload:
+      type: object
+      description: >
+        CT-06. Subject and body from `scan_solo.proposal.lead_email.*` with the proposal number;
+        no permanent public link to the document (the PDF goes attached). From = quote inbox
+        channel e-mail.
+      required: [from, to, cc, subject, attachments, proposal_number, proposal_version_id, html_body, text_body]
+      properties:
+        from:
+          $ref: '#/components/schemas/EmailAddress'
+        to:
+          type: array
+          minItems: 1
+          maxItems: 1
+          description: The opportunity contact's `Contact.email` (validated; missing → `lead_email_missing`, RF-08/RF-14).
+          items:
+            $ref: '#/components/schemas/EmailAddress'
+        cc:
+          type: array
+          minItems: 1
+          maxItems: 1
+          description: Published `quote_recipient_email`, through `content_attributes.cc_emails`.
+          items:
+            $ref: '#/components/schemas/EmailAddress'
+        subject:
+          type: string
+          description: Composed on the first delivery (conversation `mail_subject`); later versions reply in the same thread.
+        attachments:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: '#/components/schemas/PdfAttachment'
+        proposal_number:
+          type: string
+          pattern: '^SS-\d{4}-\d{6}$'
+        proposal_version_id:
+          type: integer
+          format: int64
+          description: Stored as `additional_attributes.scansolo_proposal_version_id` on the message.
+        html_body:
+          type: string
+        text_body:
+          type: string
+
+    ProposalLeadEmailReplyPayload:
+      type: object
+      required: [message_id, conversation_id, from, in_reply_to, content, created_at]
+      properties:
+        message_id:
+          type: integer
+          format: int64
+        conversation_id:
+          type: integer
+          format: int64
+          description: A conversation marked `scansolo_thread = proposal_delivery` (= `scan_solo_proposals.email_conversation_id`).
+        from:
+          $ref: '#/components/schemas/EmailAddress'
+          description: Compared case-insensitively with the opportunity contact's e-mail (Q-04).
+        in_reply_to:
+          type: string
+          description: Native header that matched the proposal thread (`InReplyToStrategy`).
+        references:
+          type: [string, "null"]
+        content:
+          type: [string, "null"]
+          description: Never read as a CT-04 block.
+        created_at:
+          type: string
+          format: date-time
+          description: Becomes `last_customer_interaction_at` when the sender is the lead.
+
+    ProposalLeadNoticePayload:
+      type: object
+      description: The native template message created by `NativeTemplateSender` for CT-07.
+      required: [conversation_id, template_slot, template_name, language, scansolo_origin, document_header, proposal_version_id]
+      additionalProperties: false
+      properties:
+        conversation_id:
+          type: integer
+          format: int64
+          description: The opportunity's WhatsApp conversation.
+        template_slot:
+          type: string
+          enum: [proposta_aviso_email]
+        template_name:
+          type: string
+          minLength: 1
+          description: Resolved by `TemplateMapping` (convention `scansolo_proposta_aviso_email`); approved in Meta (HG-E).
+        language:
+          type: string
+          minLength: 2
+        scansolo_origin:
+          type: string
+          enum: [proposal_notice]
+        document_header:
+          type: boolean
+          enum: [false]
+          description: No document header, no `media_url`, no document link.
+        proposal_version_id:
+          type: integer
+          format: int64
+          description: Stored as `scan_solo_proposal_versions.notice_message_id` → message.
+
+    NativeMessageEventPayload:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: object
+          required: [id, account_id, conversation_id, inbox_id, message_type, private, sender_type, status, source_id, created_at]
+          properties:
+            id:
+              type: integer
+              format: int64
+            account_id:
+              type: integer
+              format: int64
+            conversation_id:
+              type: integer
+              format: int64
+            inbox_id:
+              type: integer
+              format: int64
+            message_type:
+              type: string
+              enum: [incoming, outgoing, activity, template]
+            private:
+              type: boolean
+            sender_type:
+              type: [string, "null"]
+              enum: [User, AgentBot, Contact, null]
+            status:
+              type: string
+              enum: [sent, delivered, read, failed]
+            source_id:
+              type: [string, "null"]
+              description: For the proposal e-mail, the native Message-ID written by `Email::SendOnEmailService` on success (RF-13).
+            external_error:
+              type: [string, "null"]
+            scansolo_origin:
+              type: [string, "null"]
+              enum: [ai, cadence, proposal, manual_lead, quote_notice, proposal_follow_up, proposal_email, proposal_notice, null]
+              description: >
+                CHANGED (additive): `proposal_email` = proposal e-mail to the lead (CT-06),
+                `proposal_notice` = WhatsApp notice (CT-07). Any non-null value excludes the
+                message from implicit takeover.
+            created_at:
+              type: string
+              format: date-time

@@ -1,0 +1,903 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Proposta com Aprovação e E-mail — REST contract delta (CT-01, CT-02, CT-03, CT-04, CT-09, retry RF-15, slot CT-07)
+  version: "1.0.0"
+  description: >
+    Delta over `.spec/features/scansolo-operacao-centralizada/openapi.yaml` (v1.7.0), which is
+    itself a delta over the platform (v1.1.0), production-complete (v1.2.0) and lead-state
+    (v1.5.0) contracts. Only operations NEW or CHANGED by SPEC `scansolo-proposta-aprovacao-email`
+    v1.1 are listed; every other path of the prior contracts stays valid and unchanged. Base
+    path verified at `config/routes.rb` (`namespace :scan_solo`, proposals member routes
+    `approve`/`send`/`retry` at lines 485-487). Every endpoint keeps the `BaseController` 404
+    gate when `Account#scansolo_enabled?` is false and the ScanSolo Pundit 403.
+
+    Schemas that change shape are redefined here in full (`PipelineOpportunity`,
+    `CurrentProposalSummary`, `ProposalVersion`, `Proposal`, `TemplateStage`) because an
+    `allOf` over the v1.7.0 schema would keep the old `ProposalVersionStatus` enum. Unchanged
+    schemas are referenced from the v1.7.0 file.
+
+    INTENTIONAL CHANGES (flagged, never silent):
+    (1) `ProposalVersionStatus` gains `awaiting_approval` and `rejected` (new integer codes 5
+    and 6; codes 0-4 unchanged, RF-26). The only client is the in-house dashboard, updated in
+    the same delivery.
+    (2) `POST .../proposals/{proposal_id}/approve` is no longer "deactivated" (OC CT-11 /
+    RF-55 Etapa 1 superseded by RF-04): it is the only way to approve, idempotent and audited.
+    Rejections become `422 { error: <code> }` instead of the generic record-invalid body, and
+    the policy widens to administrators OR the published `commercial_user_id` (Q-01).
+    (3) `POST .../proposals/{proposal_id}/send` never emits `proposal.send` to Make (RF-21);
+    `sent` → 422 `already_sent`, not `approved` → 422 `approval_required`, `approved` → the
+    same idempotent e-mail delivery as RF-11. It stays removable only by OC Phase 20.
+    (4) `POST .../proposals/{proposal_id}/retry` gains causes (a) e-mail redelivery and (c)
+    artifact re-download, both without Make, and the same policy as approve (RF-15).
+    (5) `PATCH .../pipeline_opportunities/{id}` accepts `email` (CT-09).
+    (6) `POST .../pipeline_opportunities/{opportunity_id}/proposals/generate` returns 422 while
+    the quote request has a non-terminal version (RF-07); a new version is only created after a
+    rejection.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: app.scansolo.local
+
+security:
+  - userApiKey: []
+
+paths:
+  /accounts/{account_id}/scan_solo/proposals:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listProposals
+      summary: Proposals with versions, approval/rejection data and delivery status (CT-01; RF-26, UI-01)
+      description: >
+        CHANGED (additive). Each `ProposalVersion` gains `approved_by`, `rejected_at`,
+        `rejected_by`, `rejection_reason` and `delivery`; each `Proposal` gains
+        `lead_email_present`. Historical `generated`/`approved`/`sent` versions keep every
+        field and value (RF-26).
+      responses:
+        '200':
+          description: Proposals of the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Proposal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      operationId: showProposal
+      summary: Show a proposal (same additive fields as the list; CT-01)
+      responses:
+        '200':
+          description: Proposal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: approveProposal
+      summary: Approve the current version awaiting approval (CT-02; RF-04, RF-08)
+      description: >
+        CHANGED semantics. Moves the current `awaiting_approval` version to `approved`, records
+        `approved_at`/`approved_by` and 1 `AuditEvent` `proposal.approved`, and after commit
+        triggers the e-mail delivery (RF-11). A repeat on an `approved` or `sent` version
+        returns 200 with no new audit and no second delivery. Independent of
+        `require_proposal_approval`. While the opportunity's contact has no valid e-mail the
+        approval is refused with `lead_email_missing` and nothing changes (RF-08).
+        Allowed for account administrators or the published `commercial_user_id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalApproveRequest'
+      responses:
+        '200':
+          description: Version approved (or already approved/sent — idempotent repeat).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Approval refused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApproveRejection'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: rejectProposal
+      summary: Reject the current version awaiting approval with a reason (CT-03; RF-05)
+      description: >
+        NEW. Moves the current `awaiting_approval` version to `rejected` with the reason, the
+        user and the time, records 1 `AuditEvent` `proposal.rejected` and returns the quote
+        request to `awaiting_reply`, so a new CT-04 block in the same quote thread creates the
+        next version (RF-06). A rejected version is never delivered. Same policy as approve.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalRejectRequest'
+      responses:
+        '200':
+          description: Version rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Rejection refused; nothing changes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RejectRejection'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: sendProposal
+      summary: Legacy send — blocked, never emits proposal.send (CT-04; RF-21)
+      description: >
+        CHANGED. Never creates a `MakeRequest` nor emits `proposal.send`. `sent` → 422
+        `already_sent`; any status other than `approved` → 422 `approval_required`; `approved` →
+        the same idempotent e-mail delivery as RF-11 (0 new e-mails when already delivered).
+        Kept only until OC Phase 20; no screen calls it. Policy unchanged (administrator or
+        opportunity owner).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalApproveRequest'
+      responses:
+        '200':
+          description: Approved version handed to the idempotent e-mail delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Send refused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendRejection'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/retry:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: retryProposal
+      summary: Retry a failed current version on the same version, by cause (RF-15)
+      description: >
+        CHANGED semantics and policy. Always acts on the same version (never creates a new one,
+        RF-07). (a) e-mail delivery failure (`email_delivery_failed`, native `external_error`
+        or `lead_email_missing`; version has `approved_at`): resends only the e-mail to the lead
+        with the stored PDF in the same proposal e-mail conversation, no Make request; the
+        WhatsApp notice follows only on e-mail confirmation and only if no notice was accepted
+        yet. Requires a valid lead e-mail (RF-08). (b) generation failure (`timeout`,
+        `network_error`, `provider_unavailable`): current `RetryPolicy` path (new Make request,
+        dead letter needs `confirm_reprocess: true`), version back to `generating`.
+        (c) `artifact_download_failed` / `artifact_checksum_mismatch`: downloads the PDF again
+        from `artifact_url`, no Make request; on success the version returns to
+        `awaiting_approval` and the approval request e-mail (CT-05) is sent.
+        Allowed for administrators or the published `commercial_user_id` (was administrator only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalRetryRequest'
+      responses:
+        '200':
+          description: >
+            Retry requested. (a) returns `approved` (the new e-mail is pending confirmation),
+            (b) returns `generating`, (c) returns `awaiting_approval` or `failed` when the
+            download fails again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Not retryable, dead letter without confirmation, or integration not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{opportunity_id}/proposals/generate:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - name: opportunity_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: generateProposal
+      summary: Request generation — at most one non-terminal version per quote request (RF-07)
+      description: >
+        CHANGED rule. Accepted only when the opportunity's quote request is `replied` and all
+        of its versions (if any) are `rejected`; otherwise 422 with no record. Concurrent
+        requests create at most one version (row lock + partial unique index on
+        `(quote_request_id) WHERE status IN (generating, approved, awaiting_approval)`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/ProposalCorrelationRequest'
+      responses:
+        '200':
+          description: Version created in `generating`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: No validated quote reply, a non-terminal version exists, or proposal fields incomplete.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listPipelineOpportunities
+      summary: Kanban list — adds lead_email and the new proposal statuses (CT-01; UI-03)
+      description: CHANGED (additive). Each item gains `lead_email`; `proposal_status` may be `awaiting_approval` or `rejected`.
+      responses:
+        '200':
+          description: Opportunities of the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PipelineOpportunity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    get:
+      operationId: showPipelineOpportunity
+      summary: Lead screen data — adds lead_email and the rejection reason (CT-01; UI-02)
+      responses:
+        '200':
+          description: Opportunity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updatePipelineOpportunity
+      summary: Update owner and/or the lead e-mail (CT-09; RF-09)
+      description: >
+        CHANGED (additive input). `email` is written to the opportunity's native `Contact.email`.
+        Malformed or empty → 422 `invalid_email` (request boundary). Already used by another
+        contact of the account → 422 `contact_conflict` (native uniqueness) and the contact is
+        unchanged. `owner_id` behaves as before. Renders the show shape.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PipelineOpportunityUpdateInput'
+      responses:
+        '200':
+          description: Updated opportunity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid e-mail or contact conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadEmailRejection'
+
+  /accounts/{account_id}/scan_solo/cadence_templates:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listCadenceTemplates
+      summary: Template slots — adds the proposta_aviso_email slot (CT-07)
+      description: "CHANGED (additive). A row for the single-template slot `proposta_aviso_email` with `step` null."
+      responses:
+        '200':
+          description: Template rows.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CadenceTemplateRow'
+    put:
+      operationId: upsertCadenceTemplate
+      summary: Map a template — accepts stage proposta_aviso_email with step null (CT-07, HG-E)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CadenceTemplateInput'
+      responses:
+        '200':
+          description: Updated row.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CadenceTemplateRow'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Invalid mapping.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+components:
+  securitySchemes:
+    userApiKey:
+      type: apiKey
+      in: header
+      name: api_access_token
+      description: Existing Chatwoot session/API-token auth, unchanged.
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ResourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    Forbidden:
+      description: >
+        Denied by the ScanSolo Pundit policy. For approve/reject/retry: the user is neither an
+        account administrator nor the published `commercial_user_id`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    NotFound:
+      description: Resource not found in the account, or account not ScanSolo-enabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+
+  schemas:
+    ScanSoloError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    ApproveRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [not_awaiting_approval, not_current_version, lead_email_missing]
+
+    RejectRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [reason_required, not_awaiting_approval, not_current_version]
+
+    SendRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [already_sent, approval_required, not_current_version]
+
+    LeadEmailRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_email, contact_conflict]
+
+    ProposalApproveRequest:
+      type: object
+      description: Current parameters, unchanged (verified at `proposals_controller.rb:34-39`).
+      required: [proposal_version_id, correlation_id]
+      additionalProperties: false
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          minLength: 1
+
+    ProposalRejectRequest:
+      type: object
+      required: [proposal_version_id, reason]
+      additionalProperties: false
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        reason:
+          type: string
+          description: Required; empty or whitespace-only → 422 `reason_required`.
+
+    ProposalRetryRequest:
+      type: object
+      required: [proposal_version_id, confirm_reprocess]
+      additionalProperties: false
+      properties:
+        proposal_version_id:
+          type: integer
+          format: int64
+        confirm_reprocess:
+          type: boolean
+          description: Only meaningful for cause (b) dead letter; ignored by (a) and (c).
+
+    PipelineOpportunityUpdateInput:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        email:
+          type: string
+          format: email
+          description: Written to the native `Contact.email` of the opportunity (CT-09).
+
+    ProposalVersionStatus:
+      type: string
+      enum: [generating, generated, approved, sent, failed, awaiting_approval, rejected]
+      description: >
+        Integer codes `generating 0, generated 1, approved 2, sent 3, failed 4` unchanged;
+        `awaiting_approval 5`, `rejected 6` new (RF-26). `generated` only on historical versions.
+
+    UserRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+
+    ProposalDelivery:
+      type: object
+      description: CT-01 — delivery state of the version's e-mail to the lead and of the WhatsApp notice.
+      required: [email_status, notice_status]
+      properties:
+        email_status:
+          type: [string, "null"]
+          enum: [pending, sent, failed, null]
+          description: >
+            From the version's e-mail message (`sent_message_id`): `sent` with `source_id` and not
+            failed (RF-13), `failed`, otherwise `pending`; null when there is no e-mail message
+            (not delivered yet, or a legacy WhatsApp delivery).
+        notice_status:
+          type: [string, "null"]
+          enum: [pending, sent, failed, blocked, null]
+          description: >
+            From `notice_message_id`: `sent` (accepted), `failed`, `pending`; `blocked` when the
+            template guard blocked it (no message, `notice_failure_reason` set, RF-14); null when
+            no notice was attempted.
+
+    ProposalVersion:
+      type: object
+      description: >
+        v1.7.0 `ProposalVersion` + `approved_by`, `rejected_at`, `rejected_by`,
+        `rejection_reason`, `delivery` (CT-01). Every v1.7.0 field keeps its name, type and meaning.
+      required:
+        - id
+        - proposal_id
+        - version_number
+        - status
+        - is_current
+        - value
+        - currency
+        - artifact_url
+        - failure_reason
+        - correlation_id
+        - approved_at
+        - approval_required
+        - sent_at
+        - retry_count
+        - dead_letter
+        - proposal_number
+        - valid_until
+        - document_url
+        - approved_by
+        - rejected_at
+        - rejected_by
+        - rejection_reason
+        - delivery
+      properties:
+        id:
+          type: integer
+          format: int64
+        proposal_id:
+          type: integer
+          format: int64
+        version_number:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ProposalVersionStatus'
+        is_current:
+          type: boolean
+        value:
+          type: [number, "null"]
+        currency:
+          type: [string, "null"]
+        artifact_url:
+          type: [string, "null"]
+          format: uri
+        failure_reason:
+          type: [string, "null"]
+          description: >
+            Adds `artifact_checksum_mismatch` (RF-25), `email_delivery_failed`,
+            `lead_email_missing` and the native `external_error` of the e-mail (RF-14) to the
+            v1.7.0 reasons.
+        correlation_id:
+          type: string
+        approved_at:
+          type: [string, "null"]
+          format: date-time
+        approval_required:
+          type: boolean
+          description: Read from the preserved `require_proposal_approval` column; no flow consults it — approval is always required (RF-04).
+        sent_at:
+          type: [string, "null"]
+          format: date-time
+          description: Send-callback time of legacy versions; null in the e-mail flow.
+        retry_count:
+          type: integer
+          minimum: 0
+        dead_letter:
+          type: boolean
+        proposal_number:
+          type: [string, "null"]
+        valid_until:
+          type: [string, "null"]
+          format: date-time
+        document_url:
+          type: [string, "null"]
+          format: uri
+        approved_by:
+          oneOf:
+            - $ref: '#/components/schemas/UserRef'
+            - type: "null"
+        rejected_at:
+          type: [string, "null"]
+          format: date-time
+        rejected_by:
+          oneOf:
+            - $ref: '#/components/schemas/UserRef'
+            - type: "null"
+        rejection_reason:
+          type: [string, "null"]
+        delivery:
+          $ref: '#/components/schemas/ProposalDelivery'
+
+    Proposal:
+      type: object
+      required: [id, opportunity_id, owner_id, contact_name, integration_state, current_version_id, versions, quote_request_status, lead_email_present]
+      properties:
+        id:
+          type: integer
+          format: int64
+        opportunity_id:
+          type: integer
+          format: int64
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        contact_name:
+          type: [string, "null"]
+        integration_state:
+          type: string
+          enum: [configured, blocked]
+        current_version_id:
+          type: [integer, "null"]
+          format: int64
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalVersion'
+        quote_request_status:
+          oneOf:
+            - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/QuoteRequestStatus'
+            - type: "null"
+        lead_email_present:
+          type: boolean
+          description: NEW (CT-01, RF-08, UI-01). True when the opportunity's contact has a valid e-mail; false disables "Aprovar".
+
+    PipelineOpportunity:
+      type: object
+      description: v1.7.0 list item + `lead_email`; `proposal_status` uses the extended enum (CT-01).
+      required:
+        - id
+        - account_id
+        - contact_id
+        - contact_name
+        - conversation_id
+        - owner_id
+        - stage
+        - last_customer_interaction_at
+        - next_follow_up_at
+        - created_at
+        - updated_at
+        - stage_history
+        - lead_source
+        - company
+        - service
+        - city_uf
+        - ai_control_state
+        - quote_request_status
+        - proposal_status
+        - lead_email
+      properties:
+        id:
+          type: integer
+          format: int64
+        account_id:
+          type: integer
+          format: int64
+        contact_id:
+          type: integer
+          format: int64
+        contact_name:
+          type: [string, "null"]
+        conversation_id:
+          type: integer
+          format: int64
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        stage:
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/PipelineStage'
+        last_customer_interaction_at:
+          type: [string, "null"]
+          format: date-time
+          description: Also refreshed by a lead e-mail reply in the proposal thread (RF-16).
+        next_follow_up_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        stage_history:
+          type: array
+          items:
+            $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/StageHistoryEntry'
+        lead_source:
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/LeadSource'
+        company:
+          type: [string, "null"]
+        service:
+          type: [string, "null"]
+        city_uf:
+          type: [string, "null"]
+        ai_control_state:
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/AiControlState'
+        quote_request_status:
+          oneOf:
+            - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/QuoteRequestStatus'
+            - type: "null"
+        proposal_status:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalVersionStatus'
+            - type: "null"
+          description: Status of the current version; `awaiting_approval` and `rejected` are new (UI-03).
+        lead_email:
+          type: [string, "null"]
+          format: email
+          description: NEW (CT-01). The native `Contact.email` of the opportunity.
+
+    CurrentProposalSummary:
+      type: object
+      description: v1.7.0 summary + `rejection_reason` (UI-02 "Rejeitada (com motivo)").
+      required: [version_number, proposal_number, status, value, currency, valid_until, document_url, failure_reason, rejection_reason]
+      properties:
+        version_number:
+          type: integer
+        proposal_number:
+          type: [string, "null"]
+        status:
+          $ref: '#/components/schemas/ProposalVersionStatus'
+        value:
+          type: [number, "null"]
+        currency:
+          type: [string, "null"]
+        valid_until:
+          type: [string, "null"]
+          format: date-time
+        document_url:
+          type: [string, "null"]
+          format: uri
+        failure_reason:
+          type: [string, "null"]
+        rejection_reason:
+          type: [string, "null"]
+
+    PipelineOpportunityDetail:
+      allOf:
+        - $ref: '#/components/schemas/PipelineOpportunity'
+        - type: object
+          required: [lead_state, quote_request, proposal, initial_template_failure, quote_request_resend_available]
+          properties:
+            lead_state:
+              $ref: '../scansolo-agent-lead-state/openapi.yaml#/components/schemas/LeadState'
+            quote_request:
+              oneOf:
+                - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/QuoteRequestSummary'
+                - type: "null"
+            proposal:
+              oneOf:
+                - $ref: '#/components/schemas/CurrentProposalSummary'
+                - type: "null"
+            initial_template_failure:
+              oneOf:
+                - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/InitialTemplateFailure'
+                - type: "null"
+            quote_request_resend_available:
+              type: boolean
+
+    TemplateStage:
+      type: string
+      enum: [novo_lead, em_contato, em_qualificacao, proposta_enviada, lead_manual_inicial, proposta_acompanhamento, proposta_aviso_email]
+      description: >
+        v1.7.0 + `proposta_aviso_email` (CT-07): single-template slot (`step: null`) for the
+        WhatsApp notice "proposta enviada para seu e-mail", no document header, convention name
+        `scansolo_proposta_aviso_email`. `proposta_enviada` → `scansolo_proposal_send` unchanged.
+
+    CadenceTemplateInput:
+      type: object
+      required: [stage, step, template_name, language, params]
+      properties:
+        stage:
+          $ref: '#/components/schemas/TemplateStage'
+        step:
+          type: [integer, "null"]
+          minimum: 1
+        template_name:
+          type: string
+          minLength: 1
+        language:
+          type: string
+          minLength: 2
+        params:
+          type: array
+          items:
+            $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/TemplateParam'
+
+    CadenceTemplateRow:
+      type: object
+      required: [stage, step, template_name, language, params, mapped, availability, block_reason, meta_status, last_synced_at]
+      properties:
+        stage:
+          $ref: '#/components/schemas/TemplateStage'
+        step:
+          type: [integer, "null"]
+        template_name:
+          type: string
+        language:
+          type: string
+        params:
+          type: array
+          items:
+            $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/TemplateParam'
+        mapped:
+          type: boolean
+        availability:
+          type: string
+          enum: [available, blocked]
+        block_reason:
+          type: [string, "null"]
+          enum: [template_missing, language_unavailable, template_rejected, template_paused, template_pending, template_disabled, params_mismatch, null]
+        meta_status:
+          type: [string, "null"]
+        last_synced_at:
+          type: [string, "null"]
+          format: date-time

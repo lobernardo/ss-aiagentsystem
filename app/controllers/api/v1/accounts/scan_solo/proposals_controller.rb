@@ -33,9 +33,8 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
     authorize(@proposal, :approve?)
 
     version = @proposal.versions.find(params.require(:proposal_version_id))
-    @version = ::ScanSolo::Proposal::ApproveService.call(
-      proposal_version: version, correlation_id: params.require(:correlation_id), actor: Current.user
-    )
+    params.require(:correlation_id)
+    @version = ::ScanSolo::Proposal::ApproveService.call(proposal_version: version, actor: Current.user)
 
     render :approve
   end

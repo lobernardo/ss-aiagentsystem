@@ -78,6 +78,9 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
     let!(:version) { proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf') }
 
     it 'approves the current version' do
+      # RF-04: only an `awaiting_approval` version is approved.
+      version.update!(status: :awaiting_approval)
+
       post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}/approve",
            params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
            headers: admin.create_new_auth_token, as: :json

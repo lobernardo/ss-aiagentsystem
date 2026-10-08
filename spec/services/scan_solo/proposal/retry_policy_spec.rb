@@ -42,17 +42,23 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
       expect(version.value).to eq(ScanSolo::Proposal::MockProvider::DEFAULT_VALUE)
     end
 
-    # CT-10 / RF-32: a delivery failure is redelivered by the DeliveryService
-    # with the stored PDF; the legacy send retry through Make is gone.
-    describe 'delivery failure (CT-10)' do
+    # RF-15 (a) replaces OC/RF-32 / CT-10: a delivery failure is redelivered by e-mail through the
+    # DeliveryService with the stored PDF; the legacy send retry through Make is gone.
+    describe 'delivery failure (RF-15 a)' do
       let(:artifact_url) { 'https://make.example/proposals/7.pdf' }
+      let(:email_inbox) { create(:channel_email, account: account, email: 'atendimento.comercial@scansolo.com.br').inbox }
       let(:version) do
-        proposal.versions.create!(status: :failed, failure_reason: 'template_missing', value: 1000, currency: 'BRL', artifact_url: artifact_url,
-                                  generate_correlation_id: SecureRandom.uuid, generate_callback_applied_at: Time.current)
+        proposal.versions.create!(status: :failed, failure_reason: 'email_delivery_failed', value: 1000, currency: 'BRL', artifact_url: artifact_url,
+                                  generate_correlation_id: SecureRandom.uuid, generate_callback_applied_at: Time.current,
+                                  approved_at: Time.current, approved_by: agent)
       end
-      let(:proposal_messages) { conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal'") }
+      let(:proposal_emails) { Message.where(inbox: email_inbox).outgoing }
 
       before do
+        contact.update!(email: 'ana@solar.example')
+        ScanSolo::AiAgentConfig.draft_for!(account).update!(name: 'Agente', enabled: true, allowed_inbox_ids: [conversation.inbox_id],
+                                                            quote_inbox_id: email_inbox.id)
+        ScanSolo::AiAgent::PublishService.new(account: account).call
         allow(Resolv).to receive(:getaddresses).and_call_original
         allow(Resolv).to receive(:getaddresses).with('make.example').and_return(['93.184.216.34'])
         stub_request(:get, artifact_url).to_return(status: 200, body: '%PDF-1.4', headers: { 'Content-Type' => 'application/pdf' })
@@ -62,15 +68,15 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
         expect(described_class.retryable?(version)).to be true
       end
 
-      it 'sends one new proposal message with the same stored blob, without downloading nor calling Make' do
+      it 'sends one new proposal e-mail with the same stored blob, without downloading nor calling Make' do
         version.document.attach(io: StringIO.new('%PDF-1.4'), filename: 'SS.pdf', content_type: 'application/pdf')
         blob_id = version.document.blob.id
 
         expect { described_class.retry!(proposal_version: version, actor: agent) }
-          .to change(proposal_messages, :count).by(1).and not_change(ScanSolo::MakeRequest, :count)
+          .to change(proposal_emails, :count).by(1).and not_change(ScanSolo::MakeRequest, :count)
 
         expect(a_request(:get, artifact_url)).not_to have_been_made
-        expect(version.reload).to have_attributes(status: 'generated', failure_reason: nil, sent_message: proposal_messages.sole)
+        expect(version.reload).to have_attributes(status: 'approved', failure_reason: nil, sent_message: proposal_emails.sole)
         expect(version.document.blob.id).to eq(blob_id)
         expect(ScanSolo::AuditEvent.find_by!(event_type: 'proposal.retry_requested'))
           .to have_attributes(actor: agent, payload: include('operation' => 'delivery'))
@@ -81,8 +87,8 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
         described_class.retry!(proposal_version: version, actor: agent)
 
         expect(a_request(:get, artifact_url)).not_to have_been_made
-        expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'artifact_download_failed')
-        expect(proposal_messages.count).to eq(0)
+        expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'email_delivery_failed')
+        expect(proposal_emails.count).to eq(0)
       end
     end
 

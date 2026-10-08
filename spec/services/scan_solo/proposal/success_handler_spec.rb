@@ -48,6 +48,30 @@ RSpec.describe ScanSolo::Proposal::SuccessHandler do
     expect(version.reload.follow_up_message).to eq(follow_ups.sole)
   end
 
+  it 'sends one e-mail notice and then one follow-up, both after the commit (RF-11, RF-13, RF-31)' do
+    version = proposal.versions.create!(status: :sent, value: 1000, currency: 'BRL')
+    notices = conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal_notice'")
+    follow_ups = conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal_follow_up'")
+
+    ActiveRecord::Base.transaction do
+      call(version)
+      expect(notices.count + follow_ups.count).to eq(0)
+    end
+
+    expect(notices.count).to eq(1)
+    expect(follow_ups.count).to eq(1)
+    expect(notices.sole.id).to be < follow_ups.sole.id
+    expect(version.reload).to have_attributes(notice_message: notices.sole, follow_up_message: follow_ups.sole)
+  end
+
+  it 'sends no notice nor follow-up for a version that is not sent (RF-12)' do
+    version = proposal.versions.create!(status: :approved, value: 1000, currency: 'BRL')
+
+    call(version)
+
+    expect(conversation.messages.count).to eq(0)
+  end
+
   it 'is a no-op on a terminal (ganho/perdido) opportunity, leaving stage and cadence untouched (RF-19)' do
     opportunity.update!(stage: :ganho)
     version = proposal.versions.create!(status: :sent, value: 1000, currency: 'BRL')

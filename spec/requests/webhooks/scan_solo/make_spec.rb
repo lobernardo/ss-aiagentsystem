@@ -302,10 +302,12 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
 
     it 'creates exactly one native template message and moves the stage once delivery is accepted' do
       # scansolo-operacao-centralizada RF-31 (RNF-11): the accepted proposal is followed by 1 follow-up template.
+      # RF-11 / RF-13: and, before it, by 1 WhatsApp notice that the proposal went by e-mail.
       follow_ups = conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal_follow_up'")
+      notices = conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal_notice'")
       expect do
         perform_enqueued_jobs(only: EventDispatcherJob) { post_callback(send_payload.to_json) }
-      end.to change(conversation.messages.outgoing, :count).by(2).and change(follow_ups, :count).by(1)
+      end.to change(conversation.messages.outgoing, :count).by(3).and change(follow_ups, :count).by(1).and change(notices, :count).by(1)
 
       expect(response).to have_http_status(:ok)
       message = version.reload.sent_message

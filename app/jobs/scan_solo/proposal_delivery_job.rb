@@ -1,6 +1,5 @@
-# RF-29 / RNF-01: delivers a generated proposal after the callback
-# transaction commits, so the PDF download and the WhatsApp message never run
-# inside it.
+# RF-11 / RNF-01: delivers an approved proposal by e-mail after the approval
+# transaction commits, so the e-mail is never created inside it.
 class ScanSolo::ProposalDeliveryJob < ApplicationJob
   queue_as :medium
 

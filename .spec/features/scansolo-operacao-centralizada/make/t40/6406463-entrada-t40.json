@@ -600,7 +600,7 @@
                   },
                   {
                     "oldText": "{{VALOR_NUMERICO}}",
-                    "newText": "R$ {{formatNumber(1.commercial.total_value; 2; \",\"; \".\")}}"
+                    "newText": "{{formatNumber(1.commercial.total_value; 2; \",\"; \".\")}}"
                   },
                   {
                     "oldText": "{{VALOR_EXTENSO}}",

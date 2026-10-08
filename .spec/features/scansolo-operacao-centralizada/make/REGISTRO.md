@@ -114,4 +114,7 @@ Validações estáticas: 0 módulos `email`/`google-email`/`gmail`, 0 WhatsApp/H
 
 Pendências:
 - Run once com payload de teste (ver o relatório da sessão), mais uma 2ª execução do mesmo `pv_` para provar a idempotência.
-- Placeholders `{{CONDICOES_PAGAMENTO}}` e `{{OBSERVACOES}}` não verificados no template `1iXxNeqP…`: se não existirem, a substituição não tem efeito e esses dados não aparecem no PDF.
+- Template `1iXxNeqP…` ("ScanSOLO Proposta Georadar") lido sem alteração em 2026-10-08, via conector Google Drive:
+  - Presentes: `{{NOME_EMPRESA}}`, `{{NOME_CONTATO}}`, `{{DATA_SOLICITACAO}}`, `{{DESCRICAO_ESCOPO}}`, `{{PROFUNDIDADE}}`, `{{VALOR_NUMERICO}}`, `{{VALOR_EXTENSO}}`.
+  - **Ausentes**: `{{CONDICOES_PAGAMENTO}}`, `{{OBSERVACOES}}`, `{{NÚMERO_PROPOSTA}}`, `{{PRAZO_TOTAL}}`. As condições de pagamento e o prazo de validade (90 dias) estão fixos no texto, e o cronograma é "ALTERAR CRONOGRAMA". Por isso número da proposta, cronograma, condições e observações do `commercial` **não aparecem no PDF** até o template ganhar esses placeholders (lacuna do RF-47, fora do T40, pois o template não pode ser alterado aqui). As substituições ficam no cenário e não têm efeito enquanto o placeholder não existir.
+- Correção 2026-10-08T18:32:10Z (`scenarios_update`, cenário OFF): o template já traz `R$ {{VALOR_NUMERICO}}`, então o módulo 31 passou a enviar só `formatNumber(total_value; 2; ","; ".")`, evitando "R$ R$".

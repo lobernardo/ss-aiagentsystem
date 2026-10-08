@@ -51,7 +51,9 @@ RSpec.describe 'ScanSolo migrations' do
     # that touches a pre-existing Community table (accounts) rather than creating a
     # new scan_solo_* table -- RF-95/RNF-04 apply to it exactly the same way.
     # scansolo-operacao-centralizada T01 (RNF-11) added 5 additive migrations.
-    expect(scansolo_migration_files.length).to eq(35)
+    # scansolo-proposta-aprovacao-email T04 (RNF-07) added 3 more: approval/e-mail
+    # delivery columns, N versions per quote request and unique idempotency_key.
+    expect(scansolo_migration_files.length).to eq(38)
   end
 
   it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do
@@ -366,11 +368,13 @@ RSpec.describe 'ScanSolo migrations' do
     expect(connection.column_exists?(:scan_solo_make_callbacks, :expires_at)).to be false
   end
 
-  it 'limits index replacements to the two reversible production migrations' do
+  it 'limits index replacements to the three reversible production migrations' do
     replacements = scansolo_migration_files.select { |path| File.read(path).match?(/\bremove_index\b/) }
     expect(replacements.map { |path| File.basename(path) }).to contain_exactly(
       '20260923000006_replace_scan_solo_cadence_enrollment_unique_index.rb',
-      '20260923000007_replace_scan_solo_make_callbacks_correlation_index.rb'
+      '20260923000007_replace_scan_solo_make_callbacks_correlation_index.rb',
+      # RNF-07: the unique quote_request_id index becomes non-unique without data loss.
+      '20261007100002_allow_many_scan_solo_proposal_versions_per_quote_request.rb'
     )
     replacements.each do |path|
       expect(File.read(path)).to include('def up', 'def down', 'add_index', 'where:')

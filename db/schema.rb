@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_10_01_000005) do
+ActiveRecord::Schema[7.2].define(version: 2026_10_07_100003) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1671,6 +1671,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_01_000005) do
     t.datetime "updated_at", null: false
     t.index ["account_id"], name: "index_scan_solo_make_requests_on_account_id"
     t.index ["correlation_id"], name: "index_scan_solo_make_requests_on_correlation_id", unique: true
+    t.index ["idempotency_key"], name: "index_scan_solo_make_requests_on_idempotency_key", unique: true
   end
 
   create_table "scan_solo_pipeline_opportunities", force: :cascade do |t|
@@ -1726,13 +1727,25 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_01_000005) do
     t.datetime "valid_until"
     t.bigint "follow_up_message_id"
     t.bigint "quote_request_id"
+    t.datetime "rejected_at"
+    t.string "rejected_by_type"
+    t.bigint "rejected_by_id"
+    t.text "rejection_reason"
+    t.datetime "approval_requested_at"
+    t.bigint "approval_request_message_id"
+    t.bigint "notice_message_id"
+    t.string "notice_failure_reason"
+    t.string "artifact_sha256"
     t.index ["approved_by_type", "approved_by_id"], name: "idx_on_approved_by_type_approved_by_id_0a2d8f1dd3"
     t.index ["generate_correlation_id"], name: "index_scan_solo_proposal_versions_on_generate_correlation_id", unique: true
+    t.index ["notice_message_id"], name: "index_scan_solo_proposal_versions_on_notice_message_id"
     t.index ["proposal_id", "version_number"], name: "index_scan_solo_proposal_versions_on_proposal_and_number", unique: true
     t.index ["proposal_id"], name: "index_scan_solo_proposal_versions_on_current", unique: true, where: "(is_current = true)"
     t.index ["proposal_id"], name: "index_scan_solo_proposal_versions_on_proposal_id"
     t.index ["proposal_number"], name: "index_scan_solo_proposal_versions_on_proposal_number", unique: true
-    t.index ["quote_request_id"], name: "index_scan_solo_proposal_versions_on_quote_request_id", unique: true
+    t.index ["quote_request_id"], name: "index_scan_solo_proposal_versions_on_quote_request_id"
+    t.index ["quote_request_id"], name: "index_scan_solo_proposal_versions_one_open_per_quote_request", unique: true, where: "(status = ANY (ARRAY[0, 2, 5]))"
+    t.index ["rejected_by_type", "rejected_by_id"], name: "index_scan_solo_proposal_versions_on_rejected_by"
     t.index ["send_correlation_id"], name: "index_scan_solo_proposal_versions_on_send_correlation_id", unique: true
     t.index ["sent_message_id"], name: "index_scan_solo_proposal_versions_on_sent_message_id"
   end
@@ -1742,7 +1755,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_01_000005) do
     t.bigint "current_version_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "email_conversation_id"
     t.index ["current_version_id"], name: "index_scan_solo_proposals_on_current_version_id"
+    t.index ["email_conversation_id"], name: "index_scan_solo_proposals_on_email_conversation_id", unique: true
     t.index ["opportunity_id"], name: "index_scan_solo_proposals_on_opportunity_id", unique: true
   end
 

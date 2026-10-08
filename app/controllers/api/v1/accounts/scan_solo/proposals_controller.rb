@@ -3,22 +3,32 @@
 # own guards), correlation-id required, version-guarded against the
 # current proposal version. Read actions (index/show) exist only to feed
 # UI-08's Propostas screen -- they are not part of CT-07 itself.
+#
+# CT-02/CT-03 (RF-04, RF-05, RF-08): approve and reject act on the current
+# `awaiting_approval` version; the boundary refuses an approval while the
+# lead has no valid e-mail (`lead_email_missing`) and a rejection without a
+# reason (`reason_required`). Service refusals map to 422 `{ error: code }`.
 class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::ScanSolo::BaseController
   before_action :set_opportunity, only: [:generate]
-  before_action :set_proposal, only: [:show, :approve, :send_proposal, :retry]
+  before_action :set_proposal, only: [:approve, :reject, :send_proposal, :retry]
 
   rescue_from CustomExceptions::ScanSolo::ProposalActionRejected do |e|
     render json: { error: e.code }, status: :unprocessable_entity
   end
 
+  # CT-01: everything the version/proposal partials read, loaded up front.
+  READ_PRELOAD = {
+    versions: [:approved_by, :rejected_by, { sent_message: :inbox }, :notice_message, { document_attachment: :blob }],
+    opportunity: %i[contact quote_request]
+  }.freeze
+
   def index
     authorize(::ScanSolo::Proposal)
-    @proposals = ::ScanSolo::Proposal.joins(:opportunity)
-                                     .where(scan_solo_pipeline_opportunities: { account_id: Current.account.id })
-                                     .includes(versions: { document_attachment: :blob }, opportunity: %i[contact quote_request])
+    @proposals = account_proposals.includes(READ_PRELOAD)
   end
 
   def show
+    @proposal = account_proposals.includes(READ_PRELOAD).find(params[:id])
     authorize(@proposal)
   end
 
@@ -38,9 +48,24 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
 
     version = @proposal.versions.find(params.require(:proposal_version_id))
     params.require(:correlation_id)
+    if version.awaiting_approval? && !@proposal.opportunity.lead_email_valid?
+      return render json: { error: 'lead_email_missing' }, status: :unprocessable_entity
+    end
+
     @version = ::ScanSolo::Proposal::ApproveService.call(proposal_version: version, actor: Current.user)
 
     render :approve
+  end
+
+  def reject
+    authorize(@proposal, :reject?)
+
+    version = @proposal.versions.find(params.require(:proposal_version_id))
+    return render json: { error: 'reason_required' }, status: :unprocessable_entity if params[:reason].to_s.strip.blank?
+
+    @version = ::ScanSolo::Proposal::RejectService.call(proposal_version: version, actor: Current.user, reason: params[:reason].to_s)
+
+    render :reject
   end
 
   def send_proposal
@@ -79,8 +104,10 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
   end
 
   def set_proposal
-    @proposal = ::ScanSolo::Proposal.joins(:opportunity)
-                                    .where(scan_solo_pipeline_opportunities: { account_id: Current.account.id })
-                                    .find(params[:id])
+    @proposal = account_proposals.find(params[:id])
+  end
+
+  def account_proposals
+    ::ScanSolo::Proposal.joins(:opportunity).where(scan_solo_pipeline_opportunities: { account_id: Current.account.id })
   end
 end

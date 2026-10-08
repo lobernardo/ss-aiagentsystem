@@ -6,7 +6,7 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:agent) { create(:user, account: account, role: :agent) }
   let(:admin) { create(:user, account: account, role: :administrator) }
-  let(:contact) { create(:contact, account: account, custom_attributes: { 'budget' => '5000' }) }
+  let(:contact) { create(:contact, :with_email, account: account, custom_attributes: { 'budget' => '5000' }) }
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let!(:opportunity) do
     ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado, owner: agent)
@@ -85,21 +85,118 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
     end
   end
 
-  describe 'POST .../proposals/:id/approve and .../send' do
+  describe 'POST .../proposals/:id/approve and .../reject (CT-02, CT-03)' do
+    let!(:quote_request) do
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
+    end
     let!(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
-    let!(:version) { proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf') }
+    let!(:version) do
+      proposal.versions.create!(status: :awaiting_approval, quote_request: quote_request, value: 1000, currency: 'BRL')
+    end
+    let(:path) { "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}" }
+    let(:approved_audits) { ScanSolo::AuditEvent.where(event_type: 'proposal.approved') }
 
-    it 'approves the current version' do
-      # RF-04: only an `awaiting_approval` version is approved.
-      version.update!(status: :awaiting_approval)
+    def approve(user = admin)
+      post "#{path}/approve", params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
+                              headers: user.create_new_auth_token, as: :json
+    end
 
-      post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}/approve",
-           params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
-           headers: admin.create_new_auth_token, as: :json
+    def reject(reason, user = admin)
+      post "#{path}/reject", params: { proposal_version_id: version.id, reason: reason }, headers: user.create_new_auth_token, as: :json
+    end
+
+    it 'approves once: a repeat returns 200 with 1 audit and 1 delivery job in total (RF-04, RNF-02)' do
+      approve
+
+      expect(response.parsed_body).to include('status' => 'approved', 'approved_by' => { 'id' => admin.id, 'name' => admin.name })
+      expect(version.reload).to have_attributes(status: 'approved', approved_by_id: admin.id)
+
+      approve
 
       expect(response).to have_http_status(:success)
       expect(response.parsed_body['status']).to eq('approved')
+      expect(approved_audits.count).to eq(1)
+      expect(ScanSolo::ProposalDeliveryJob).to have_been_enqueued.exactly(:once)
     end
+
+    it 'records one audit for two concurrent approvals (RF-04, RNF-02)' do
+      headers = admin.create_new_auth_token
+      params = { proposal_version_id: version.id, correlation_id: SecureRandom.uuid }
+
+      Array.new(2) { Thread.new { open_session.post("#{path}/approve", params: params, headers: headers, as: :json) } }.each(&:join)
+
+      expect(approved_audits.count).to eq(1)
+      expect(version.reload).to be_approved
+    end
+
+    it 'lets the published commercial user approve and forbids any other agent (RF-04, Q-01)' do
+      commercial = create(:user, account: account, role: :agent)
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(commercial_user_id: commercial.id)
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+
+      approve(agent)
+
+      expect(response).to have_http_status(:forbidden)
+      expect(approved_audits).to be_none
+
+      approve(commercial)
+
+      expect(response).to have_http_status(:success)
+      expect(version.reload.approved_by).to eq(commercial)
+    end
+
+    it 'refuses the approval while the lead has no valid e-mail and changes nothing (RF-08)' do
+      contact.update!(email: nil)
+
+      approve
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body).to eq('error' => 'lead_email_missing')
+      expect(version.reload).to be_awaiting_approval
+      expect(approved_audits).to be_none
+    end
+
+    it 'rejects with a reason and reopens the quote request (RF-05, RF-06)' do
+      reject('Valor acima do combinado')
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body).to include(
+        'status' => 'rejected', 'rejection_reason' => 'Valor acima do combinado', 'rejected_by' => { 'id' => admin.id, 'name' => admin.name }
+      )
+      expect(response.parsed_body['rejected_at']).to be_present
+      expect(quote_request.reload).to be_awaiting_reply
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.rejected').count).to eq(1)
+    end
+
+    it 'refuses a blank reason with reason_required (CT-03)' do
+      reject('  ')
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body).to eq('error' => 'reason_required')
+      expect(version.reload).to be_awaiting_approval
+    end
+
+    it 'refuses rejecting an approved version with not_awaiting_approval (CT-03)' do
+      version.update!(status: :approved)
+
+      reject('Tarde demais')
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body).to eq('error' => 'not_awaiting_approval')
+      expect(version.reload).to be_approved
+    end
+
+    it 'forbids a rejection by an agent that is not the commercial user (RF-05)' do
+      reject('Motivo', agent)
+
+      expect(response).to have_http_status(:forbidden)
+      expect(version.reload).to be_awaiting_approval
+    end
+  end
+
+  describe 'POST .../proposals/:id/send (RF-21, CT-04)' do
+    let!(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
+    let!(:version) { proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf') }
 
     # RF-21 / CT-04 replace the OC/RF-77/RF-78 send expectations: the legacy send never emits proposal.send.
     def send_proposal(target = version)
@@ -179,6 +276,51 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       expect(legacy_json).to include('status' => 'approved', 'document_url' => nil, 'valid_until' => nil)
       expect(Time.zone.parse(legacy_json['approved_at'])).to eq(approved_at)
     end
+
+    it 'reads legacy generated/approved/sent versions with the new fields (CT-01, RF-26)' do
+      proposal.versions.create!(status: :approved, approved_at: 1.day.ago, value: 900, currency: 'BRL')
+      proposal.versions.create!(status: :sent, value: 900, currency: 'BRL')
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}", headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:success)
+      body = response.parsed_body
+      expect(body['lead_email_present']).to be(true)
+      expect(body['versions'].pluck('status')).to eq(%w[generated approved sent])
+      expect(body['versions']).to all(include(
+                                        'approved_by' => nil, 'rejected_at' => nil, 'rejected_by' => nil, 'rejection_reason' => nil,
+                                        'delivery' => { 'email_status' => nil, 'notice_status' => nil }
+                                      ))
+    end
+
+    it 'exposes the e-mail and notice delivery states (CT-01)' do
+      email_inbox = create(:channel_email, account: account).inbox
+      email_conversation = create(:conversation, account: account, inbox: email_inbox, contact: contact)
+      email = create(:message, conversation: email_conversation, message_type: :outgoing, source_id: '<proposal@scansolo>')
+      notice = create(:message, conversation: conversation, message_type: :outgoing, status: :failed)
+      version.update!(status: :sent, sent_message: email, notice_message: notice)
+      contact.update!(email: nil)
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals", headers: agent.create_new_auth_token, as: :json
+
+      body = response.parsed_body.first
+      expect(body['lead_email_present']).to be(false)
+      expect(body['versions'].first['delivery']).to eq('email_status' => 'sent', 'notice_status' => 'failed')
+
+      email.update!(source_id: nil)
+      version.update!(notice_message: nil, notice_failure_reason: 'template_missing')
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals", headers: agent.create_new_auth_token, as: :json
+
+      expect(response.parsed_body.first['versions'].first['delivery']).to eq('email_status' => 'pending', 'notice_status' => 'blocked')
+    end
+
+    it 'returns 404 when ScanSolo is disabled for the account' do
+      account.update!(scansolo_enabled: false)
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals", headers: agent.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:not_found)
+    end
   end
 
   describe 'RF-40/RF-42: retry through Make, dead letter and reprocess' do
@@ -244,9 +386,9 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
     let!(:version) { proposal.versions.create!(status: :failed, failure_reason: 'timeout') }
     let(:path) { "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}" }
 
-    it 'rejects agent approve and retry, and send by a non-owner' do
-      %w[approve retry].each do |action|
-        post "#{path}/#{action}", params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
+    it 'rejects agent approve, reject and retry, and send by a non-owner (RF-15)' do
+      %w[approve reject retry].each do |action|
+        post "#{path}/#{action}", params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid, reason: 'x' },
                                   headers: agent.create_new_auth_token, as: :json
         expect(response).to have_http_status(:forbidden)
       end

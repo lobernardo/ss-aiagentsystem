@@ -28,6 +28,8 @@ if version
     json.valid_until version.valid_until
     json.document_url version.document_url
     json.failure_reason version.failure_reason
+    # UI-02: "Rejeitada (com motivo)".
+    json.rejection_reason version.rejection_reason
   end
 else
   json.proposal nil

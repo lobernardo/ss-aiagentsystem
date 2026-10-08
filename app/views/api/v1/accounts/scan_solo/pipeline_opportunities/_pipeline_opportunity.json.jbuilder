@@ -2,6 +2,8 @@ json.id resource.id
 json.account_id resource.account_id
 json.contact_id resource.contact_id
 json.contact_name resource.contact.name
+# CT-01 / RF-09: the lead e-mail the proposal is delivered to (UI-03).
+json.lead_email resource.contact.email
 json.conversation_id resource.conversation_id
 json.owner_id resource.owner_id
 json.stage resource.stage

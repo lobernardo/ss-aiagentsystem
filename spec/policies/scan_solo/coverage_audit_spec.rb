@@ -89,6 +89,18 @@ RSpec.describe 'ScanSolo Pundit fail-closed coverage audit' do
     end
   end
 
+  # CT-02/CT-03/RF-15: every proposal action -- including the new `reject` --
+  # goes through its own ProposalPolicy predicate before touching a version.
+  { approve: :approve?, reject: :reject?, send_proposal: :send?, retry: :retry? }.each do |action, predicate|
+    it "authorizes ProposalsController##{action} through ScanSolo::ProposalPolicy##{predicate}" do
+      source = File.read(Rails.root.join('app/controllers/api/v1/accounts/scan_solo/proposals_controller.rb'))
+      body = source[/^  def #{action}\n(.*?)^  end\n/m, 1]
+
+      expect(body).to match(/authorize\(@proposal, :#{Regexp.escape(predicate.to_s)}\)/)
+      expect(ScanSolo::ProposalPolicy.instance_method(predicate).owner).to eq(ScanSolo::ProposalPolicy)
+    end
+  end
+
   webhook_controllers_requiring_signature_verification.each do |controller_name|
     it "fails closed on unverifiable callback identity for #{controller_name} without relying on Pundit" do
       file = Rails.root.join('app/controllers', "#{controller_name.underscore}.rb")

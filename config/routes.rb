@@ -483,6 +483,7 @@ Rails.application.routes.draw do
             resources :proposals, only: [:index, :show], controller: 'proposals' do
               member do
                 post :approve
+                post :reject
                 post 'send', to: 'proposals#send_proposal'
                 post :retry
               end

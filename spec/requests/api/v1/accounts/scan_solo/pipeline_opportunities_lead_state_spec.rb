@@ -22,8 +22,8 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API lead_state (CT-01)', type: :
       body = response.parsed_body
       expect(response).to have_http_status(:success)
       # CT-02 adds the card fields, the quote_request/proposal/initial_template_failure objects and, in v1.3,
-      # quote_request_resend_available (RF-56) (RNF-11).
-      expect(body.keys).to eq(%w[id account_id contact_id contact_name conversation_id owner_id stage last_customer_interaction_at
+      # quote_request_resend_available (RF-56) (RNF-11); CT-01/RF-09 add lead_email (RNF-10).
+      expect(body.keys).to eq(%w[id account_id contact_id contact_name lead_email conversation_id owner_id stage last_customer_interaction_at
                                  next_follow_up_at created_at updated_at stage_history lead_source company service city_uf
                                  ai_control_state quote_request_status proposal_status lead_state quote_request proposal
                                  initial_template_failure quote_request_resend_available])

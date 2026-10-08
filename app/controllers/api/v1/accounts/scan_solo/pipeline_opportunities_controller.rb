@@ -13,6 +13,10 @@
 # CT-01 / RF-05: create ("Novo lead") rejects malformed input here with 422
 # before any write; the database rules (opt-out, conflict, open opportunity)
 # belong to ScanSolo::Pipeline::ManualLeadService.
+#
+# CT-09 / RF-09: update also edits the lead e-mail; a malformed or empty
+# address is refused here with 422 `invalid_email`, the conflict with another
+# contact belongs to ScanSolo::Pipeline::LeadEmailService.
 class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Accounts::ScanSolo::BaseController
   STAGE_TRANSITION_IDEMPOTENCY_WINDOW = 5.seconds
   E164_PHONE_REGEXP = /\A\+[1-9]\d{1,14}\z/
@@ -50,8 +54,16 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
 
   def update
     authorize(@opportunity)
-    @opportunity.update!(update_params)
+    input = update_params
+    if input.key?(:email)
+      return render(json: { error: 'invalid_email' }, status: :unprocessable_entity) unless input[:email].to_s.match?(URI::MailTo::EMAIL_REGEXP)
+
+      ::ScanSolo::Pipeline::LeadEmailService.call(opportunity: @opportunity, email: input[:email])
+    end
+    @opportunity.update!(input.except(:email))
     project_lead_state
+  rescue CustomExceptions::ScanSolo::LeadEmailRejected => e
+    render json: { error: e.code }, status: :unprocessable_entity
   end
 
   def stage_transitions
@@ -86,7 +98,7 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
   end
 
   def update_params
-    params.permit(:owner_id)
+    params.permit(:owner_id, :email)
   end
 
   def create_params

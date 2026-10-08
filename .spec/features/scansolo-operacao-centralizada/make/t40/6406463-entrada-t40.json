@@ -1,0 +1,1364 @@
+{
+  "name": "ScanSOLO_Proposta_Entrada",
+  "flow": [
+    {
+      "id": 1,
+      "mapper": {},
+      "module": "gateway:CustomWebHook",
+      "version": 1,
+      "metadata": {
+        "instant": true,
+        "designer": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      "parameters": {
+        "hook": 2859035,
+        "maxResults": 1
+      }
+    },
+    {
+      "id": 2,
+      "mapper": {
+        "key": "default",
+        "returnWrapped": false
+      },
+      "module": "datastore:GetRecord",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 0
+        }
+      },
+      "parameters": {
+        "datastore": 158313
+      }
+    },
+    {
+      "id": 3,
+      "mapper": {
+        "scope": "roundtrip",
+        "variables": [
+          {
+            "name": "auth_header",
+            "value": "{{get(map(1.__IMTHEADERS__; \"value\"; \"name\"; \"authorization\"); 1)}}"
+          }
+        ]
+      },
+      "module": "util:SetVariables",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 600,
+          "y": 0
+        }
+      },
+      "parameters": {}
+    },
+    {
+      "id": 4,
+      "mapper": {
+        "scope": "roundtrip",
+        "variables": [
+          {
+            "name": "auth_ok",
+            "value": "{{if(length(2.inbound_bearer) > 20; if(replace(3.auth_header; \"Bearer \"; \"\") = 2.inbound_bearer; \"yes\"; \"no\"); \"no\")}}"
+          }
+        ]
+      },
+      "module": "util:SetVariables",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 900,
+          "y": 0
+        }
+      },
+      "parameters": {}
+    },
+    {
+      "id": 6,
+      "mapper": {
+        "key": "pv_{{1.proposal_version_id}}"
+      },
+      "module": "datastore:ExistRecord",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 1050,
+          "y": 0
+        }
+      },
+      "parameters": {
+        "datastore": 158314
+      }
+    },
+    {
+      "id": 5,
+      "mapper": null,
+      "module": "builtin:BasicRouter",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 1200,
+          "y": 0
+        }
+      },
+      "parameters": {},
+      "routes": [
+        {
+          "flow": [
+            {
+              "id": 10,
+              "mapper": {
+                "body": "{\"error\":\"unauthorized\"}",
+                "status": "401",
+                "headers": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ]
+              },
+              "module": "gateway:WebhookRespond",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": -1200
+                }
+              },
+              "parameters": {},
+              "filter": {
+                "name": "Não autorizado",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{4.auth_ok}}",
+                      "b": "yes",
+                      "o": "text:notequal"
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 70,
+              "mapper": {
+                "body": "{\"status\":\"accepted\",\"correlation_id\":\"{{1.correlation_id}}\"}",
+                "status": "200",
+                "headers": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ]
+              },
+              "module": "gateway:WebhookRespond",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": -800
+                }
+              },
+              "parameters": {},
+              "filter": {
+                "name": "proposal.generate já gerada (RF-50)",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{4.auth_ok}}",
+                      "b": "yes",
+                      "o": "text:equal"
+                    },
+                    {
+                      "a": "{{1.action}}",
+                      "b": "proposal.generate",
+                      "o": "text:equal"
+                    },
+                    {
+                      "a": "{{6.exist}}",
+                      "b": true,
+                      "o": "boolean:equal"
+                    }
+                  ]
+                ]
+              }
+            },
+            {
+              "id": 71,
+              "mapper": {
+                "key": "pv_{{1.proposal_version_id}}",
+                "returnWrapped": false
+              },
+              "module": "datastore:GetRecord",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 1800,
+                  "y": -800
+                }
+              },
+              "parameters": {
+                "datastore": 158314
+              }
+            },
+            {
+              "id": 72,
+              "mapper": {
+                "correlation_id": "{{1.correlation_id}}",
+                "idempotency_key": "{{1.idempotency_key}}",
+                "action": "proposal.generate",
+                "status": "success",
+                "result": {
+                  "proposal_version_id": "{{1.proposal_version_id}}",
+                  "artifact_url": "https://drive.google.com/uc?export=download&id={{71.doc_id}}",
+                  "total_value": "{{71.total_value}}",
+                  "currency": "BRL",
+                  "valid_until": "{{formatDate(addDays(71.updated_at; 2.validade_dias); \"YYYY-MM-DD\")}}",
+                  "template_version": "scansolo-entrada-t40"
+                }
+              },
+              "module": "json:CreateJSON",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 2100,
+                  "y": -800
+                }
+              },
+              "parameters": {
+                "type": 528275
+              }
+            },
+            {
+              "id": 73,
+              "mapper": {
+                "scope": "roundtrip",
+                "variables": [
+                  {
+                    "name": "cb_sig",
+                    "value": "{{sha256(72.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
+                  }
+                ]
+              },
+              "module": "util:SetVariables",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 2400,
+                  "y": -800
+                }
+              },
+              "parameters": {}
+            },
+            {
+              "id": 74,
+              "mapper": {
+                "qs": [],
+                "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
+                "data": "{{72.json}}",
+                "gzip": true,
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "X-Make-Signature",
+                    "value": "{{73.cb_sig}}"
+                  }
+                ],
+                "useMtls": false,
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "serializeUrl": false,
+                "shareCookies": false,
+                "parseResponse": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "rejectUnauthorized": true
+              },
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 2700,
+                  "y": -800
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 20,
+              "mapper": {
+                "body": "{\"status\":\"accepted\",\"correlation_id\":\"{{1.correlation_id}}\"}",
+                "status": "200",
+                "headers": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ]
+              },
+              "module": "gateway:WebhookRespond",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": 0
+                }
+              },
+              "parameters": {},
+              "filter": {
+                "name": "proposal.generate (nova geração)",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{4.auth_ok}}",
+                      "b": "yes",
+                      "o": "text:equal"
+                    },
+                    {
+                      "a": "{{1.action}}",
+                      "b": "proposal.generate",
+                      "o": "text:equal"
+                    },
+                    {
+                      "a": "{{6.exist}}",
+                      "b": false,
+                      "o": "boolean:equal"
+                    },
+                    {
+                      "a": "{{1.commercial.total_value}}",
+                      "o": "exist"
+                    }
+                  ]
+                ]
+              }
+            },
+            {
+              "id": 25,
+              "mapper": {
+                "scope": "roundtrip",
+                "variables": [
+                  {
+                    "name": "nome",
+                    "value": "{{ifempty(1.qualification.nome; \"\")}}"
+                  },
+                  {
+                    "name": "email",
+                    "value": "{{ifempty(1.qualification.email; \"\")}}"
+                  },
+                  {
+                    "name": "empresa",
+                    "value": "{{ifempty(1.qualification.empresa; ifempty(1.qualification.nome; \"\"))}}"
+                  },
+                  {
+                    "name": "projeto",
+                    "value": "{{ifempty(1.qualification.projeto; \"\")}}"
+                  },
+                  {
+                    "name": "endereco",
+                    "value": "{{ifempty(1.qualification.endereco_obra; \"\")}}"
+                  },
+                  {
+                    "name": "cidade_uf",
+                    "value": "{{ifempty(1.qualification.cidade_uf; \"\")}}"
+                  },
+                  {
+                    "name": "escopo",
+                    "value": "{{ifempty(1.qualification.tipo_intervencao; \"\")}}"
+                  },
+                  {
+                    "name": "area",
+                    "value": "{{ifempty(1.qualification.area; \"\")}}"
+                  },
+                  {
+                    "name": "profundidade",
+                    "value": "{{ifempty(1.qualification.profundidade; \"\")}}"
+                  },
+                  {
+                    "name": "data_hoje",
+                    "value": "{{formatDate(now; \"DD/MM/YYYY\")}}"
+                  }
+                ]
+              },
+              "module": "util:SetVariables",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 1800,
+                  "y": 0
+                }
+              },
+              "parameters": {}
+            },
+            {
+              "id": 30,
+              "mapper": {
+                "file": "1iXxNeqPgdJXoPiOTC8KEv2xnU7MuvfRkSOUWit_1V70",
+                "name": "Proposta_ScanSOLO_{{25.empresa}}_{{formatDate(now; \"YYYY-MM-DD\")}}_v{{1.proposal_version_id}}",
+                "select": "map",
+                "folderId": "13c13lzgtf94AYACCq9DcQaP-KLzqEvRfN6CmWv3HAuJsDFFmm3ym2B3S_jHw1x969QxtVNLP"
+              },
+              "module": "google-drive:copyAFile",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 2100,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": 8175929
+              },
+              "onerror": [
+                {
+                  "id": 300,
+                  "mapper": {
+                    "correlation_id": "{{1.correlation_id}}",
+                    "idempotency_key": "{{1.idempotency_key}}",
+                    "action": "proposal.generate",
+                    "status": "failure",
+                    "result": {
+                      "proposal_version_id": "{{1.proposal_version_id}}",
+                      "error_code": "document_generation_failed",
+                      "error_message": "Falha ao copiar o modelo da proposta.",
+                      "retryable": true
+                    }
+                  },
+                  "module": "json:CreateJSON",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 2100,
+                      "y": 300
+                    }
+                  },
+                  "parameters": {
+                    "type": 528276
+                  }
+                },
+                {
+                  "id": 301,
+                  "mapper": {
+                    "scope": "roundtrip",
+                    "variables": [
+                      {
+                        "name": "cb_sig",
+                        "value": "{{sha256(300.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
+                      }
+                    ]
+                  },
+                  "module": "util:SetVariables",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 2400,
+                      "y": 300
+                    }
+                  },
+                  "parameters": {}
+                },
+                {
+                  "id": 302,
+                  "mapper": {
+                    "qs": [],
+                    "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
+                    "data": "{{300.json}}",
+                    "gzip": true,
+                    "method": "post",
+                    "headers": [
+                      {
+                        "name": "X-Make-Signature",
+                        "value": "{{301.cb_sig}}"
+                      }
+                    ],
+                    "useMtls": false,
+                    "bodyType": "raw",
+                    "contentType": "application/json",
+                    "serializeUrl": false,
+                    "shareCookies": false,
+                    "parseResponse": false,
+                    "followRedirect": true,
+                    "useQuerystring": false,
+                    "rejectUnauthorized": true
+                  },
+                  "module": "http:ActionSendData",
+                  "version": 3,
+                  "metadata": {
+                    "designer": {
+                      "x": 2700,
+                      "y": 300
+                    }
+                  },
+                  "parameters": {
+                    "handleErrors": true,
+                    "useNewZLibDeCompress": true
+                  }
+                },
+                {
+                  "id": 303,
+                  "mapper": {},
+                  "module": "builtin:Ignore",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3000,
+                      "y": 300
+                    }
+                  },
+                  "parameters": {}
+                }
+              ]
+            },
+            {
+              "id": 31,
+              "mapper": {
+                "document": "/{{30.id}}",
+                "destination": "drive",
+                "replaceText": [
+                  {
+                    "oldText": "{{NOME_EMPRESA}}",
+                    "newText": "{{25.empresa}}"
+                  },
+                  {
+                    "oldText": "{{NOME_CONTATO}}",
+                    "newText": "{{25.nome}}"
+                  },
+                  {
+                    "oldText": "{{NOME_CLIENTE}}",
+                    "newText": "{{25.nome}}"
+                  },
+                  {
+                    "oldText": "{{PROJETO_CLIENTE_FINAL}}",
+                    "newText": "{{ifempty(25.projeto; 25.empresa)}}"
+                  },
+                  {
+                    "oldText": "{{RUA_CIDADE_ESTADO}}",
+                    "newText": "{{25.endereco}}{{if(25.endereco; \", \"; \"\")}}{{25.cidade_uf}}"
+                  },
+                  {
+                    "oldText": "{{ENDERECO_LOGRADOURO}}",
+                    "newText": "{{ifempty(25.endereco; 25.cidade_uf)}}"
+                  },
+                  {
+                    "oldText": "{{CIDADE_ESTADO}}",
+                    "newText": "{{25.cidade_uf}}"
+                  },
+                  {
+                    "oldText": "{{LOCAL_SERVICO}}",
+                    "newText": "{{25.cidade_uf}}"
+                  },
+                  {
+                    "oldText": "{{DATA_SOLICITACAO}}",
+                    "newText": "{{25.data_hoje}}"
+                  },
+                  {
+                    "oldText": "{{DESCRICAO_ESCOPO}}",
+                    "newText": "{{ifempty(1.commercial.scope; 25.escopo)}}"
+                  },
+                  {
+                    "oldText": "{{TÍTULO_SERVIÇO}}",
+                    "newText": "{{25.escopo}}"
+                  },
+                  {
+                    "oldText": "{{AREA_TOTAL}}",
+                    "newText": "{{25.area}}"
+                  },
+                  {
+                    "oldText": "{{PROFUNDIDADE}}",
+                    "newText": "{{25.profundidade}}"
+                  },
+                  {
+                    "oldText": "{{NÚMERO_PROPOSTA}}",
+                    "newText": "{{1.proposal_number}}"
+                  },
+                  {
+                    "oldText": "{{REVISÃO}}",
+                    "newText": "Rev.01"
+                  },
+                  {
+                    "oldText": "{{LOGO_CLIENTE}}",
+                    "newText": ""
+                  },
+                  {
+                    "oldText": "{{PRAZO_TOTAL}}",
+                    "newText": "{{1.commercial.schedule}}"
+                  },
+                  {
+                    "oldText": "{{VALOR_NUMERICO}}",
+                    "newText": "R$ {{formatNumber(1.commercial.total_value; 2; \",\"; \".\")}}"
+                  },
+                  {
+                    "oldText": "{{VALOR_EXTENSO}}",
+                    "newText": "{{1.commercial.total_value_in_words}}"
+                  },
+                  {
+                    "oldText": "{{CONDICOES_PAGAMENTO}}",
+                    "newText": "{{1.commercial.payment_terms}}"
+                  },
+                  {
+                    "oldText": "{{OBSERVACOES}}",
+                    "newText": "{{ifempty(1.commercial.notes; \"\")}}"
+                  }
+                ]
+              },
+              "module": "google-docs:replaceATextInADocument",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 2400,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": 9163373
+              },
+              "onerror": [
+                {
+                  "id": 310,
+                  "mapper": {
+                    "correlation_id": "{{1.correlation_id}}",
+                    "idempotency_key": "{{1.idempotency_key}}",
+                    "action": "proposal.generate",
+                    "status": "failure",
+                    "result": {
+                      "proposal_version_id": "{{1.proposal_version_id}}",
+                      "error_code": "document_generation_failed",
+                      "error_message": "Falha ao preencher os dados da proposta no documento.",
+                      "retryable": true
+                    }
+                  },
+                  "module": "json:CreateJSON",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 2400,
+                      "y": 600
+                    }
+                  },
+                  "parameters": {
+                    "type": 528276
+                  }
+                },
+                {
+                  "id": 311,
+                  "mapper": {
+                    "scope": "roundtrip",
+                    "variables": [
+                      {
+                        "name": "cb_sig",
+                        "value": "{{sha256(310.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
+                      }
+                    ]
+                  },
+                  "module": "util:SetVariables",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 2700,
+                      "y": 600
+                    }
+                  },
+                  "parameters": {}
+                },
+                {
+                  "id": 312,
+                  "mapper": {
+                    "qs": [],
+                    "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
+                    "data": "{{310.json}}",
+                    "gzip": true,
+                    "method": "post",
+                    "headers": [
+                      {
+                        "name": "X-Make-Signature",
+                        "value": "{{311.cb_sig}}"
+                      }
+                    ],
+                    "useMtls": false,
+                    "bodyType": "raw",
+                    "contentType": "application/json",
+                    "serializeUrl": false,
+                    "shareCookies": false,
+                    "parseResponse": false,
+                    "followRedirect": true,
+                    "useQuerystring": false,
+                    "rejectUnauthorized": true
+                  },
+                  "module": "http:ActionSendData",
+                  "version": 3,
+                  "metadata": {
+                    "designer": {
+                      "x": 3000,
+                      "y": 600
+                    }
+                  },
+                  "parameters": {
+                    "handleErrors": true,
+                    "useNewZLibDeCompress": true
+                  }
+                },
+                {
+                  "id": 313,
+                  "mapper": {},
+                  "module": "builtin:Ignore",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3300,
+                      "y": 600
+                    }
+                  },
+                  "parameters": {}
+                }
+              ]
+            },
+            {
+              "id": 35,
+              "mapper": {
+                "file": "{{30.id}}",
+                "select": "map",
+                "formatDrawings": "application/pdf",
+                "formatDocuments": "application/pdf",
+                "formatSpreadsheets": "application/pdf",
+                "formatPresentations": "application/pdf"
+              },
+              "module": "google-drive:getAFile",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 2700,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": 8175929
+              },
+              "onerror": [
+                {
+                  "id": 350,
+                  "mapper": {
+                    "correlation_id": "{{1.correlation_id}}",
+                    "idempotency_key": "{{1.idempotency_key}}",
+                    "action": "proposal.generate",
+                    "status": "failure",
+                    "result": {
+                      "proposal_version_id": "{{1.proposal_version_id}}",
+                      "error_code": "document_generation_failed",
+                      "error_message": "Falha ao exportar a proposta em PDF.",
+                      "retryable": true
+                    }
+                  },
+                  "module": "json:CreateJSON",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 2700,
+                      "y": 900
+                    }
+                  },
+                  "parameters": {
+                    "type": 528276
+                  }
+                },
+                {
+                  "id": 351,
+                  "mapper": {
+                    "scope": "roundtrip",
+                    "variables": [
+                      {
+                        "name": "cb_sig",
+                        "value": "{{sha256(350.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
+                      }
+                    ]
+                  },
+                  "module": "util:SetVariables",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3000,
+                      "y": 900
+                    }
+                  },
+                  "parameters": {}
+                },
+                {
+                  "id": 352,
+                  "mapper": {
+                    "qs": [],
+                    "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
+                    "data": "{{350.json}}",
+                    "gzip": true,
+                    "method": "post",
+                    "headers": [
+                      {
+                        "name": "X-Make-Signature",
+                        "value": "{{351.cb_sig}}"
+                      }
+                    ],
+                    "useMtls": false,
+                    "bodyType": "raw",
+                    "contentType": "application/json",
+                    "serializeUrl": false,
+                    "shareCookies": false,
+                    "parseResponse": false,
+                    "followRedirect": true,
+                    "useQuerystring": false,
+                    "rejectUnauthorized": true
+                  },
+                  "module": "http:ActionSendData",
+                  "version": 3,
+                  "metadata": {
+                    "designer": {
+                      "x": 3300,
+                      "y": 900
+                    }
+                  },
+                  "parameters": {
+                    "handleErrors": true,
+                    "useNewZLibDeCompress": true
+                  }
+                },
+                {
+                  "id": 353,
+                  "mapper": {},
+                  "module": "builtin:Ignore",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3600,
+                      "y": 900
+                    }
+                  },
+                  "parameters": {}
+                }
+              ]
+            },
+            {
+              "id": 36,
+              "mapper": {
+                "data": "{{35.data}}",
+                "select": "map",
+                "filename": "Proposta_ScanSOLO_{{25.empresa}}_{{formatDate(now; \"YYYY-MM-DD\")}}_v{{1.proposal_version_id}}.pdf",
+                "folderId": "13c13lzgtf94AYACCq9DcQaP-KLzqEvRfN6CmWv3HAuJsDFFmm3ym2B3S_jHw1x969QxtVNLP",
+                "convert": false
+              },
+              "module": "google-drive:uploadAFile",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 3000,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": 8175929
+              },
+              "onerror": [
+                {
+                  "id": 360,
+                  "mapper": {
+                    "correlation_id": "{{1.correlation_id}}",
+                    "idempotency_key": "{{1.idempotency_key}}",
+                    "action": "proposal.generate",
+                    "status": "failure",
+                    "result": {
+                      "proposal_version_id": "{{1.proposal_version_id}}",
+                      "error_code": "document_generation_failed",
+                      "error_message": "Falha ao salvar o PDF da proposta no Drive.",
+                      "retryable": true
+                    }
+                  },
+                  "module": "json:CreateJSON",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3000,
+                      "y": 1200
+                    }
+                  },
+                  "parameters": {
+                    "type": 528276
+                  }
+                },
+                {
+                  "id": 361,
+                  "mapper": {
+                    "scope": "roundtrip",
+                    "variables": [
+                      {
+                        "name": "cb_sig",
+                        "value": "{{sha256(360.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
+                      }
+                    ]
+                  },
+                  "module": "util:SetVariables",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3300,
+                      "y": 1200
+                    }
+                  },
+                  "parameters": {}
+                },
+                {
+                  "id": 362,
+                  "mapper": {
+                    "qs": [],
+                    "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
+                    "data": "{{360.json}}",
+                    "gzip": true,
+                    "method": "post",
+                    "headers": [
+                      {
+                        "name": "X-Make-Signature",
+                        "value": "{{361.cb_sig}}"
+                      }
+                    ],
+                    "useMtls": false,
+                    "bodyType": "raw",
+                    "contentType": "application/json",
+                    "serializeUrl": false,
+                    "shareCookies": false,
+                    "parseResponse": false,
+                    "followRedirect": true,
+                    "useQuerystring": false,
+                    "rejectUnauthorized": true
+                  },
+                  "module": "http:ActionSendData",
+                  "version": 3,
+                  "metadata": {
+                    "designer": {
+                      "x": 3600,
+                      "y": 1200
+                    }
+                  },
+                  "parameters": {
+                    "handleErrors": true,
+                    "useNewZLibDeCompress": true
+                  }
+                },
+                {
+                  "id": 363,
+                  "mapper": {},
+                  "module": "builtin:Ignore",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3900,
+                      "y": 1200
+                    }
+                  },
+                  "parameters": {}
+                }
+              ]
+            },
+            {
+              "id": 37,
+              "mapper": {
+                "destination": "drive",
+                "select": "file",
+                "file": "{{36.id}}",
+                "role": "reader",
+                "type": "anyone",
+                "allowFileDiscovery": false
+              },
+              "module": "google-drive:shareAFileFolder",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 3300,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": 8175929
+              },
+              "onerror": [
+                {
+                  "id": 370,
+                  "mapper": {
+                    "correlation_id": "{{1.correlation_id}}",
+                    "idempotency_key": "{{1.idempotency_key}}",
+                    "action": "proposal.generate",
+                    "status": "failure",
+                    "result": {
+                      "proposal_version_id": "{{1.proposal_version_id}}",
+                      "error_code": "document_generation_failed",
+                      "error_message": "Falha ao liberar o download do PDF da proposta.",
+                      "retryable": true
+                    }
+                  },
+                  "module": "json:CreateJSON",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3300,
+                      "y": 1500
+                    }
+                  },
+                  "parameters": {
+                    "type": 528276
+                  }
+                },
+                {
+                  "id": 371,
+                  "mapper": {
+                    "scope": "roundtrip",
+                    "variables": [
+                      {
+                        "name": "cb_sig",
+                        "value": "{{sha256(370.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
+                      }
+                    ]
+                  },
+                  "module": "util:SetVariables",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 3600,
+                      "y": 1500
+                    }
+                  },
+                  "parameters": {}
+                },
+                {
+                  "id": 372,
+                  "mapper": {
+                    "qs": [],
+                    "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
+                    "data": "{{370.json}}",
+                    "gzip": true,
+                    "method": "post",
+                    "headers": [
+                      {
+                        "name": "X-Make-Signature",
+                        "value": "{{371.cb_sig}}"
+                      }
+                    ],
+                    "useMtls": false,
+                    "bodyType": "raw",
+                    "contentType": "application/json",
+                    "serializeUrl": false,
+                    "shareCookies": false,
+                    "parseResponse": false,
+                    "followRedirect": true,
+                    "useQuerystring": false,
+                    "rejectUnauthorized": true
+                  },
+                  "module": "http:ActionSendData",
+                  "version": 3,
+                  "metadata": {
+                    "designer": {
+                      "x": 3900,
+                      "y": 1500
+                    }
+                  },
+                  "parameters": {
+                    "handleErrors": true,
+                    "useNewZLibDeCompress": true
+                  }
+                },
+                {
+                  "id": 373,
+                  "mapper": {},
+                  "module": "builtin:Ignore",
+                  "version": 1,
+                  "metadata": {
+                    "designer": {
+                      "x": 4200,
+                      "y": 1500
+                    }
+                  },
+                  "parameters": {}
+                }
+              ]
+            },
+            {
+              "id": 38,
+              "mapper": {
+                "scope": "roundtrip",
+                "variables": [
+                  {
+                    "name": "generated_at",
+                    "value": "{{now}}"
+                  },
+                  {
+                    "name": "artifact_url",
+                    "value": "https://drive.google.com/uc?export=download&id={{36.id}}"
+                  },
+                  {
+                    "name": "valid_until",
+                    "value": "{{formatDate(addDays(now; 2.validade_dias); \"YYYY-MM-DD\")}}"
+                  }
+                ]
+              },
+              "module": "util:SetVariables",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 3600,
+                  "y": 0
+                }
+              },
+              "parameters": {}
+            },
+            {
+              "id": 32,
+              "mapper": {
+                "key": "pv_{{1.proposal_version_id}}",
+                "overwrite": true,
+                "data": {
+                  "proposal_version_id": "{{1.proposal_version_id}}",
+                  "opportunity_id": "{{1.opportunity_id}}",
+                  "account_id": "{{1.account_id}}",
+                  "correlation_id": "{{1.correlation_id}}",
+                  "idempotency_key": "{{1.idempotency_key}}",
+                  "doc_id": "{{36.id}}",
+                  "contact_name": "{{25.nome}}",
+                  "contact_email": "{{25.email}}",
+                  "company": "{{25.empresa}}",
+                  "total_value": "{{1.commercial.total_value}}",
+                  "status": "gerada",
+                  "updated_at": "{{38.generated_at}}"
+                }
+              },
+              "module": "datastore:AddRecord",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 3900,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "datastore": 158314
+              }
+            },
+            {
+              "id": 50,
+              "mapper": {
+                "correlation_id": "{{1.correlation_id}}",
+                "idempotency_key": "{{1.idempotency_key}}",
+                "action": "proposal.generate",
+                "status": "success",
+                "result": {
+                  "proposal_version_id": "{{1.proposal_version_id}}",
+                  "artifact_url": "{{38.artifact_url}}",
+                  "total_value": "{{1.commercial.total_value}}",
+                  "currency": "BRL",
+                  "valid_until": "{{38.valid_until}}",
+                  "template_version": "scansolo-entrada-t40"
+                }
+              },
+              "module": "json:CreateJSON",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 4200,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "type": 528275
+              }
+            },
+            {
+              "id": 51,
+              "mapper": {
+                "scope": "roundtrip",
+                "variables": [
+                  {
+                    "name": "cb_sig",
+                    "value": "{{sha256(50.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
+                  }
+                ]
+              },
+              "module": "util:SetVariables",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 4500,
+                  "y": 0
+                }
+              },
+              "parameters": {}
+            },
+            {
+              "id": 52,
+              "mapper": {
+                "qs": [],
+                "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
+                "data": "{{50.json}}",
+                "gzip": true,
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "X-Make-Signature",
+                    "value": "{{51.cb_sig}}"
+                  }
+                ],
+                "useMtls": false,
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "serializeUrl": false,
+                "shareCookies": false,
+                "parseResponse": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "rejectUnauthorized": true
+              },
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 4800,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 75,
+              "mapper": {
+                "body": "{\"error\":\"commercial_required\",\"correlation_id\":\"{{1.correlation_id}}\"}",
+                "status": "422",
+                "headers": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ]
+              },
+              "module": "gateway:WebhookRespond",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": 1600
+                }
+              },
+              "parameters": {},
+              "filter": {
+                "name": "proposal.generate sem commercial",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{4.auth_ok}}",
+                      "b": "yes",
+                      "o": "text:equal"
+                    },
+                    {
+                      "a": "{{1.action}}",
+                      "b": "proposal.generate",
+                      "o": "text:equal"
+                    },
+                    {
+                      "a": "{{6.exist}}",
+                      "b": false,
+                      "o": "boolean:equal"
+                    },
+                    {
+                      "a": "{{1.commercial.total_value}}",
+                      "o": "notexist"
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 80,
+              "mapper": {
+                "body": "{\"error\":\"unsupported_action\",\"correlation_id\":\"{{1.correlation_id}}\"}",
+                "status": "422",
+                "headers": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ]
+              },
+              "module": "gateway:WebhookRespond",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": 2000
+                }
+              },
+              "parameters": {},
+              "filter": {
+                "name": "Ação não suportada",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{4.auth_ok}}",
+                      "b": "yes",
+                      "o": "text:equal"
+                    },
+                    {
+                      "a": "{{1.action}}",
+                      "b": "proposal.generate",
+                      "o": "text:notequal"
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "instant": true,
+    "version": 1,
+    "designer": {
+      "orphans": []
+    },
+    "scenario": {
+      "dlq": false,
+      "dataloss": false,
+      "maxErrors": 3,
+      "autoCommit": true,
+      "roundtrips": 1,
+      "sequential": false,
+      "confidential": false,
+      "freshVariables": false,
+      "autoCommitTriggerLast": true
+    }
+  },
+  "scheduling": {
+    "type": "immediately"
+  },
+  "interface": {
+    "input": [],
+    "output": []
+  }
+}

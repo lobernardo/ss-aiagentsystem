@@ -86,3 +86,32 @@ Estado lido via Make MCP imediatamente antes (2026-10-08): ON = 6177829, 6019491
 | 5237984 | Proposta_automatizada | OFF | nenhuma (já inativo) | OFF |
 
 Listagem final via Make MCP (`scenarios_list`, team 701134, pasta 247121, 2026-10-08): os 8 cenários existem (`deleted: false`) e todos estão `isActive: false`: 6177833, 5325058, 5497443, 6177829, 6019491, 6036802, 5237984 e 6406463 (`Entrada`, ainda inativa). Os 7 legados estão OFF, 5325058 e 5237984 continuam inativos, e nenhum cenário foi apagado.
+
+## T40 — Make: `Entrada` adaptada ao CT-05/CT-06 + CT-08, inativa (RF-28)
+
+Status: **parcial** (2026-10-08) — blueprint aplicado com o cenário OFF. Falta o "Run once", que depende de autorização explícita do desenvolvedor.
+
+Decisões do desenvolvedor (2026-10-08):
+- O PDF de cada versão é compartilhado como "qualquer pessoa com o link: leitor" (`allowFileDiscovery: false`), porque o Rails baixa o `artifact_url` sem credencial Google (RF-48). O Google Doc editável continua privado.
+- Foram criadas 2 data structures para o Create JSON do callback (RF-49): `ScanSOLO_Callback_Success` (528275) e `ScanSOLO_Callback_Failure` (528276), espelhando o schema do `CallbackVerifier`.
+
+Aplicação: `scenarios_update 6406463`, 2026-10-08T17:49:58Z. Resposta: `isActive: false`, `isinvalid: false`, 46 módulos. Blueprint aplicado em `t40/6406463-entrada-t40.json`; o anterior está em `backups/6406463-20261008.json`.
+
+Contrato conferido:
+- Request (CT-05): o corpo do `OutboundRequestService` tem `account_id`, `opportunity_id`, `proposal_version_id`, `proposal_number`, `qualification`, `commercial`, `correlation_id`, `idempotency_key` e `action`, e o header `Authorization: Bearer` é conferido contra `ScanSOLO_Config.inbound_bearer` (módulos 3/4, inalterados).
+- Callback (CT-06/CT-08): `POST {chatwoot_base_url}/webhooks/scan_solo/make` com `X-Make-Signature` = HMAC-SHA256 hex do corpo exato, com `signing_secret` (= `scan_solo.make.inbound_signing_secret`). Corpo via Create JSON: `correlation_id` e `idempotency_key` do request, `action: proposal.generate`, `result.total_value = commercial.total_value` recebido (RF-19), `currency: BRL`, `valid_until` = hoje + `validade_dias`, `template_version: scansolo-entrada-t40`.
+- `artifact_url` = `https://drive.google.com/uc?export=download&id=<PDF>`, um PDF exportado do Doc, enviado à pasta de propostas e compartilhado como leitor.
+- Idempotência (RF-50): `ExistRecord pv_{proposal_version_id}` antes do roteador. Se o registro já existe, nenhum documento é gerado: o callback de sucesso é reenviado a partir do registro (`doc_id` = id do PDF, `updated_at` = momento da geração), com o `correlation_id` do request atual. O registro `pv_` só é gravado depois que o PDF existe e está compartilhado, e antes do callback.
+- Falhas (RF-49): copiar, preencher, exportar, enviar ou compartilhar → callback `failure` assinado (`document_generation_failed`, `retryable: true`) via Create JSON, e depois `Ignore`.
+
+Removido ou neutralizado:
+- Rota `proposal.send` (40–48, 60–63): enviava e-mail com o PDF ao lead. Agora `action` ≠ `proposal.generate` responde 422 `unsupported_action`.
+- Módulo 34 (`email:ActionSendEmail` ao comercial com o link do Google Form).
+- Módulos 22/23 (GET na API do Chatwoot com `chatwoot_api_token`): os dados vêm só de `qualification`.
+- Módulo 33 (registro `doc_{id}`, usado só pelo legado 6177829, agora inativo).
+
+Validações estáticas: 0 módulos `email`/`google-email`/`gmail`, 0 WhatsApp/HTTP fora do callback ao Chatwoot, 0 URL `hook.*.make.com`, 0 `proposal.send`, ids únicos.
+
+Pendências:
+- Run once com payload de teste (ver o relatório da sessão), mais uma 2ª execução do mesmo `pv_` para provar a idempotência.
+- Placeholders `{{CONDICOES_PAGAMENTO}}` e `{{OBSERVACOES}}` não verificados no template `1iXxNeqP…`: se não existirem, a substituição não tem efeito e esses dados não aparecem no PDF.

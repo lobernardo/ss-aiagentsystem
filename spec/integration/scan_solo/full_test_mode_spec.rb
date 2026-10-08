@@ -304,58 +304,56 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do #
     end
   end
 
-  describe 'item 15: a proposal cannot report sent before successful send evidence' do
+  # RF-13 / RF-21 replace the OC `proposal.send` expectations of items 15 and 16: the legacy send only hands an approved
+  # version to the e-mail delivery, and `sent` waits for the e-mail's native source_id.
+  describe 'items 15 and 16: a proposal is sent only on e-mail evidence, then moves stage and enrolls the cadence' do
     let!(:opportunity) do
       ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
     end
+    let(:email_inbox) { create(:channel_email, account: account).inbox }
     let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
     let(:agent) { create(:user, account: account) }
-
-    before { publish_agent_config!(require_proposal_approval: false) }
-
-    it 'leaves the version non-sent on a simulated send failure' do
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
-      failing_provider = Class.new do
-        def self.request_send(proposal_version:, correlation_id:, **)
-          ScanSolo::Proposal::CallbackHandler.apply_send_result!(
-            proposal_version: proposal_version, correlation_id: correlation_id, success: false, failure_reason: 'mock_send_failed'
-          )
-        end
+    let(:version) do
+      proposal.versions.create!(status: :approved, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf',
+                                approved_at: Time.current, approved_by: agent).tap do |created|
+        created.document.attach(io: StringIO.new('%PDF-1.4'), filename: 'SS.pdf', content_type: 'application/pdf')
       end
-
-      ScanSolo::Proposal::SendService.call(
-        proposal_version: version, correlation_id: SecureRandom.uuid, conversation: conversation, actor: agent, provider: failing_provider
-      )
-
-      expect(version.reload).not_to be_sent
-      expect(version.status).to eq('failed')
     end
-  end
-
-  describe 'item 16: a successful proposal send moves stage and enrolls configured cadence' do
-    let!(:opportunity) do
-      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
-    end
-    let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
-    let(:agent) { create(:user, account: account) }
 
     before do
-      publish_agent_config!(require_proposal_approval: false)
+      contact.update!(email: 'ana@solar.example')
+      publish_agent_config!(quote_inbox_id: email_inbox.id)
       ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168])
     end
 
-    it 'transitions the opportunity and creates an active post-proposal cadence enrollment' do
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
+    def send_proposal
+      ScanSolo::Proposal::SendService.call(proposal_version: version, correlation_id: SecureRandom.uuid, conversation: conversation, actor: agent)
+    end
 
-      perform_enqueued_jobs(only: EventDispatcherJob) do
-        ScanSolo::Proposal::SendService.call(
-          proposal_version: version, correlation_id: SecureRandom.uuid, conversation: conversation, actor: agent,
-          provider: ScanSolo::Proposal::MockProvider
-        )
-      end
+    it 'leaves the version non-sent while the e-mail has no source_id and fails it on a native failure' do
+      send_proposal
+      message = version.reload.sent_message
+      ScanSolo::Messaging::DeliveryReconciler.call(message: message)
 
+      expect(version.reload).to be_approved
+
+      message.update!(status: :failed, external_error: 'SMTP 550')
+      ScanSolo::Messaging::DeliveryReconciler.call(message: message)
+
+      expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'SMTP 550')
+      expect(opportunity.reload).to be_qualificado
+    end
+
+    it 'transitions the opportunity and creates an active post-proposal cadence enrollment once the e-mail is accepted' do
+      send_proposal
+      message = version.reload.sent_message
+      message.update!(source_id: '<proposal@scansolo.example>')
+      ScanSolo::Messaging::DeliveryReconciler.call(message: message)
+
+      expect(version.reload).to be_sent
       expect(opportunity.reload).to be_proposta_enviada
       expect(opportunity.cadence_enrollments.active.count).to eq(1)
+      expect(ScanSolo::MakeRequest.count).to eq(0)
     end
   end
 

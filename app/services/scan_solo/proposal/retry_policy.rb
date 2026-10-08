@@ -12,24 +12,31 @@
 # (`confirm_reprocess: true`) may retry it again. Every accepted request is
 # audited as `proposal.retry_requested` or `proposal.reprocess_requested`.
 #
-# CT-10 / RF-32: a failure after the generate callback applied is a delivery
-# failure (download or WhatsApp). Its retry redelivers through
-# ScanSolo::Proposal::DeliveryService with the stored PDF -- no Make request,
-# so no retry count nor dead letter applies.
+# RF-15 (replaces OC/CT-10): every retry acts on the same version, never a new
+# one (RF-07), by the failure's cause:
+#   (a) a version that was approved failed on the lead e-mail delivery -- it is
+#       redelivered by ScanSolo::Proposal::DeliveryService with the stored PDF
+#       on the same proposal thread; the WhatsApp notice only follows the new
+#       e-mail's `source_id` (RF-13) and only if none was accepted;
+#   (c) a PDF download/checksum failure -- the PDF is fetched again by
+#       ScanSolo::Proposal::ApprovalRequestService, which returns the version to
+#       `awaiting_approval` and requests the approval (CT-05);
+#   (b) a safely-retryable generate failure -- regenerated through Make, as
+#       below.
+# (a) and (c) create no Make request, so no retry count nor dead letter applies.
 class ScanSolo::Proposal::RetryPolicy
   class UnsafeRetryError < StandardError; end
   class ReprocessConfirmationRequiredError < StandardError; end
 
   SAFE_RETRYABLE_REASONS = %w[timeout network_error provider_unavailable].freeze
+  ARTIFACT_REASONS = ScanSolo::Proposal::ApprovalRequestService::REDOWNLOAD_REASONS
 
   def self.retryable?(proposal_version)
-    proposal_version.failed? && (delivery_stage?(proposal_version) || SAFE_RETRYABLE_REASONS.include?(proposal_version.failure_reason))
-  end
-
-  # `value` is written only by a successful generate callback (RF-26), so a
-  # failure after it can only come from the delivery.
-  def self.delivery_stage?(proposal_version)
-    proposal_version.generate_callback_applied_at.present? && proposal_version.value.present?
+    proposal_version.failed? && (
+      proposal_version.approved_at.present? ||
+      ARTIFACT_REASONS.include?(proposal_version.failure_reason) ||
+      SAFE_RETRYABLE_REASONS.include?(proposal_version.failure_reason)
+    )
   end
 
   def self.retry!(proposal_version:, confirm_reprocess: false, provider: nil, actor: nil)
@@ -47,7 +54,8 @@ class ScanSolo::Proposal::RetryPolicy
     unless self.class.retryable?(proposal_version)
       raise UnsafeRetryError, "failure reason #{proposal_version.failure_reason.inspect} is not safely retryable"
     end
-    return retry_delivery! if self.class.delivery_stage?(proposal_version)
+    return retry_email_delivery! if proposal_version.approved_at.present?
+    return retry_artifact_download! if ARTIFACT_REASONS.include?(proposal_version.failure_reason)
     raise ReprocessConfirmationRequiredError, 'dead-lettered operation requires confirm_reprocess: true' if dead_letter? && !confirm_reprocess
 
     @provider ||= ScanSolo::Proposal::Integration.provider!
@@ -81,13 +89,23 @@ class ScanSolo::Proposal::RetryPolicy
     )
   end
 
-  def retry_delivery!
-    ScanSolo::AuditLogger.record!(
-      subject: proposal_version, event_type: 'proposal.retry_requested', actor: actor, correlation_id: proposal_version.audit_correlation_id,
-      payload: { failure_reason: proposal_version.failure_reason, operation: 'delivery' }
-    )
+  def retry_email_delivery!
+    audit_without_make!('email_delivery')
     ScanSolo::Proposal::DeliveryService.call(proposal_version: proposal_version, redeliver: true)
     proposal_version.reload
+  end
+
+  def retry_artifact_download!
+    audit_without_make!('artifact_download')
+    ScanSolo::Proposal::ApprovalRequestService.call(proposal_version: proposal_version, redownload: true)
+    proposal_version.reload
+  end
+
+  def audit_without_make!(operation)
+    ScanSolo::AuditLogger.record!(
+      subject: proposal_version, event_type: 'proposal.retry_requested', actor: actor, correlation_id: proposal_version.audit_correlation_id,
+      payload: { failure_reason: proposal_version.failure_reason, operation: operation }
+    )
   end
 
   def retry_generate!(new_correlation_id)

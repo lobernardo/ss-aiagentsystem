@@ -244,4 +244,29 @@ RSpec.describe ScanSolo::ConversationListener do
       expect(ScanSolo::QuoteReplyJob).not_to have_been_enqueued
     end
   end
+
+  describe 'CT-09 / RF-13: delivery reconciliation of the proposal e-mail and notice' do
+    def updated(origin)
+      message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :outgoing,
+                                 additional_attributes: { 'scansolo_origin' => origin })
+      listener.message_updated(Events::Base.new('message_updated', Time.zone.now, { message: message }))
+      message
+    end
+
+    before { allow(ScanSolo::Messaging::DeliveryReconciler).to receive(:call) }
+
+    it 'reconciles an updated proposal e-mail and proposal notice' do
+      email = updated('proposal_email')
+      notice = updated('proposal_notice')
+
+      expect(ScanSolo::Messaging::DeliveryReconciler).to have_received(:call).with(message: email)
+      expect(ScanSolo::Messaging::DeliveryReconciler).to have_received(:call).with(message: notice)
+    end
+
+    it 'does not reconcile a message ScanSolo did not originate as a template' do
+      updated('proposal_follow_up')
+
+      expect(ScanSolo::Messaging::DeliveryReconciler).not_to have_received(:call)
+    end
+  end
 end

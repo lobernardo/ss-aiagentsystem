@@ -89,37 +89,40 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       expect(response.parsed_body['status']).to eq('approved')
     end
 
-    it 'sends the current version when approval is not required' do
+    # RF-21 / CT-04 replace the OC/RF-77/RF-78 send expectations: the legacy send never emits proposal.send.
+    def send_proposal(target = version)
       post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}/send",
-           params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
+           params: { proposal_version_id: target.id, correlation_id: SecureRandom.uuid },
            headers: agent.create_new_auth_token, as: :json
-
-      expect(response).to have_http_status(:success)
-      # RF-41: the native proposal message exists; `sent` waits for delivery acceptance.
-      expect(version.reload.sent_message).to be_present
-      expect(response.parsed_body['status']).to eq('generated')
     end
 
-    it 'rejects sending a stale version (RF-77)' do
-      proposal.versions.create!(status: :generated, value: 1200, currency: 'BRL') # becomes current
+    it 'rejects sending a version that is not approved with approval_required and 0 Make requests' do
+      %i[generated awaiting_approval].each do |status|
+        version.update!(status: status)
 
-      post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}/send",
-           params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
-           headers: agent.create_new_auth_token, as: :json
-
-      expect(response).to have_http_status(:unprocessable_entity)
+        expect { send_proposal }.not_to change(ScanSolo::MakeRequest, :count)
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(response.parsed_body).to eq('error' => 'approval_required')
+      end
     end
 
-    it 'rejects sending without approval when approval is required (RF-78)' do
-      draft = ScanSolo::AiAgentConfig.draft_for!(account)
-      draft.update!(require_proposal_approval: true)
-      ScanSolo::AiAgent::PublishService.new(account: account).call
+    it 'rejects sending a sent version with already_sent' do
+      version.update!(status: :sent)
 
-      post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{proposal.id}/send",
-           params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid },
-           headers: agent.create_new_auth_token, as: :json
+      send_proposal
 
       expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body).to eq('error' => 'already_sent')
+    end
+
+    it 'rejects sending a stale version with not_current_version' do
+      version.update!(status: :rejected)
+      proposal.versions.create!(status: :approved, value: 1200, currency: 'BRL') # becomes current
+
+      send_proposal
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body).to eq('error' => 'not_current_version')
     end
   end
 
@@ -265,15 +268,12 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       expect(response).to have_http_status(:unprocessable_entity)
     end
 
-    it 'blocks generate, send and retry in production without writing proposal or request rows' do
+    # RF-21: send never reaches Make, so it has no integration gate.
+    it 'blocks generate and retry in production without writing proposal or request rows' do
       allow(Rails.env).to receive(:production?).and_return(true)
       allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, anything).and_return(nil)
       expect(ScanSolo::Proposal::MockProvider).not_to receive(:request_generation)
-      expect(ScanSolo::Proposal::MockProvider).not_to receive(:request_send)
-      paths = [
-        "/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities/#{opportunity.id}/proposals/generate",
-        "#{path}/send", "#{path}/retry"
-      ]
+      paths = ["/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities/#{opportunity.id}/proposals/generate", "#{path}/retry"]
       original_attributes = version.attributes
       paths.each do |endpoint|
         expect do

@@ -7,6 +7,10 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
   before_action :set_opportunity, only: [:generate]
   before_action :set_proposal, only: [:show, :approve, :send_proposal, :retry]
 
+  rescue_from CustomExceptions::ScanSolo::ProposalActionRejected do |e|
+    render json: { error: e.code }, status: :unprocessable_entity
+  end
+
   def index
     authorize(::ScanSolo::Proposal)
     @proposals = ::ScanSolo::Proposal.joins(:opportunity)

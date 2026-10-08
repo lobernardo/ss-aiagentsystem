@@ -83,75 +83,111 @@ RSpec.describe ScanSolo::Messaging::DeliveryReconciler do
     end
   end
 
-  describe 'proposal versions (RF-41)' do
-    let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
-    let(:message) { template_message(origin: 'proposal') }
+  # RF-13 replaces the OC/RF-30 expectations: `sent` / proposta_enviada follow the proposal e-mail confirmed by its
+  # native `source_id`, and the WhatsApp notice only goes out after that commit.
+  describe 'proposal e-mail (RF-13, RF-14)' do
+    let(:email_conversation) { create(:conversation, account: account, inbox: create(:channel_email, account: account).inbox, contact: contact) }
+    let(:quote_request) do
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied,
+                                     commercial: { 'total_value' => '1000.00' })
+    end
+    let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity, email_conversation: email_conversation) }
+    let(:message) { template_message(origin: 'proposal_email', inbox: email_conversation.inbox, conversation: email_conversation) }
     let!(:version) do
-      proposal.versions.create!(status: :approved, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf', sent_message: message)
+      proposal.versions.create!(status: :approved, quote_request: quote_request, value: 1000, currency: 'BRL',
+                                artifact_url: 'https://x.test/a.pdf', approved_at: Time.current, sent_message: message)
     end
-
-    before { ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168]) }
-
-    it 'marks the version failed with the external error and leaves the stage unchanged on a native failure' do
-      message.update!(status: :failed, external_error: 'template rejected by Meta')
-
-      described_class.call(message: message)
-
-      expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'template rejected by Meta')
-      expect(opportunity.reload).to be_qualificado
-    end
-
-    it 'marks the version sent and moves the opportunity to proposta_enviada once accepted' do
-      message.update!(source_id: 'wamid.proposal')
-
-      described_class.call(message: message)
-
-      expect(version.reload).to be_sent
-      expect(opportunity.reload).to be_proposta_enviada
-    end
-  end
-
-  describe 'generated proposal delivered by Chatwoot (RF-30)' do
-    let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
-    let(:message) { template_message(origin: 'proposal') }
-    let!(:version) do
-      proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf',
-                                generate_callback_applied_at: Time.current, sent_message: message)
-    end
-    let!(:definition) { ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168]) }
     let(:stage_events) { ScanSolo::PipelineStageEvent.where(opportunity: opportunity) }
+    let(:notices) { conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal_notice'") }
 
-    it 'keeps the version generated and the stage while the message has no source_id' do
-      described_class.call(message: message)
-
-      expect(version.reload).to be_generated
-      expect(opportunity.reload).to be_qualificado
+    before do
+      ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168])
+      channel.update!(message_templates: [{ 'name' => 'scansolo_proposta_aviso_email', 'language' => 'pt_BR', 'status' => 'APPROVED',
+                                            'components' => [{ 'type' => 'BODY', 'text' => 'Olá, enviamos a proposta para o seu e-mail.' }] }])
     end
 
-    it 'marks the version sent, moves the stage and enrolls the active proposta_enviada cadence on acceptance' do
-      message.update!(source_id: 'wamid.proposal')
+    def audits(event_type)
+      ScanSolo::AuditEvent.where(event_type: event_type, subject: opportunity)
+    end
 
+    it 'keeps the version approved, the stage and 0 notices while the e-mail has no source_id' do
       described_class.call(message: message)
 
-      expect(version.reload).to be_sent
+      expect(version.reload).to be_approved
+      expect(opportunity.reload).to be_qualificado
+      expect(notices.count).to eq(0)
+    end
+
+    it 'marks the version sent, moves the stage, enrolls the cadence and sends 1 notice after the commit once accepted' do
+      message.update!(source_id: '<proposal@scansolo.example>')
+
+      ActiveRecord::Base.transaction do
+        described_class.call(message: message)
+        expect(notices.count).to eq(0)
+      end
+
+      expect(version.reload).to have_attributes(status: 'sent', notice_message_id: notices.sole.id)
       expect(opportunity.reload).to be_proposta_enviada
       expect(stage_events.count).to eq(1)
-      enrollment = opportunity.cadence_enrollments.active.sole
-      expect(enrollment.cadence_definition).to eq(definition)
-      expect(enrollment.attempts.count).to eq(definition.offsets.size)
+      expect(opportunity.cadence_enrollments.active.sole.cadence_definition.stage).to eq('proposta_enviada')
+      expect(audits('proposal.sent').sole).to have_attributes(correlation_id: quote_request.correlation_id)
     end
 
-    it 'fails a sent version on a later native failure with 1 audit, keeping stage and enrollment' do
-      message.update!(source_id: 'wamid.proposal')
+    it 'sends 1 notice across 2 reconciliations (RF-12, RNF-02)' do
+      message.update!(source_id: '<proposal@scansolo.example>')
+
+      2.times { described_class.call(message: message) }
+
+      expect(notices.count).to eq(1)
+      expect(audits('proposal.sent').count).to eq(1)
+      expect(stage_events.count).to eq(1)
+    end
+
+    it 'fails the version with the external error, leaving the stage and sending 0 notices' do
+      message.update!(status: :failed, external_error: 'SMTP 550 mailbox unavailable')
+
       described_class.call(message: message)
-      message.update!(status: :failed, external_error: '131049: Meta chose not to deliver')
+
+      expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'SMTP 550 mailbox unavailable')
+      expect(audits('proposal.delivery_failed').sole).to have_attributes(correlation_id: quote_request.correlation_id)
+      expect(opportunity.reload).to be_qualificado
+      expect(notices.count).to eq(0)
+    end
+
+    it 'fails a sent version on a later e-mail failure with 1 audit, keeping stage and enrollment' do
+      message.update!(source_id: '<proposal@scansolo.example>')
+      described_class.call(message: message)
+      message.update!(status: :failed, external_error: 'bounced')
 
       expect { 2.times { described_class.call(message: message) } }.not_to change(stage_events, :count)
 
-      expect(version.reload).to have_attributes(status: 'failed', failure_reason: '131049: Meta chose not to deliver')
-      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.delivery_failed_after_sent', subject: opportunity).count).to eq(1)
+      expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'bounced')
+      expect(audits('proposal.delivery_failed_after_sent').count).to eq(1)
       expect(opportunity.reload).to be_proposta_enviada
       expect(opportunity.cadence_enrollments.active.count).to eq(1)
+    end
+
+    it 'records 1 lead_notice_failed on a failed notice and keeps the version sent (RF-14)' do
+      message.update!(source_id: '<proposal@scansolo.example>')
+      described_class.call(message: message)
+      notice = notices.sole
+      notice.update!(status: :failed, external_error: '131026: Message undeliverable')
+
+      2.times { described_class.call(message: notice) }
+
+      expect(version.reload).to have_attributes(status: 'sent', notice_failure_reason: '131026: Message undeliverable')
+      expect(audits('proposal.lead_notice_failed').sole).to have_attributes(correlation_id: quote_request.correlation_id)
+      expect(audits('proposal.lead_notice_failed').sole.payload).to include('message_id' => notice.id)
+    end
+
+    it 'is reached through the native message_updated event of the proposal e-mail (CT-09)' do
+      message.update!(source_id: '<proposal@scansolo.example>')
+
+      ScanSolo::ConversationListener.instance.message_updated(
+        Events::Base.new('message_updated', Time.zone.now, { message: message })
+      )
+
+      expect(version.reload).to be_sent
     end
   end
 

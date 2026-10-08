@@ -16,9 +16,10 @@
 # originate (no `scansolo_origin`) is an implicit takeover (RF-18).
 # Assignment changes only create activity messages, so they never get here.
 #
-# Delivery (CT-09): a cadence/proposal/manual-lead template message ScanSolo
-# created is reconciled on creation and on every native update (status, `source_id`)
-# by ScanSolo::Messaging::DeliveryReconciler (RF-27, RF-41). This runs
+# Delivery (CT-09): a cadence/proposal/manual-lead template message, the
+# proposal e-mail or the proposal WhatsApp notice ScanSolo created is
+# reconciled on creation and on every native update (status, `source_id`) by
+# ScanSolo::Messaging::DeliveryReconciler (RF-27, RF-41, RF-13). This runs
 # ahead of the eligibility gate -- the evidence of a message already sent
 # must be recorded even if the inbox left the allowlist meanwhile -- and is
 # keyed on the `scansolo_origin` marker, so other messages cost no query.
@@ -31,7 +32,7 @@
 # The listener delegates every write to services and holds no AI logic.
 class ScanSolo::ConversationListener < BaseListener
   IMPLICIT_TAKEOVER_REASON = 'Resposta humana na conversa'.freeze
-  TEMPLATE_ORIGINS = %w[cadence proposal manual_lead].freeze
+  TEMPLATE_ORIGINS = %w[cadence proposal manual_lead proposal_email proposal_notice].freeze
 
   def message_created(event)
     message = event.data[:message]

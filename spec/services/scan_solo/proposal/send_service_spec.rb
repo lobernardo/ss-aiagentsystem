@@ -2,132 +2,80 @@
 
 require 'rails_helper'
 
+# RF-21 / CT-04 replace the OC/RF-73..RF-80 `proposal.send` expectations: the legacy send never reaches Make; it only hands
+# an approved version to the idempotent e-mail delivery (RF-11, RF-12).
 RSpec.describe ScanSolo::Proposal::SendService do
   let(:account) { create(:account) }
-  let(:contact) { create(:contact, account: account) }
-  let(:conversation) { create(:conversation, account: account, contact: contact) }
+  let(:customer_inbox) { create(:inbox, account: account) }
+  let(:email_inbox) { create(:channel_email, account: account, email: 'atendimento.comercial@scansolo.com.br').inbox }
+  let(:contact) { create(:contact, account: account, email: 'ana@solar.example') }
+  let(:conversation) { create(:conversation, account: account, inbox: customer_inbox, contact: contact) }
   let(:opportunity) do
     ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
   end
   let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
   let(:agent) { create(:user, account: account) }
-  let(:correlation_id) { SecureRandom.uuid }
+  let(:proposal_emails) { Message.where(inbox: email_inbox).outgoing }
 
   before do
-    draft = ScanSolo::AiAgentConfig.draft_for!(account)
-    draft.update!(name: 'Agente', enabled: true, require_proposal_approval: false)
+    ScanSolo::AiAgentConfig.draft_for!(account).update!(name: 'Agente', enabled: true, allowed_inbox_ids: [customer_inbox.id],
+                                                        quote_inbox_id: email_inbox.id)
     ScanSolo::AiAgent::PublishService.new(account: account).call
+    allow(ScanSolo::Proposal::MockProvider).to receive(:request_send)
+  end
+
+  def create_version(status)
+    proposal.versions.create!(status: status, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf',
+                              generate_callback_applied_at: Time.current, approved_at: Time.current, approved_by: agent).tap do |created|
+      created.document.attach(io: StringIO.new('%PDF-1.4 proposta'), filename: "#{created.proposal_number}.pdf", content_type: 'application/pdf')
+    end
   end
 
   def call(version)
-    described_class.call(proposal_version: version, correlation_id: correlation_id, conversation: conversation, actor: agent,
-                         provider: ScanSolo::Proposal::MockProvider)
+    described_class.call(proposal_version: version, correlation_id: SecureRandom.uuid, conversation: conversation, actor: agent)
   end
 
-  describe 'RF-73: requires a prior successful generate result' do
-    it 'rejects a version still generating' do
-      version = proposal.versions.create!(status: :generating)
-
-      expect { call(version) }.to raise_error(ActiveRecord::RecordInvalid)
-    end
-
-    it 'rejects a version whose generation failed' do
-      version = proposal.versions.create!(status: :failed, failure_reason: 'mock_generation_failed')
-
-      expect { call(version) }.to raise_error(ActiveRecord::RecordInvalid)
-    end
-
-    it 'proceeds for a generated version' do
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
-
-      expect { call(version) }.not_to raise_error
-    end
+  def expect_rejection(version, code)
+    expect { call(version) }.to raise_error(CustomExceptions::ScanSolo::ProposalActionRejected, code)
   end
 
-  describe 'RF-77: version-integrity guard' do
-    it 'rejects a send against a stale (non-current) version' do
-      stale = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL')
-      proposal.versions.create!(status: :generated, value: 1200, currency: 'BRL')
+  it 'rejects a sent version with already_sent and creates no Make request' do
+    version = create_version(:sent)
 
-      expect { call(stale.reload) }.to raise_error(ActiveRecord::RecordInvalid)
-    end
+    expect { expect_rejection(version, 'already_sent') }.not_to change(ScanSolo::MakeRequest, :count)
+    expect(proposal_emails.count).to eq(0)
   end
 
-  describe 'RF-78: approval gate' do
-    it 'rejects send without a recorded approval when approval is required' do
-      draft = ScanSolo::AiAgentConfig.draft_for!(account)
-      draft.update!(require_proposal_approval: true)
-      ScanSolo::AiAgent::PublishService.new(account: account).call
+  it 'rejects a version awaiting approval with approval_required' do
+    version = create_version(:awaiting_approval)
 
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
-
-      expect { call(version) }.to raise_error(ActiveRecord::RecordInvalid)
-      expect(version.reload).not_to be_sent
-    end
-
-    it 'sends directly when approval is not required, becoming sent once the native delivery is reconciled' do
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
-
-      perform_enqueued_jobs(only: EventDispatcherJob) { call(version) }
-
-      expect(version.reload).to be_sent
-    end
+    expect_rejection(version, 'approval_required')
+    expect(version.reload).to be_awaiting_approval
+    expect(proposal_emails.count).to eq(0)
   end
 
-  describe 'RF-79: no premature success' do
-    it 'leaves the version status non-sent on a simulated send failure' do
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
+  it 'rejects a non-current version with not_current_version' do
+    stale = create_version(:approved)
+    stale.update!(status: :rejected)
+    create_version(:approved)
 
-      failing_provider = Class.new do
-        def self.request_send(proposal_version:, correlation_id:, **)
-          ScanSolo::Proposal::CallbackHandler.apply_send_result!(
-            proposal_version: proposal_version, correlation_id: correlation_id, success: false, failure_reason: 'mock_send_failed'
-          )
-        end
-      end
-
-      described_class.call(
-        proposal_version: version, correlation_id: correlation_id, conversation: conversation, actor: agent, provider: failing_provider
-      )
-
-      expect(version.reload).not_to be_sent
-      expect(version.status).to eq('failed')
-    end
+    expect_rejection(stale.reload, 'not_current_version')
   end
 
-  describe 'RF-80: idempotent callback handling' do
-    it 'delivering the same mock callback payload twice results in exactly one persisted state change' do
-      version = proposal.versions.create!(
-        status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf', send_correlation_id: correlation_id
-      )
+  it 'delivers an approved version by e-mail once, without proposal.send (RF-11)' do
+    version = create_version(:approved)
 
-      first_updated_at = nil
-      expect do
-        ScanSolo::Proposal::CallbackHandler.apply_send_result!(
-          proposal_version: version, correlation_id: correlation_id, success: true, conversation: conversation, actor: agent
-        )
-        first_updated_at = version.reload.updated_at
-      end.to change { conversation.messages.outgoing.count }.by(1)
+    expect { call(version) }.to change(proposal_emails, :count).by(1).and not_change(ScanSolo::MakeRequest, :count)
 
-      expect do
-        ScanSolo::Proposal::CallbackHandler.apply_send_result!(
-          proposal_version: version, correlation_id: correlation_id, success: true, conversation: conversation, actor: agent
-        )
-      end.not_to(change { conversation.messages.outgoing.count })
-
-      expect(version.reload.updated_at).to eq(first_updated_at)
-    end
+    expect(version.reload).to have_attributes(status: 'approved', sent_message: proposal_emails.sole, send_correlation_id: nil)
+    expect(ScanSolo::Proposal::MockProvider).not_to have_received(:request_send)
   end
 
-  describe 'RF-17/RF-82: success transitions stage and enrolls post-proposal cadence' do
-    it 'moves the opportunity to proposta_enviada and creates an active cadence enrollment' do
-      ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24, 72, 168])
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', artifact_url: 'https://x.test/a.pdf')
+  it 'sends 0 new e-mails for an approved version already delivered (RF-12)' do
+    version = create_version(:approved)
+    ScanSolo::Proposal::DeliveryService.call(proposal_version: version)
 
-      perform_enqueued_jobs(only: EventDispatcherJob) { call(version) }
-
-      expect(opportunity.reload).to be_proposta_enviada
-      expect(opportunity.cadence_enrollments.active.count).to eq(1)
-    end
+    expect { call(version.reload) }.not_to change(proposal_emails, :count)
+    expect(ScanSolo::MakeRequest.count).to eq(0)
   end
 end

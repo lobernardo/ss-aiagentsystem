@@ -1,9 +1,12 @@
 # CT-03 / RF-13 / RF-18 / RF-37: the e-mails sent through the native quote
 # inbox -- the quote request, the correction of an unreadable reply and the
-# negotiation notification. Pure: no writes, no I/O. Every text comes from
-# `scan_solo.*` (RNF-08); the HTML keeps one label/field per line with `<br>`
-# and escapes every value. Nothing secret (tokens, API URLs) is rendered: the
-# only link is the Chatwoot conversation URL (RNF-07).
+# negotiation notification -- plus, for scansolo-proposta-aprovacao-email,
+# the approval request (CT-05) and the proposal e-mail to the lead (CT-06).
+# Pure: no writes, no I/O. Every text comes from `scan_solo.*` (RNF-08); the
+# HTML keeps one label/field per line with `<br>` and escapes every value.
+# Nothing secret (tokens, API URLs) is rendered (RNF-07, RNF-09): the only
+# links are the Chatwoot conversation URL and the Propostas screen (CT-05);
+# the lead e-mail has no link at all (the PDF goes attached).
 class ScanSolo::Quote::EmailComposer
   Email = Struct.new(:subject, :text, :html, keyword_init: true)
 
@@ -54,9 +57,52 @@ class ScanSolo::Quote::EmailComposer
       build(t('negotiation.email.subject', opportunity_id: payload[:opportunity_id], name: contact[:company].presence || contact[:name]), lines)
     end
 
+    # CT-05: posted in the quote request thread, whose `mail_subject` is the
+    # e-mail subject. The lead e-mail warning mirrors the approval block (RF-08).
+    def approval_request(proposal_version:)
+      opportunity = proposal_version.proposal.opportunity
+      number = proposal_version.proposal_number
+      details = {
+        number: number, version: proposal_version.version_number.to_s,
+        value: current_value(amount: proposal_version.value, currency: proposal_version.currency), lead: lead_name(opportunity)
+      }
+      lines = [
+        t('proposal.approval_request.intro'),
+        '',
+        *details.map { |key, value| line(t("proposal.approval_request.#{key}"), value) },
+        *(t('proposal.approval_request.lead_email_missing') unless opportunity.lead_email_valid?),
+        '',
+        line(t('proposal.approval_request.link'), proposals_url(opportunity.account_id)),
+        t('proposal.approval_request.approval_only_in_screen')
+      ]
+
+      build(t('proposal.approval_request.subject_suffix', proposal_number: number), lines)
+    end
+
+    # CT-06: the PDF goes attached, so the body carries no document link.
+    def lead_proposal(proposal_version:)
+      number = proposal_version.proposal_number
+      lines = [
+        t('proposal.lead_email.greeting', name: proposal_version.proposal.opportunity.contact.name),
+        '',
+        t('proposal.lead_email.body'),
+        '',
+        line(t('proposal.lead_email.number'), number),
+        '',
+        t('proposal.lead_email.closing')
+      ]
+
+      build(t('proposal.lead_email.subject', proposal_number: number), lines)
+    end
+
     # The Chatwoot conversation link, also used by the CT-07 payload.
     def conversation_url(account_id, display_id)
       "#{ENV.fetch('FRONTEND_URL', nil)}/app/accounts/#{account_id}/conversations/#{display_id}"
+    end
+
+    # CT-05: the Propostas screen, the only place where a version is approved.
+    def proposals_url(account_id)
+      "#{ENV.fetch('FRONTEND_URL', nil)}/app/accounts/#{account_id}/scansolo/proposals"
     end
 
     # The empty CT-04 block, also used by the parser specs.
@@ -86,6 +132,11 @@ class ScanSolo::Quote::EmailComposer
         stage: stage_label(opportunity.stage),
         conversation_link: conversation_url(opportunity.account_id, opportunity.conversation.display_id)
       }.map { |key, value| line(t("quote.email.identification.#{key}"), value) }
+    end
+
+    def lead_name(opportunity)
+      company = opportunity.lead_state&.fields.to_h['empresa'].to_h
+      [opportunity.contact.name, (company['value'] unless company['status'] == 'faltante')].compact_blank.join(' — ')
     end
 
     def collected_lines(projection)

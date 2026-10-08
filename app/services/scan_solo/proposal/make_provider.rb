@@ -12,7 +12,10 @@
 # `commercial`.
 # A transport failure never propagates: the version is marked `failed` with
 # the mapped reason (`timeout`, `network_error`, `provider_unavailable`, ...)
-# so an administrator can retry it (RF-40).
+# so an administrator can retry it (RF-40). A `proposal.generate` transport
+# failure also records 1 `proposal.generation_failed` AuditEvent with the
+# reason, the generation correlation id and, as the event correlation id, the
+# quote request's (RF-20, RNF-06).
 class ScanSolo::Proposal::MakeProvider
   def self.request_generation(proposal_version:, correlation_id:, actor: nil, retry_count: 0)
     request(proposal_version: proposal_version, correlation_id: correlation_id, action: 'proposal.generate', actor: actor,
@@ -42,7 +45,16 @@ class ScanSolo::Proposal::MakeProvider
     )
   rescue ScanSolo::Make::OutboundRequestService::DeliveryError => e
     proposal_version.update!(status: :failed, failure_reason: e.reason)
+    record_generation_failed!(proposal_version, correlation_id, e.reason) if action == 'proposal.generate'
     e.make_request
+  end
+
+  def self.record_generation_failed!(proposal_version, correlation_id, reason)
+    ScanSolo::AuditLogger.record!(
+      subject: proposal_version.proposal.opportunity, event_type: 'proposal.generation_failed',
+      correlation_id: proposal_version.audit_correlation_id,
+      payload: { proposal_version_id: proposal_version.id, reason: reason, generate_correlation_id: correlation_id }
+    )
   end
 
   def self.commercial(quote_request)
@@ -56,5 +68,5 @@ class ScanSolo::Proposal::MakeProvider
     }.compact
   end
 
-  private_class_method :request, :commercial
+  private_class_method :request, :record_generation_failed!, :commercial
 end

@@ -172,6 +172,22 @@ RSpec.describe ScanSolo::Quote::RequestService do
       expect { run_service }.not_to change(Message, :count)
       expect(ScanSolo::AuditEvent.where(event_type: 'quote_request.sent').count).to eq(1)
     end
+
+    it 'sends the request e-mail exactly once on the retry after a failed delivery (RF-22)' do
+      allow(ScanSolo::Quote::EmailThread).to receive(:post!).and_raise(StandardError, 'smtp down')
+
+      expect { described_class.call(opportunity: opportunity) }.to raise_error(StandardError, 'smtp down')
+      expect(quote_request.request_message_id).to be_nil
+
+      allow(ScanSolo::Quote::EmailThread).to receive(:post!).and_call_original
+
+      expect { run_service }.to change(email_inbox.messages, :count).by(1)
+      expect(quote_request.reload.request_message_id).to eq(email_inbox.messages.sole.id)
+      expect(ScanSolo::QuoteRequest.where(opportunity: opportunity).count).to eq(1)
+      expect(email_inbox.conversations.count).to eq(1)
+
+      expect { run_service }.not_to change(Message.where(inbox: email_inbox), :count)
+    end
   end
 
   describe 'customer notice (RF-53)' do

@@ -50,6 +50,16 @@ RSpec.describe ScanSolo::Make::OutboundRequestService do
       expect(request.payload.to_s).not_to include(scenario_secret)
     end
 
+    it 'RF-24: a 2nd call with the same idempotency key returns the existing request without a 2nd HTTP request' do
+      first = call
+      second = described_class.call(account: account, action: 'proposal.generate', payload: payload,
+                                    correlation_id: SecureRandom.uuid, idempotency_key: idempotency_key)
+
+      expect(second).to eq(first)
+      expect(ScanSolo::MakeRequest.where(idempotency_key: idempotency_key).count).to eq(1)
+      assert_requested(:post, scenario_url, times: 1)
+    end
+
     it 'starts the operation retry count from the caller-provided value' do
       request = described_class.call(account: account, action: 'proposal.generate', payload: payload,
                                      correlation_id: correlation_id, idempotency_key: idempotency_key, retry_count: 2)

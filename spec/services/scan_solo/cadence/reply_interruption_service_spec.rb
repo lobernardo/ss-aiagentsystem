@@ -88,4 +88,46 @@ RSpec.describe ScanSolo::Cadence::ReplyInterruptionService do
     expect(results).to eq(%w[scheduled scheduled scheduled])
     expect(interruptions).to be_none
   end
+
+  describe 'in proposta_enviada (RF-18)' do
+    before { opportunity.update!(stage: :proposta_enviada) }
+
+    it 'cancels every scheduled attempt with one audit per attempt' do
+      message = incoming
+
+      reply(message)
+
+      expect(results).to eq(%w[cancelled cancelled cancelled])
+      expect(interruptions.count).to eq(3)
+      expect(interruptions.map { |audit| audit.payload['attempt_id'] }).to match_array(enrollment.attempts.ids)
+      expect(interruptions.map { |audit| audit.payload['message_id'] }.uniq).to eq([message.id])
+    end
+
+    it 'keeps a sent attempt unchanged' do
+      ScanSolo::Cadence::AttemptEvidenceRecorder.record_sent!(enrollment.attempts.order(:scheduled_at).first)
+
+      reply(incoming)
+
+      expect(results).to eq(%w[sent cancelled cancelled])
+      expect(interruptions.count).to eq(2)
+    end
+
+    it 'cancels nothing new on a 2nd message' do
+      reply(incoming)
+      travel(1.minute)
+      outgoing
+      travel(1.minute)
+
+      expect { reply(incoming) }.not_to change(interruptions, :count)
+    end
+  end
+
+  it 'cancels only 1 of 3 scheduled attempts in em_contato (OC/RF-43)' do
+    opportunity.update!(stage: :em_contato)
+
+    reply(incoming)
+
+    expect(results).to eq(%w[cancelled scheduled scheduled])
+    expect(interruptions.count).to eq(1)
+  end
 end

@@ -14,6 +14,9 @@
 # records them on the ProposalVersion instead of letting a raw network
 # exception escape.
 #
+# RF-24: idempotency_key is unique in the database. A 2nd call with the same
+# key returns the existing ScanSolo::MakeRequest without a 2nd HTTP request.
+#
 # Never called from the default AI-turn message-response path: only a
 # registered Make-backed action (proposal.generate/proposal.send) invokes
 # this service explicitly.
@@ -61,18 +64,22 @@ class ScanSolo::Make::OutboundRequestService
     scenario_url!
     scenario_secret!
 
-    request = ScanSolo::MakeRequest.create!(
-      account: account,
-      correlation_id: correlation_id,
-      idempotency_key: idempotency_key,
-      action: action,
-      payload: payload,
-      retry_count: retry_count,
-      status: :pending
-    )
+    request = ScanSolo::MakeRequest.transaction(requires_new: true) do
+      ScanSolo::MakeRequest.create!(
+        account: account,
+        correlation_id: correlation_id,
+        idempotency_key: idempotency_key,
+        action: action,
+        payload: payload,
+        retry_count: retry_count,
+        status: :pending
+      )
+    end
 
     deliver!(request)
     request
+  rescue ActiveRecord::RecordNotUnique
+    ScanSolo::MakeRequest.find_by!(idempotency_key: idempotency_key)
   end
 
   private

@@ -72,4 +72,46 @@ RSpec.describe ScanSolo::Quote::EmailThread do
     end.to raise_error(CustomExceptions::ScanSolo::DeliveryInsideTransaction)
     expect(conversation.messages.count).to eq(0)
   end
+
+  describe 'CC, attachments and origin attributes (CT-05, CT-06)' do
+    let(:pdf) do
+      ActiveStorage::Blob.create_and_upload!(io: StringIO.new('%PDF-1.4 proposta'), filename: 'SS-2026-000012.pdf', content_type: 'application/pdf')
+    end
+
+    def post_with_extras
+      described_class.post!(conversation: conversation, recipient: recipient, email: email, cc: ['luciano@scansolo.com.br'],
+                            attachments: [pdf], additional_attributes: { 'scansolo_origin' => 'proposal_email' })
+    end
+
+    it 'creates 1 message with the attachment, cc_emails and additional_attributes' do
+      message = post_with_extras
+
+      expect(message.attachments.sole.file.blob.checksum).to eq(pdf.checksum)
+      expect(message.content_attributes).to include('cc_emails' => ['luciano@scansolo.com.br'], 'to_emails' => [recipient])
+      expect(message.additional_attributes).to include('scansolo_origin' => 'proposal_email')
+      expect(conversation.messages.count).to eq(1)
+    end
+
+    it 'delivers 1 e-mail with the Cc header and 1 application/pdf attachment' do
+      perform_enqueued_jobs(only: SendReplyJob) { post_with_extras }
+
+      mail = ActionMailer::Base.deliveries.sole
+      expect(mail.cc).to eq(['luciano@scansolo.com.br'])
+      expect(mail.attachments.sole).to have_attributes(mime_type: 'application/pdf', filename: 'SS-2026-000012.pdf')
+    end
+
+    it 'refuses to create the message inside an open transaction (RNF-01)' do
+      conversation
+
+      expect { ActiveRecord::Base.transaction { post_with_extras } }.to raise_error(CustomExceptions::ScanSolo::DeliveryInsideTransaction)
+      expect(conversation.messages.count).to eq(0)
+    end
+
+    it 'keeps the message without cc_emails and attachments when the extras are omitted' do
+      message = described_class.post!(conversation: conversation, recipient: recipient, email: email)
+
+      expect(message.content_attributes).not_to have_key('cc_emails')
+      expect(message.attachments).to be_empty
+    end
+  end
 end

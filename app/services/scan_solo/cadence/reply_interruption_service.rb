@@ -8,6 +8,11 @@
 # `cadence.attempt_interrupted_by_reply` audit itself (keyed by the message
 # that caused it), so a burst of replies with no outgoing message in between
 # cancels only once. The enrollment row lock serializes such a burst.
+#
+# RF-18 (scansolo-proposta-aprovacao-email): in `proposta_enviada` a lead
+# reply (WhatsApp or the proposal e-mail thread) cancels every `scheduled`
+# attempt of each active enrollment older than the message, with one audit
+# per cancelled attempt; `sent`/`dispatched` attempts are untouched.
 class ScanSolo::Cadence::ReplyInterruptionService
   EVENT_TYPE = 'cadence.attempt_interrupted_by_reply'.freeze
 
@@ -22,7 +27,15 @@ class ScanSolo::Cadence::ReplyInterruptionService
 
   def call
     opportunity.cadence_enrollments.active.where('created_at < ?', message.created_at).find_each do |enrollment|
-      enrollment.with_lock { interrupt!(enrollment) if enrollment.active? && !interrupted_in_cycle?(enrollment) }
+      enrollment.with_lock do
+        next unless enrollment.active?
+
+        if opportunity.proposta_enviada?
+          enrollment.attempts.scheduled.order(:scheduled_at).each { |attempt| cancel!(enrollment, attempt) }
+        elsif !interrupted_in_cycle?(enrollment)
+          interrupt!(enrollment)
+        end
+      end
     end
   end
 
@@ -32,8 +45,10 @@ class ScanSolo::Cadence::ReplyInterruptionService
 
   def interrupt!(enrollment)
     attempt = enrollment.attempts.scheduled.order(:scheduled_at).first
-    return if attempt.blank?
+    cancel!(enrollment, attempt) if attempt
+  end
 
+  def cancel!(enrollment, attempt)
     ScanSolo::Cadence::AttemptEvidenceRecorder.record_cancelled!(attempt)
     ScanSolo::AuditLogger.record!(
       subject: enrollment, event_type: EVENT_TYPE, correlation_id: SecureRandom.uuid,

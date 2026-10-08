@@ -10,7 +10,10 @@
 #    request and no message; the qualification and stage stay as they are.
 # 3. Under the opportunity lock (shared with the manual resend), the single
 #    request of the opportunity (unique index) and its native e-mail thread
-#    are created in one transaction.
+#    are created in one transaction. A request left without
+#    `request_message_id` (the e-mail failed after commit) is returned as is,
+#    so a job retry sends its e-mail exactly once, with no 2nd request or
+#    thread (RF-22 of scansolo-proposta-aprovacao-email).
 # 4. `deliver!` (reused by the manual resend) posts the CT-03 e-mail only
 #    after commit (RNF-01), stores the message id and records
 #    `quote_request.sent` with the request's correlation id (RF-22, RNF-09).
@@ -82,9 +85,10 @@ class ScanSolo::Quote::RequestService
   def open_request!(opportunity, settings)
     ActiveRecord::Base.transaction do
       opportunity.lock!
-      next if ScanSolo::QuoteRequest.exists?(opportunity_id: opportunity.id)
+      existing = ScanSolo::QuoteRequest.find_by(opportunity_id: opportunity.id)
+      next create_request!(opportunity, settings) if existing.nil?
 
-      create_request!(opportunity, settings)
+      existing if existing.request_message_id.nil?
     end
   end
 

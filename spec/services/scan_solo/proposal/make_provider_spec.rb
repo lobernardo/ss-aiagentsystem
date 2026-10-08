@@ -126,6 +126,33 @@ RSpec.describe ScanSolo::Proposal::MakeProvider do
         expect(ScanSolo::MakeRequest.find_by(correlation_id: correlation_id)).to be_failed
       end
     end
+
+    {
+      'timeout' => ->(stub) { stub.to_timeout },
+      'provider_unavailable' => ->(stub) { stub.to_return(status: 500, body: 'boom') }
+    }.each do |reason, configure|
+      it "RF-20: records 1 proposal.generation_failed audit with both correlation ids on #{reason}" do
+        configure.call(stub_request(:post, scenario_url))
+
+        described_class.request_generation(proposal_version: version, correlation_id: correlation_id)
+
+        expect(version.reload).to be_failed
+        expect(version.failure_reason).to eq(reason)
+        audit = ScanSolo::AuditEvent.where(event_type: 'proposal.generation_failed').sole
+        expect(audit.subject).to eq(opportunity)
+        expect(audit.correlation_id).to eq(quote_request.correlation_id)
+        expect(audit.payload).to include('reason' => reason, 'generate_correlation_id' => correlation_id,
+                                         'proposal_version_id' => version.id)
+      end
+    end
+
+    it 'RF-20: records no generation_failed audit when a send fails' do
+      stub_request(:post, scenario_url).to_return(status: 500, body: 'boom')
+
+      described_class.request_send(proposal_version: version, correlation_id: correlation_id)
+
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generation_failed')).to be_empty
+    end
   end
 
   describe 'CT-05 commercial data (RF-24, RF-26, RF-47)' do

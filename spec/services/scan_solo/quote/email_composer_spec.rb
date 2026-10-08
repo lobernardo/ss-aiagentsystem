@@ -100,4 +100,67 @@ RSpec.describe ScanSolo::Quote::EmailComposer do
       expect(email.text).to include('Proposta vigente: sem proposta', 'Valor vigente: sem proposta')
     end
   end
+
+  describe 'proposal e-mails (CT-05, CT-06)' do
+    let(:account) { create(:account) }
+    let(:contact) { create(:contact, account: account, name: 'Ana <Souza>', email: 'ana@example.com') }
+    let(:opportunity) do
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, stage: :qualificado,
+                                            conversation: create(:conversation, account: account, contact: contact))
+    end
+    let(:version) do
+      ScanSolo::Proposal.create!(opportunity: opportunity).versions.create!(
+        generate_correlation_id: SecureRandom.uuid, status: :awaiting_approval, value: BigDecimal('12500.5'), currency: 'BRL'
+      )
+    end
+    let(:proposals_url) { "https://app.example.com/app/accounts/#{account.id}/scansolo/proposals" }
+    let(:lead_email_missing) { 'Atenção: falta e-mail do lead. Cadastre um e-mail válido no lead antes de aprovar.' }
+
+    before do
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+                                 .apply_field!(key: 'empresa', value: 'Solar & Cia', status: 'confirmado', source_message_id: nil)
+    end
+
+    describe '.approval_request' do
+      let(:email) { with_modified_env(FRONTEND_URL: 'https://app.example.com') { described_class.approval_request(proposal_version: version) } }
+
+      it 'renders number, version, value, lead, the Propostas link and the screen-only approval sentence in text and HTML' do
+        expect(email.text).to include(
+          "Número da proposta: #{version.proposal_number}", 'Versão: 1', 'Valor: BRL 12.500,50', 'Lead: Ana <Souza> — Solar & Cia',
+          "Aprovar ou rejeitar na tela de Propostas: #{proposals_url}",
+          'A aprovação só vale pela tela de Propostas. Responder este e-mail não aprova nem rejeita a proposta.'
+        )
+        expect(email.html).to include(version.proposal_number, 'Versão: 1', 'Valor: BRL 12.500,50', proposals_url)
+        expect(email.text).not_to include(lead_email_missing)
+      end
+
+      it 'escapes values in the HTML' do
+        expect(email.html).to include('Lead: Ana &lt;Souza&gt; — Solar &amp; Cia')
+        expect(email.html).not_to include('<Souza>')
+      end
+
+      it 'warns that the lead e-mail is missing (RF-08)' do
+        contact.update!(email: nil)
+
+        expect(email.text).to include(lead_email_missing)
+        expect(email.html).to include(lead_email_missing)
+      end
+
+      it 'renders no token or API URL (RNF-09)' do
+        expect(email.text).not_to match(/api_access_token|Bearer|hook\.make|secret/)
+      end
+    end
+
+    describe '.lead_proposal' do
+      let(:email) { with_modified_env(FRONTEND_URL: 'https://app.example.com') { described_class.lead_proposal(proposal_version: version) } }
+
+      it 'puts the proposal number in the subject and no URL in the body' do
+        expect(email.subject).to eq("Sua proposta #{version.proposal_number}")
+        expect(email.text).to include('Olá, Ana <Souza>!', "Número da proposta: #{version.proposal_number}")
+        expect(email.text).not_to match(%r{https?://})
+        expect(email.html).not_to match(%r{https?://})
+        expect(email.html).to include('Olá, Ana &lt;Souza&gt;!')
+      end
+    end
+  end
 end

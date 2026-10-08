@@ -5,6 +5,12 @@
 # propagating (the negotiation is never undone). A success records
 # `negotiation.notification_sent`. Adding or swapping a channel only changes
 # ADAPTERS.
+#
+# RF-23 (scansolo-proposta-aprovacao-email): published at most once per
+# `correlation_id`. The claim is a `negotiation.notification_claimed`
+# AuditEvent written under the opportunity lock and committed before any
+# adapter runs (adapters deliver outside the transaction, RNF-01); an already
+# claimed correlation id publishes nothing, even after an adapter failure.
 class ScanSolo::Notifications::Publisher
   Result = Data.define(:success, :reason) do
     def success?
@@ -13,10 +19,22 @@ class ScanSolo::Notifications::Publisher
   end
 
   ADAPTERS = [ScanSolo::Notifications::EmailAdapter].freeze
+  CLAIM_EVENT = 'negotiation.notification_claimed'.freeze
 
   def self.call(event:, payload:, adapters: ADAPTERS)
     opportunity = ScanSolo::PipelineOpportunity.find(payload[:opportunity_id])
+    return unless claim!(opportunity, payload)
+
     adapters.each { |adapter| publish(adapter, event, payload, opportunity) }
+  end
+
+  def self.claim!(opportunity, payload)
+    opportunity.with_lock do
+      next false if ScanSolo::AuditEvent.exists?(subject: opportunity, event_type: CLAIM_EVENT, correlation_id: payload[:correlation_id])
+
+      audit!(opportunity, payload, CLAIM_EVENT)
+      true
+    end
   end
 
   def self.publish(adapter, event, payload, opportunity)
@@ -32,5 +50,5 @@ class ScanSolo::Notifications::Publisher
   def self.audit!(opportunity, payload, event_type, **audit_payload)
     ScanSolo::AuditLogger.record!(subject: opportunity, event_type: event_type, correlation_id: payload[:correlation_id], payload: audit_payload)
   end
-  private_class_method :publish, :audit!
+  private_class_method :claim!, :publish, :audit!
 end

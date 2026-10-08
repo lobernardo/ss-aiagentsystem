@@ -5,6 +5,10 @@
 # (RNF-01); delivery is the native one (`SendReplyJob` →
 # `Email::SendOnEmailService` → `ConversationReplyMailer`, From = channel
 # e-mail, native Message-ID for threading).
+# `post!` also takes CC recipients (`content_attributes.cc_emails`, read by
+# the mailer), ActiveStorage blobs created as attachments of the same message
+# (so `SendReplyJob` already sees them) and the message
+# `additional_attributes` (CT-05, CT-06).
 class ScanSolo::Quote::EmailThread
   def self.open!(inbox:, recipient:, subject:, marker:)
     contact_inbox = ContactInboxWithContactBuilder.new(
@@ -18,12 +22,19 @@ class ScanSolo::Quote::EmailThread
     ).perform
   end
 
-  def self.post!(conversation:, recipient:, email:)
+  # rubocop:disable Metrics/ParameterLists
+  def self.post!(conversation:, recipient:, email:, cc: [], attachments: [], additional_attributes: {})
+    # rubocop:enable Metrics/ParameterLists
     raise CustomExceptions::ScanSolo::DeliveryInsideTransaction if ActiveRecord::Base.connection.current_transaction.joinable?
 
-    conversation.messages.create!(
+    content_attributes = { to_emails: [recipient], email: { html_content: { reply: email.html } } }
+    content_attributes[:cc_emails] = cc if cc.present?
+    message = conversation.messages.new(
       account_id: conversation.account_id, inbox_id: conversation.inbox_id, message_type: :outgoing, content: email.text,
-      content_attributes: { to_emails: [recipient], email: { html_content: { reply: email.html } } }
+      content_attributes: content_attributes, additional_attributes: additional_attributes
     )
+    attachments.each { |blob| message.attachments.new(account_id: conversation.account_id, file_type: :file, file: blob) }
+    message.save!
+    message
   end
 end

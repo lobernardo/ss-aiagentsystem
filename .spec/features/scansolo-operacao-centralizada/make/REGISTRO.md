@@ -149,3 +149,11 @@ Pendências:
 - **Execução 1 não validada.**
 - Correção 2026-10-08T19:27:50Z (`scenarios_update`, cenário OFF): os 21 `oldText` do módulo 31 passaram a ser montados como texto literal, por exemplo `{{"{" + "{NOME_EMPRESA" + "}" + "}"}}`, que produz exatamente `{{NOME_EMPRESA}}` sem avaliação. `scheduling` preservado (`immediately`, 100/min). Resposta: `isActive: false`, `isinvalid: false`.
 - Limpeza pendente (junto com a do teste): mandar o Doc `13XFpa3N…` para a lixeira.
+
+### T40 — execução 1, 2ª tentativa, 2026-10-08T19:32:40Z
+
+- Execução `6d2b1679247046ac8a1a91a96345a053`, `status: 3`, 12 operações, **mesmo erro** no módulo 31 (`requests[0].replaceAllText: The substring match text should not be empty`).
+- Efeitos: mais 1 Doc não preenchido, `1til-p3t-213L0IDTm_oloak4e_lHy9LHjGn7TJscVl8` (privado); `records: 0`; mais 1 callback `failure` ao Rails (`t40-runonce-1`, não emitido pelo Rails); 0 e-mail; 0 WhatsApp.
+- Diagnóstico: `"{" + "{NOME…"` também avaliou para vazio, porque o `+` do IML não concatena texto.
+- Correção 2026-10-08T19:35:28Z (`scenarios_update`, cenário OFF): o `oldText` passou a ser montado por justaposição, por exemplo `{{"{"}}{{"{"}}NOME_EMPRESA{{"}"}}{{"}"}}`, com cada expressão devolvendo uma chave literal. Resposta: `isActive: false`, `isinvalid: false`.
+- Limpeza pendente: Docs `13XFpa3N…` e `1til-p3t…`.

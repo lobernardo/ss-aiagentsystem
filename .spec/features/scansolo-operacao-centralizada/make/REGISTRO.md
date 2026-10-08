@@ -113,7 +113,15 @@ Removido ou neutralizado:
 Validações estáticas: 0 módulos `email`/`google-email`/`gmail`, 0 WhatsApp/HTTP fora do callback ao Chatwoot, 0 URL `hook.*.make.com`, 0 `proposal.send`, ids únicos.
 
 Pendências:
-- Run once com payload de teste (ver o relatório da sessão), mais uma 2ª execução do mesmo `pv_` para provar a idempotência.
+- **Único item pendente do T40**: o disparo autenticado do webhook 2859035 (Run once com o payload de teste `t40-runonce-1`), e depois a 2ª execução do mesmo `pv_` para provar a idempotência.
+- 2026-10-08, avaliação dos caminhos via Make MCP sem trazer segredos ao contexto (só pelos schemas, nada executado):
+  - `scenarios_run`: exige o cenário ATIVO ("Scenario is not activated"), o que viola a regra de manter a `Entrada` OFF. Além disso, `data` alimenta a interface de entrada do cenário (vazia), não o bundle do `gateway:CustomWebHook`, então `1.action`, `1.commercial` e o header `authorization` não existiriam.
+  - `scenarios_replay`: também exige o cenário ativo e uma execução anterior com dados armazenados; não existe nenhuma.
+  - `hook-incomings_list/get`: só leem a fila do webhook; nenhuma ferramenta insere item na fila.
+  - `hooks_ping`/`hooks_get`: devolvem o endereço do webhook (sensível), e por isso não foram chamados.
+  - "Run once"/modo de teste: só existe na UI do Make, não no MCP.
+  - Qualquer disparo precisa do header `Authorization: Bearer <inbound_bearer>`, porque o módulo 4 o confere contra o `ScanSOLO_Config`. Sem ele, a execução cai na rota 401 e não testa nada. Por isso nenhum caminho MCP substitui o curl sem expor o segredo.
+- O T40 **não** está marcado como concluído.
 - Template `1iXxNeqP…` ("ScanSOLO Proposta Georadar") lido sem alteração em 2026-10-08, via conector Google Drive:
   - Presentes: `{{NOME_EMPRESA}}`, `{{NOME_CONTATO}}`, `{{DATA_SOLICITACAO}}`, `{{DESCRICAO_ESCOPO}}`, `{{PROFUNDIDADE}}`, `{{VALOR_NUMERICO}}`, `{{VALOR_EXTENSO}}`.
   - **Ausentes**: `{{CONDICOES_PAGAMENTO}}`, `{{OBSERVACOES}}`, `{{NÚMERO_PROPOSTA}}`, `{{PRAZO_TOTAL}}`. As condições de pagamento e o prazo de validade (90 dias) estão fixos no texto, e o cronograma é "ALTERAR CRONOGRAMA". Por isso número da proposta, cronograma, condições e observações do `commercial` **não aparecem no PDF** até o template ganhar esses placeholders (lacuna do RF-47, fora do T40, pois o template não pode ser alterado aqui). As substituições ficam no cenário e não têm efeito enquanto o placeholder não existir.

@@ -122,6 +122,12 @@ Pendências:
   - "Run once"/modo de teste: só existe na UI do Make, não no MCP.
   - Qualquer disparo precisa do header `Authorization: Bearer <inbound_bearer>`, porque o módulo 4 o confere contra o `ScanSOLO_Config`. Sem ele, a execução cai na rota 401 e não testa nada. Por isso nenhum caminho MCP substitui o curl sem expor o segredo.
 - O T40 **não** está marcado como concluído.
+- 2026-10-08, tentativa da execução 1 (POST disparado pelo desenvolvedor em terminal próprio; resposta HTTP "Accepted"):
+  - `executions_list 6406463`: 2 execuções manuais, `3f86f19ee6914f499a00acfb712385d7` (18:59:02Z) e `126639ae48fc4784ba4fef2e5b3066dd` (19:05:43Z), ambas `status: 1` e **6 operações** cada. Esse total só corresponde a uma rota de resposta curta: 1→2→3→4→6→(10 401 | 75 422 | 80 422). A geração completa teria 17 operações.
+  - `executions_get-detail` devolveu só `{"status":"SUCCESS"}`, sem dados por módulo.
+  - Evidências de que **nada foi gerado**: `ScanSOLO_Proposta_Map` (158314) com `records: 0`; Drive sem nenhum arquivo "Empresa Teste T40"/"v999000001"; logo, nenhum callback ao Rails e nenhum e-mail ou WhatsApp.
+  - Cenário: segue `isActive: false`. Às 18:52:06Z houve um save pela UI (eventos `modify` + `schedule`) que acrescentou `maximum_runs_per_minute: 100`, sem alterar a lógica.
+  - **Resultado: execução 1 NÃO validada.** É preciso identificar qual rota respondeu antes de repetir.
 - Template `1iXxNeqP…` ("ScanSOLO Proposta Georadar") lido sem alteração em 2026-10-08, via conector Google Drive:
   - Presentes: `{{NOME_EMPRESA}}`, `{{NOME_CONTATO}}`, `{{DATA_SOLICITACAO}}`, `{{DESCRICAO_ESCOPO}}`, `{{PROFUNDIDADE}}`, `{{VALOR_NUMERICO}}`, `{{VALOR_EXTENSO}}`.
   - **Ausentes**: `{{CONDICOES_PAGAMENTO}}`, `{{OBSERVACOES}}`, `{{NÚMERO_PROPOSTA}}`, `{{PRAZO_TOTAL}}`. As condições de pagamento e o prazo de validade (90 dias) estão fixos no texto, e o cronograma é "ALTERAR CRONOGRAMA". Por isso número da proposta, cronograma, condições e observações do `commercial` **não aparecem no PDF** até o template ganhar esses placeholders (lacuna do RF-47, fora do T40, pois o template não pode ser alterado aqui). As substituições ficam no cenário e não têm efeito enquanto o placeholder não existir.

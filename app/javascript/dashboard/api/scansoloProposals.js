@@ -20,6 +20,14 @@ class ScanSoloProposalsAPI extends ApiClient {
     });
   }
 
+  // CT-03: the reason is required (422 `reason_required` otherwise).
+  reject(proposalId, proposalVersionId, reason) {
+    return axios.post(`${this.url}/${proposalId}/reject`, {
+      proposal_version_id: proposalVersionId,
+      reason,
+    });
+  }
+
   send(proposalId, proposalVersionId, correlationId) {
     return axios.post(`${this.url}/${proposalId}/send`, {
       proposal_version_id: proposalVersionId,

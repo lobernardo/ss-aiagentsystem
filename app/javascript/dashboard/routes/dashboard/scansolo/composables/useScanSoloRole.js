@@ -9,10 +9,15 @@ export function useScanSoloRole() {
   const currentUser = useMapGetter('getCurrentUser');
 
   const isAdministrator = computed(() => isAdmin.value);
-  const isOwner = ownerId =>
-    ownerId !== null &&
-    ownerId !== undefined &&
-    ownerId === currentUser.value?.id;
+  const isCurrentUser = userId =>
+    userId !== null && userId !== undefined && userId === currentUser.value?.id;
+  const isOwner = isCurrentUser;
+  // CT-02: `commercialUserId` comes from the published agent config.
+  const isCommercialUser = isCurrentUser;
+  // CT-02 / CT-03: administrators or the published commercial user approve,
+  // reject and retry proposals.
+  const canApproveProposals = commercialUserId =>
+    isAdministrator.value || isCommercialUser(commercialUserId);
 
-  return { isAdministrator, isOwner };
+  return { isAdministrator, isOwner, isCommercialUser, canApproveProposals };
 }

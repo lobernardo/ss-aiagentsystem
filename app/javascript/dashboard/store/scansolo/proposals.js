@@ -74,6 +74,16 @@ export const useScansoloProposalsStore = defineStore('scansoloProposals', {
       return camelizeProposal(data);
     },
 
+    async rejectProposal(proposalId, proposalVersionId, reason) {
+      const { data } = await ScanSoloProposalsAPI.reject(
+        proposalId,
+        proposalVersionId,
+        reason
+      );
+      this.upsertVersion(proposalId, camelizeProposal(data));
+      return camelizeProposal(data);
+    },
+
     async retryProposal(proposalId, proposalVersionId, confirmReprocess) {
       const { data } = await ScanSoloProposalsAPI.retry(
         proposalId,

@@ -12,6 +12,11 @@ class ScanSoloPipelineOpportunitiesAPI extends ApiClient {
     });
   }
 
+  // CT-09: written to the opportunity's native Contact.
+  updateLeadEmail(id, email) {
+    return axios.patch(`${this.url}/${id}`, { email });
+  }
+
   // CT-12: administrators only; no body.
   resendQuoteRequest(id) {
     return axios.post(`${this.url}/${id}/quote_request/resend`);

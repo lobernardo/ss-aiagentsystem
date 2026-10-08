@@ -81,7 +81,8 @@
           "VALUE_LABEL": "Valor",
           "VALID_UNTIL_LABEL": "Validade",
           "DOCUMENT_LINK": "Abrir PDF da proposta",
-          "NONE": "Nenhuma proposta gerada."
+          "NONE": "Nenhuma proposta gerada.",
+          "REJECTION_REASON_LABEL": "Motivo da rejeição"
         },
         "INITIAL_TEMPLATE_FAILURE": {
           "TITLE": "Falha na mensagem inicial do lead",
@@ -99,6 +100,20 @@
             "QUOTE_REQUEST_CLOSED": "O orçamento desta oportunidade já foi respondido; não há solicitação para reenviar.",
             "QUOTE_REQUEST_NOT_ELIGIBLE": "Esta oportunidade não tem uma solicitação de orçamento que possa ser reenviada.",
             "QUOTE_INBOX_MISCONFIGURED": "A caixa de entrada de e-mail de orçamento não está configurada corretamente. Corrija e publique a configuração do agente."
+          }
+        },
+        "LEAD_EMAIL": {
+          "TITLE": "E-mail do lead",
+          "LABEL": "E-mail",
+          "MISSING": "Falta o e-mail do lead. A proposta só pode ser aprovada depois que o e-mail for cadastrado.",
+          "EDIT": "Editar e-mail",
+          "PLACEHOLDER": "nome@empresa.com.br",
+          "SAVE": "Salvar",
+          "CANCEL": "Cancelar",
+          "SUCCESS": "E-mail do lead atualizado.",
+          "ERRORS": {
+            "INVALID_EMAIL": "Informe um e-mail válido.",
+            "CONTACT_CONFLICT": "Este e-mail já pertence a outro contato da conta."
           }
         }
       },
@@ -316,7 +331,8 @@
         "EMPTY_STATE": "Nenhuma cadência ativa para mapear.",
         "SLOTS": {
           "LEAD_MANUAL_INICIAL": "Mensagem inicial do lead manual",
-          "PROPOSTA_ACOMPANHAMENTO": "Acompanhamento da proposta"
+          "PROPOSTA_ACOMPANHAMENTO": "Acompanhamento da proposta",
+          "PROPOSTA_AVISO_EMAIL": "Aviso de proposta enviada por e-mail"
         }
       }
     },
@@ -333,7 +349,9 @@
         "GENERATED": "Gerada",
         "APPROVED": "Aprovada",
         "SENT": "Enviada",
-        "FAILED": "Falhou"
+        "FAILED": "Falhou",
+        "AWAITING_APPROVAL": "Aguardando aprovação",
+        "REJECTED": "Rejeitada"
       },
       "REPROCESS": "Reprocessar",
       "INTEGRATION_BLOCKED": "A integração de propostas com o Make ainda não está configurada. Gerar, enviar e tentar novamente ficam indisponíveis até um administrador concluir a configuração.",
@@ -369,6 +387,38 @@
           "NOT_DISCARDABLE": "Só respostas tardias podem ser descartadas.",
           "INVALID_QUOTE_REQUEST_ID": "Selecione uma solicitação de orçamento válida."
         }
+      },
+      "APPROVE": "Aprovar",
+      "APPROVE_SUCCESS": "Proposta aprovada. O envio ao lead por e-mail foi iniciado.",
+      "REJECT": "Rejeitar",
+      "REJECT_SUCCESS": "Proposta rejeitada.",
+      "REJECT_DIALOG": {
+        "TITLE": "Rejeitar proposta",
+        "DESCRIPTION": "Informe o motivo da rejeição. Ele será enviado ao comercial junto com o pedido de correção do orçamento.",
+        "REASON_LABEL": "Motivo da rejeição",
+        "REASON_PLACEHOLDER": "Descreva o que precisa ser corrigido",
+        "CONFIRM": "Rejeitar proposta"
+      },
+      "REJECTION_REASON_LABEL": "Motivo da rejeição",
+      "LEAD_EMAIL_MISSING": "Falta o e-mail do lead. Cadastre o e-mail para poder aprovar a proposta.",
+      "LEAD_EMAIL_LINK": "Abrir tela do lead",
+      "DOCUMENT_PENDING": "O PDF da proposta ainda não está disponível.",
+      "DELIVERY": {
+        "TITLE": "Entrega",
+        "EMAIL_LABEL": "E-mail ao lead",
+        "NOTICE_LABEL": "Aviso no WhatsApp",
+        "STATUSES": {
+          "PENDING": "Pendente",
+          "SENT": "Enviado",
+          "FAILED": "Falhou",
+          "BLOCKED": "Bloqueado"
+        }
+      },
+      "ACTION_ERRORS": {
+        "NOT_AWAITING_APPROVAL": "Esta versão não está mais aguardando aprovação.",
+        "NOT_CURRENT_VERSION": "Esta não é a versão atual da proposta. Atualize a tela.",
+        "LEAD_EMAIL_MISSING": "Falta o e-mail do lead. Cadastre o e-mail na tela do lead e tente novamente.",
+        "REASON_REQUIRED": "Informe o motivo da rejeição."
       }
     },
     "EXECUTIONS": {
@@ -517,7 +567,11 @@
         "NETWORK_ERROR": "Falha de rede ao chamar o Make",
         "PROVIDER_UNAVAILABLE": "Make indisponível",
         "PROVIDER_REJECTED": "Make recusou a requisição",
-        "STALE_PENDING": "Turno expirou sem resposta"
+        "STALE_PENDING": "Turno expirou sem resposta",
+        "LEAD_EMAIL_MISSING": "Falta o e-mail do lead",
+        "EMAIL_DELIVERY_FAILED": "Falha no envio do e-mail ao lead",
+        "ARTIFACT_DOWNLOAD_FAILED": "Falha ao baixar o PDF da proposta",
+        "ARTIFACT_CHECKSUM_MISMATCH": "PDF da proposta diferente do esperado"
       },
       "META_STATUSES": {
         "APPROVED": "Aprovado",
@@ -593,7 +647,9 @@
         "GENERATING": "Gerando proposta",
         "GENERATED": "Proposta gerada",
         "SENT": "Proposta enviada",
-        "FAILED": "Falha na proposta"
+        "FAILED": "Falha na proposta",
+        "AWAITING_APPROVAL": "Aguardando aprovação",
+        "REJECTED": "Proposta rejeitada"
       }
     },
     "CONTACT_OPT_OUT": {

@@ -55,6 +55,21 @@ export const useScansoloPipelineOpportunitiesStore = defineStore(
         return opportunity;
       },
 
+      // CT-09 / UI-02: the server answers with the show JSON; a 422
+      // (`invalid_email` / `contact_conflict`) propagates to the form.
+      async updateLeadEmail(opportunityId, email) {
+        const { data } = await ScanSoloPipelineOpportunitiesAPI.updateLeadEmail(
+          opportunityId,
+          email
+        );
+        const updated = camelizeOpportunity(data);
+        const opportunity = this.opportunities.find(
+          o => o.id === opportunityId
+        );
+        if (opportunity) opportunity.leadEmail = updated.leadEmail;
+        return updated;
+      },
+
       // Moves the card immediately (optimistic) so drag-and-drop feels
       // responsive, then reverts it if the server rejects the transition
       // (RF-09) — the card's final resting stage always matches what the

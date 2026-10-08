@@ -1,0 +1,21 @@
+{
+  "dataStore": {
+    "id": 158313,
+    "name": "ScanSOLO_Config",
+    "teamId": 701134,
+    "datastructureId": 511342
+  },
+  "dataStructure": {
+    "id": 511342,
+    "name": "ScanSOLO_Config",
+    "teamId": 701134,
+    "spec": [
+      { "name": "chatwoot_base_url", "type": "text", "label": "URL do ScanSOLO (sem / no fim)" },
+      { "name": "chatwoot_api_token", "type": "text", "label": "Access Token do usuário Integração Make" },
+      { "name": "inbound_bearer", "type": "text", "label": "Segredo que o ScanSOLO envia (scan_solo.make.secret)" },
+      { "name": "signing_secret", "type": "text", "label": "Segredo de assinatura do callback (scan_solo.make.inbound_signing_secret)" },
+      { "name": "validade_dias", "type": "number", "label": "Validade padrão da proposta (dias)" },
+      { "name": "email_comercial", "type": "text", "label": "E-mail do comercial" }
+    ]
+  }
+}

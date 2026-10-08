@@ -1,0 +1,27 @@
+{
+  "dataStore": {
+    "id": 158314,
+    "name": "ScanSOLO_Proposta_Map",
+    "teamId": 701134,
+    "datastructureId": 511343
+  },
+  "dataStructure": {
+    "id": 511343,
+    "name": "ScanSOLO_Proposta_Map",
+    "teamId": 701134,
+    "spec": [
+      { "name": "proposal_version_id", "type": "number" },
+      { "name": "opportunity_id", "type": "number" },
+      { "name": "account_id", "type": "number" },
+      { "name": "correlation_id", "type": "text" },
+      { "name": "idempotency_key", "type": "text" },
+      { "name": "doc_id", "type": "text" },
+      { "name": "contact_name", "type": "text" },
+      { "name": "contact_email", "type": "text" },
+      { "name": "company", "type": "text" },
+      { "name": "total_value", "type": "number" },
+      { "name": "status", "type": "text" },
+      { "name": "updated_at", "type": "date" }
+    ]
+  }
+}

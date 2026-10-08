@@ -39,10 +39,11 @@ class ScanSolo::QuoteRequest < ApplicationRecord
   belongs_to :email_conversation, class_name: 'Conversation', optional: true
   belongs_to :reply_message, class_name: 'Message', optional: true
 
-  has_one :proposal_version,
-          class_name: 'ScanSolo::ProposalVersion',
-          inverse_of: :quote_request,
-          dependent: :restrict_with_exception
+  # RF-06: a rejection reopens the request, so it can hold several versions.
+  has_many :proposal_versions,
+           class_name: 'ScanSolo::ProposalVersion',
+           inverse_of: :quote_request,
+           dependent: :restrict_with_exception
 
   enum status: { awaiting_reply: 0, correction_requested: 1, replied: 2 }
 
@@ -50,5 +51,11 @@ class ScanSolo::QuoteRequest < ApplicationRecord
 
   def open?
     awaiting_reply? || correction_requested?
+  end
+
+  # RF-07: a new version may be generated only for the first time or after
+  # every previous version was rejected.
+  def generation_open?
+    proposal_versions.where.not(status: :rejected).none?
   end
 end

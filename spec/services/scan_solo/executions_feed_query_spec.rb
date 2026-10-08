@@ -43,9 +43,10 @@ RSpec.describe ScanSolo::ExecutionsFeedQuery do
     definition
 
     rows = feed.template_availability
-    # CT-09 (RNF-11): the manual-lead and follow-up slots join the proposal send row.
+    # CT-09 (RNF-11): the manual-lead and follow-up slots join the proposal send row; CT-07 adds the email notice slot.
     expect(rows.pluck(:stage, :step)).to eq(
-      [['em_contato', 1], ['em_contato', 2], ['proposta_enviada', nil], ['lead_manual_inicial', nil], ['proposta_acompanhamento', nil]]
+      [['em_contato', 1], ['em_contato', 2], ['proposta_enviada', nil], ['lead_manual_inicial', nil], ['proposta_acompanhamento', nil],
+       ['proposta_aviso_email', nil]]
     )
     expect(rows.first).to include(:availability, :block_reason, :meta_status, :last_synced_at)
   end

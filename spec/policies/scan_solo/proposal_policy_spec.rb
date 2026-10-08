@@ -22,16 +22,34 @@ RSpec.describe ScanSolo::ProposalPolicy do
     expect(policy.generate?).to be true
   end
 
-  it 'reserves approve for administrators' do
-    expect(policy.approve?).to be false
-    account_user.update!(role: :administrator)
-    expect(policy.approve?).to be true
-  end
+  %i[approve? reject? retry?].each do |action|
+    describe "##{action} (RF-04, RF-05, RF-15)" do
+      it 'allows an administrator' do
+        account_user.update!(role: :administrator)
 
-  it 'reserves retry for administrators' do
-    expect(policy.retry?).to be false
-    account_user.update!(role: :administrator)
-    expect(policy.retry?).to be true
+        expect(policy.public_send(action)).to be true
+      end
+
+      it 'allows the agent published as commercial user' do
+        ScanSolo::AiAgentConfig.draft_for!(account).update!(commercial_user_id: user.id)
+        ScanSolo::AiAgent::PublishService.new(account: account).call
+
+        expect(policy.public_send(action)).to be true
+      end
+
+      it 'denies another agent' do
+        ScanSolo::AiAgentConfig.draft_for!(account).update!(commercial_user_id: create(:user, account: account).id)
+        ScanSolo::AiAgent::PublishService.new(account: account).call
+
+        expect(policy.public_send(action)).to be false
+      end
+
+      it 'denies an agent set as commercial user only in the unpublished draft' do
+        ScanSolo::AiAgentConfig.draft_for!(account).update!(commercial_user_id: user.id)
+
+        expect(policy.public_send(action)).to be false
+      end
+    end
   end
 
   it 'allows send for the owner or an administrator only' do

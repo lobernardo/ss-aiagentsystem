@@ -171,7 +171,7 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     expect(opportunity.quote_request.reload).to be_correction_requested
 
     luciano_replies(email_conversation, valid_block)
-    opportunity.quote_request.reload.proposal_version
+    opportunity.quote_request.reload.proposal_versions.sole
   end
 
   def deliver_proposal!(opportunity)
@@ -293,7 +293,7 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     expect(response).to have_http_status(:ok)
     quote_request = opportunity.quote_request.reload
     expect(quote_request).to be_replied
-    expect(quote_request.proposal_version).to be_generating
+    expect(quote_request.proposal_versions.sole).to be_generating
     expect(ScanSolo::MakeRequest.sole.payload.dig('commercial', 'quote_request_id')).to eq(quote_request.id)
     expect(ScanSolo::AuditEvent.where(event_type: 'quote_reply.pending').count).to eq(1)
     expect(correlation_chain(quote_request)).to include('quote_reply.linked', 'quote_reply.accepted', 'proposal.generation_requested')
@@ -335,7 +335,7 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
       %w[quote_request.sent quote_reply.rejected quote_reply.accepted proposal.generation_requested proposal.generated proposal.sent]
     )
     expect(quote_request.reply_message.conversation).to eq(quote_request.email_conversation)
-    expect(quote_request.proposal_version).to eq(version)
+    expect(quote_request.proposal_versions.sole).to eq(version)
     expect(ScanSolo::MakeRequest.find_by!(correlation_id: version.generate_correlation_id).action).to eq('proposal.generate')
   end
 

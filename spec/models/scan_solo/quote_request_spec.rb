@@ -51,4 +51,28 @@ RSpec.describe ScanSolo::QuoteRequest do
     expect(reloaded.email_conversation).to eq(email_conversation)
     expect(reloaded.reply_message).to eq(reply)
   end
+
+  describe '#generation_open? (RF-07)' do
+    let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
+
+    it 'is true without versions' do
+      expect(quote_request.generation_open?).to be true
+    end
+
+    it 'is true when every version was rejected' do
+      proposal.versions.create!(quote_request: quote_request, status: :rejected)
+      proposal.versions.create!(quote_request: quote_request, status: :rejected)
+
+      expect(quote_request.generation_open?).to be true
+    end
+
+    %i[failed sent awaiting_approval].each do |status|
+      it "is false with a #{status} version" do
+        proposal.versions.create!(quote_request: quote_request, status: :rejected)
+        proposal.versions.create!(quote_request: quote_request, status: status)
+
+        expect(quote_request.generation_open?).to be false
+      end
+    end
+  end
 end

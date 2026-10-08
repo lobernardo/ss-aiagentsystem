@@ -37,12 +37,17 @@ RSpec.describe ScanSolo::TemplateMapping do
   end
 
   it 'accepts the CT-09 slots only with a null step' do
-    %w[lead_manual_inicial proposta_acompanhamento].each do |slot|
+    %w[lead_manual_inicial proposta_acompanhamento proposta_aviso_email].each do |slot|
       mapping.assign_attributes(stage: slot, step: nil)
       expect(mapping).to be_valid
 
       mapping.step = 1
       expect(mapping).not_to be_valid
     end
+  end
+
+  it 'keeps the proposal send naming and adds the CT-07 email notice slot' do
+    expect(described_class::SINGLE_TEMPLATES['proposta_enviada']).to eq('scansolo_proposal_send')
+    expect(described_class::SINGLE_TEMPLATES['proposta_aviso_email']).to eq('scansolo_proposta_aviso_email')
   end
 end

@@ -28,11 +28,13 @@ class ScanSolo::TemplateMapping < ApplicationRecord
   STAGES = %w[novo_lead em_contato em_qualificacao proposta_enviada].freeze
   # CT-09: single-template slots (`step: nil`) and their naming conventions --
   # the proposal send (b), the manual lead's initial template (a) and the
-  # post-proposal follow-up (c).
+  # post-proposal follow-up (c). CT-07: the short WhatsApp notice sent after
+  # the proposal email, without the PDF.
   SINGLE_TEMPLATES = {
     'proposta_enviada' => 'scansolo_proposal_send',
     'lead_manual_inicial' => 'scansolo_lead_manual_inicial',
-    'proposta_acompanhamento' => 'scansolo_proposta_acompanhamento'
+    'proposta_acompanhamento' => 'scansolo_proposta_acompanhamento',
+    'proposta_aviso_email' => 'scansolo_proposta_aviso_email'
   }.freeze
 
   belongs_to :account

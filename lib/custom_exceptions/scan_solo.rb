@@ -59,3 +59,26 @@ class CustomExceptions::ScanSolo::QuoteReplyRejected < StandardError
     super(code)
   end
 end
+
+# CT-02 / CT-03 / CT-04: an approve, reject or send action refused by the
+# version state; the controller maps it to 422 `{ error: code }`
+# (not_awaiting_approval, not_current_version, already_sent, approval_required).
+class CustomExceptions::ScanSolo::ProposalActionRejected < StandardError
+  attr_reader :code
+
+  def initialize(code)
+    @code = code
+    super(code)
+  end
+end
+
+# CT-09 / RF-09: a lead e-mail update refused; the controller maps it to 422
+# `{ error: code }` (invalid_email, contact_conflict).
+class CustomExceptions::ScanSolo::LeadEmailRejected < StandardError
+  attr_reader :code
+
+  def initialize(code)
+    @code = code
+    super(code)
+  end
+end

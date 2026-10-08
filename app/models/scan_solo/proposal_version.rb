@@ -19,15 +19,21 @@
 # Table name: scan_solo_proposal_versions
 #
 #  id                           :bigint           not null, primary key
+#  approval_requested_at        :datetime
 #  approved_at                  :datetime
 #  approved_by_type             :string
+#  artifact_sha256              :string
 #  artifact_url                 :string
 #  currency                     :string
 #  failure_reason               :string
+#  notice_failure_reason        :string
 #  proposal_number              :string
 #  generate_callback_applied_at :datetime
 #  generate_requested_at        :datetime
 #  is_current                   :boolean          default(TRUE), not null
+#  rejected_at                  :datetime
+#  rejected_by_type             :string
+#  rejection_reason             :text
 #  send_callback_applied_at     :datetime
 #  send_requested_at            :datetime
 #  status                       :integer          default("generating"), not null
@@ -36,11 +42,14 @@
 #  created_at                   :datetime         not null
 #  updated_at                   :datetime         not null
 #  valid_until                  :datetime
+#  approval_request_message_id  :bigint
 #  approved_by_id               :bigint
 #  follow_up_message_id         :bigint
 #  generate_correlation_id      :string
+#  notice_message_id            :bigint
 #  proposal_id                  :bigint           not null
 #  quote_request_id             :bigint
+#  rejected_by_id               :bigint
 #  send_correlation_id          :string
 #  sent_message_id              :bigint
 #
@@ -49,10 +58,13 @@
 #  idx_on_approved_by_type_approved_by_id_0a2d8f1dd3             (approved_by_type,approved_by_id)
 #  index_scan_solo_proposal_versions_on_current                  (proposal_id) UNIQUE WHERE (is_current = true)
 #  index_scan_solo_proposal_versions_on_generate_correlation_id  (generate_correlation_id) UNIQUE
+#  index_scan_solo_proposal_versions_on_notice_message_id        (notice_message_id)
 #  index_scan_solo_proposal_versions_on_proposal_and_number      (proposal_id,version_number) UNIQUE
 #  index_scan_solo_proposal_versions_on_proposal_id              (proposal_id)
 #  index_scan_solo_proposal_versions_on_proposal_number          (proposal_number) UNIQUE
-#  index_scan_solo_proposal_versions_on_quote_request_id         (quote_request_id) UNIQUE
+#  index_scan_solo_proposal_versions_on_quote_request_id         (quote_request_id)
+#  index_scan_solo_proposal_versions_on_rejected_by              (rejected_by_type,rejected_by_id)
+#  index_scan_solo_proposal_versions_one_open_per_quote_request  (quote_request_id) UNIQUE WHERE (status = ANY (ARRAY[0, 2, 5]))
 #  index_scan_solo_proposal_versions_on_send_correlation_id      (send_correlation_id) UNIQUE
 #  index_scan_solo_proposal_versions_on_sent_message_id          (sent_message_id)
 #
@@ -66,13 +78,20 @@ class ScanSolo::ProposalVersion < ApplicationRecord
 
   belongs_to :proposal, class_name: 'ScanSolo::Proposal', inverse_of: :versions
   belongs_to :approved_by, polymorphic: true, optional: true
+  belongs_to :rejected_by, polymorphic: true, optional: true
   belongs_to :sent_message, class_name: 'Message', optional: true
   belongs_to :follow_up_message, class_name: 'Message', optional: true
-  belongs_to :quote_request, class_name: 'ScanSolo::QuoteRequest', optional: true, inverse_of: :proposal_version
+  belongs_to :approval_request_message, class_name: 'Message', optional: true
+  belongs_to :notice_message, class_name: 'Message', optional: true
+  belongs_to :quote_request, class_name: 'ScanSolo::QuoteRequest', optional: true, inverse_of: :proposal_versions
 
   has_one_attached :document
 
-  enum status: { generating: 0, generated: 1, approved: 2, sent: 3, failed: 4 }
+  # CT-01: codes 0-4 keep their meaning; `generated` stays only for legacy rows.
+  enum status: { generating: 0, generated: 1, approved: 2, sent: 3, failed: 4, awaiting_approval: 5, rejected: 6 }
+
+  # RF-07: at most one of these per quote request (partial unique index).
+  NON_TERMINAL_STATUSES = %w[generating awaiting_approval approved].freeze
 
   before_validation :assign_version_number, on: :create
   before_create :unmark_previous_current, if: :is_current?

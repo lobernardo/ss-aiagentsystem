@@ -11,6 +11,18 @@ RSpec.describe ScanSolo::ProposalVersion do
   end
   let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
 
+  describe 'status vocabulary (CT-01)' do
+    it 'keeps codes 0-4 and adds awaiting_approval and rejected' do
+      expect(described_class.statuses).to eq(
+        'generating' => 0, 'generated' => 1, 'approved' => 2, 'sent' => 3, 'failed' => 4, 'awaiting_approval' => 5, 'rejected' => 6
+      )
+    end
+
+    it 'lists the statuses that hold a quote request open (RF-07)' do
+      expect(described_class::NON_TERMINAL_STATUSES).to eq(%w[generating awaiting_approval approved])
+    end
+  end
+
   describe 'version numbering' do
     it 'auto-assigns sequential version numbers per proposal' do
       v1 = proposal.versions.create!
@@ -107,11 +119,28 @@ RSpec.describe ScanSolo::ProposalVersion do
   end
 
   describe '#quote_request' do
-    it 'links the version generated from a quote request' do
+    it 'links every version generated from the same quote request (RF-06)' do
       quote_request = ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid)
+      rejected = proposal.versions.create!(quote_request: quote_request, status: :rejected)
       version = proposal.versions.create!(quote_request: quote_request)
 
-      expect(quote_request.reload.proposal_version).to eq(version)
+      expect(quote_request.reload.proposal_versions).to contain_exactly(rejected, version)
+    end
+  end
+
+  describe 'approval and notice associations' do
+    it 'links the rejecting user, the approval request message and the WhatsApp notice' do
+      user = create(:user, account: account)
+      approval_request = create(:message, account: account, conversation: conversation)
+      notice = create(:message, account: account, conversation: conversation)
+      version = proposal.versions.create!(status: :rejected, rejected_by: user, rejected_at: Time.current,
+                                          approval_request_message: approval_request, notice_message: notice)
+
+      reloaded = described_class.find(version.id)
+
+      expect(reloaded.rejected_by).to eq(user)
+      expect(reloaded.approval_request_message).to eq(approval_request)
+      expect(reloaded.notice_message).to eq(notice)
     end
   end
 end

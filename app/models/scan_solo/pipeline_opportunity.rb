@@ -97,4 +97,9 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
   def record_customer_interaction!(at:)
     update!(last_customer_interaction_at: at)
   end
+
+  # RF-08: the proposal is delivered by email, so approval needs a valid lead address.
+  def lead_email_valid?
+    contact.email.present? && contact.email.match?(URI::MailTo::EMAIL_REGEXP)
+  end
 end

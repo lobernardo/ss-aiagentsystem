@@ -101,7 +101,7 @@ RSpec.describe ScanSolo::Quote::ReplyProcessor do
       process(message)
 
       request = ScanSolo::PipelineOpportunity.find(opportunity.id).quote_request
-      version = request.proposal_version
+      version = request.proposal_versions.sole
       expect(request.email_conversation.messages.incoming.sole).to eq(message)
       expect(request.reply_message).to eq(message)
       expect(ScanSolo::MakeRequest.find_by!(correlation_id: version.generate_correlation_id).action).to eq('proposal.generate')

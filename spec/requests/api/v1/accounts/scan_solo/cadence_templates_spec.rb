@@ -36,10 +36,10 @@ RSpec.describe 'ScanSolo Cadence Templates API', type: :request do
 
       expect(response).to have_http_status(:ok)
       rows = response.parsed_body.index_by { |row| [row['stage'], row['step']] }
-      # CT-09 (RNF-11): the manual-lead and follow-up slots join the proposal send row.
+      # CT-09 (RNF-11): the manual-lead and follow-up slots join the proposal send row; CT-07 adds the email notice slot.
       expect(rows.keys).to contain_exactly(
         ['novo_lead', 1], ['novo_lead', 2], ['em_contato', 1],
-        ['proposta_enviada', nil], ['lead_manual_inicial', nil], ['proposta_acompanhamento', nil]
+        ['proposta_enviada', nil], ['lead_manual_inicial', nil], ['proposta_acompanhamento', nil], ['proposta_aviso_email', nil]
       )
 
       expect(rows[['novo_lead', 1]]).to include(
@@ -60,12 +60,13 @@ RSpec.describe 'ScanSolo Cadence Templates API', type: :request do
     it 'lists the slot rows last, in CT-09 order, with their naming conventions' do
       get path, headers: agent.create_new_auth_token, as: :json
 
-      slots = response.parsed_body.last(3)
+      slots = response.parsed_body.last(4)
       expect(slots.pluck('stage', 'step', 'template_name', 'mapped')).to eq(
         [
           ['proposta_enviada', nil, 'scansolo_proposal_send', false],
           ['lead_manual_inicial', nil, 'scansolo_lead_manual_inicial', false],
-          ['proposta_acompanhamento', nil, 'scansolo_proposta_acompanhamento', false]
+          ['proposta_acompanhamento', nil, 'scansolo_proposta_acompanhamento', false],
+          ['proposta_aviso_email', nil, 'scansolo_proposta_aviso_email', false]
         ]
       )
     end
@@ -108,6 +109,15 @@ RSpec.describe 'ScanSolo Cadence Templates API', type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(response.parsed_body).to include('stage' => 'proposta_acompanhamento', 'step' => nil, 'template_name' => 'scansolo_acompanhamento',
+                                              'mapped' => true)
+    end
+
+    it 'maps the CT-07 email notice slot with step null' do
+      put path, params: payload.merge(stage: 'proposta_aviso_email', step: nil, template_name: 'scansolo_aviso_email'),
+                headers: admin.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to include('stage' => 'proposta_aviso_email', 'step' => nil, 'template_name' => 'scansolo_aviso_email',
                                               'mapped' => true)
     end
 

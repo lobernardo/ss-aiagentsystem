@@ -84,4 +84,24 @@ RSpec.describe ScanSolo::PipelineOpportunity do
       expect(opportunity.reload.quote_request).to eq(quote_request)
     end
   end
+
+  describe '#lead_email_valid? (RF-08)' do
+    it 'is false without an email' do
+      contact.update!(email: nil)
+
+      expect(opportunity.lead_email_valid?).to be false
+    end
+
+    it 'is false for a malformed email' do
+      contact.update_column(:email, 'x@') # rubocop:disable Rails/SkipsModelValidations
+
+      expect(opportunity.lead_email_valid?).to be false
+    end
+
+    it 'is true for a valid email' do
+      contact.update!(email: 'lead@example.com')
+
+      expect(opportunity.lead_email_valid?).to be true
+    end
+  end
 end

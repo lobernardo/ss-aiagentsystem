@@ -740,6 +740,23 @@ en:
           quote_request_closed: 'A solicitação de orçamento já foi respondida.'
           quote_request_not_eligible: 'A oportunidade não tem solicitação de orçamento elegível para reenvio.'
           quote_inbox_misconfigured: 'O inbox de e-mail de orçamento não está configurado corretamente.'
+    proposal:
+      approval_request:
+        subject_suffix: 'Proposta %{proposal_number} aguardando aprovação'
+        intro: 'A proposta abaixo foi gerada e aguarda a sua aprovação. O PDF segue em anexo.'
+        number: 'Número da proposta'
+        version: 'Versão'
+        value: 'Valor'
+        lead: 'Lead'
+        lead_email_missing: 'Atenção: falta e-mail do lead. Cadastre um e-mail válido no lead antes de aprovar.'
+        link: 'Aprovar ou rejeitar na tela de Propostas'
+        approval_only_in_screen: 'A aprovação só vale pela tela de Propostas. Responder este e-mail não aprova nem rejeita a proposta.'
+      lead_email:
+        subject: 'Sua proposta %{proposal_number}'
+        greeting: 'Olá, %{name}!'
+        body: 'Segue em anexo a proposta que preparamos para você. Qualquer dúvida, é só responder este e-mail.'
+        number: 'Número da proposta'
+        closing: 'Atenciosamente, equipe comercial.'
     negotiation:
       standard_reply: 'Vou verificar isso com nosso comercial. Só um momento.'
       email:

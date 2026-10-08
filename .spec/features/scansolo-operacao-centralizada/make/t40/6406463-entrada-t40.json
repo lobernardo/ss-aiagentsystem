@@ -531,87 +531,87 @@
                 "destination": "drive",
                 "replaceText": [
                   {
-                    "oldText": "{{NOME_EMPRESA}}",
+                    "oldText": "{{\"{\" + \"{NOME_EMPRESA\" + \"}\" + \"}\"}}",
                     "newText": "{{25.empresa}}"
                   },
                   {
-                    "oldText": "{{NOME_CONTATO}}",
+                    "oldText": "{{\"{\" + \"{NOME_CONTATO\" + \"}\" + \"}\"}}",
                     "newText": "{{25.nome}}"
                   },
                   {
-                    "oldText": "{{NOME_CLIENTE}}",
+                    "oldText": "{{\"{\" + \"{NOME_CLIENTE\" + \"}\" + \"}\"}}",
                     "newText": "{{25.nome}}"
                   },
                   {
-                    "oldText": "{{PROJETO_CLIENTE_FINAL}}",
+                    "oldText": "{{\"{\" + \"{PROJETO_CLIENTE_FINAL\" + \"}\" + \"}\"}}",
                     "newText": "{{ifempty(25.projeto; 25.empresa)}}"
                   },
                   {
-                    "oldText": "{{RUA_CIDADE_ESTADO}}",
+                    "oldText": "{{\"{\" + \"{RUA_CIDADE_ESTADO\" + \"}\" + \"}\"}}",
                     "newText": "{{25.endereco}}{{if(25.endereco; \", \"; \"\")}}{{25.cidade_uf}}"
                   },
                   {
-                    "oldText": "{{ENDERECO_LOGRADOURO}}",
+                    "oldText": "{{\"{\" + \"{ENDERECO_LOGRADOURO\" + \"}\" + \"}\"}}",
                     "newText": "{{ifempty(25.endereco; 25.cidade_uf)}}"
                   },
                   {
-                    "oldText": "{{CIDADE_ESTADO}}",
+                    "oldText": "{{\"{\" + \"{CIDADE_ESTADO\" + \"}\" + \"}\"}}",
                     "newText": "{{25.cidade_uf}}"
                   },
                   {
-                    "oldText": "{{LOCAL_SERVICO}}",
+                    "oldText": "{{\"{\" + \"{LOCAL_SERVICO\" + \"}\" + \"}\"}}",
                     "newText": "{{25.cidade_uf}}"
                   },
                   {
-                    "oldText": "{{DATA_SOLICITACAO}}",
+                    "oldText": "{{\"{\" + \"{DATA_SOLICITACAO\" + \"}\" + \"}\"}}",
                     "newText": "{{25.data_hoje}}"
                   },
                   {
-                    "oldText": "{{DESCRICAO_ESCOPO}}",
+                    "oldText": "{{\"{\" + \"{DESCRICAO_ESCOPO\" + \"}\" + \"}\"}}",
                     "newText": "{{ifempty(1.commercial.scope; 25.escopo)}}"
                   },
                   {
-                    "oldText": "{{TÍTULO_SERVIÇO}}",
+                    "oldText": "{{\"{\" + \"{TÍTULO_SERVIÇO\" + \"}\" + \"}\"}}",
                     "newText": "{{25.escopo}}"
                   },
                   {
-                    "oldText": "{{AREA_TOTAL}}",
+                    "oldText": "{{\"{\" + \"{AREA_TOTAL\" + \"}\" + \"}\"}}",
                     "newText": "{{25.area}}"
                   },
                   {
-                    "oldText": "{{PROFUNDIDADE}}",
+                    "oldText": "{{\"{\" + \"{PROFUNDIDADE\" + \"}\" + \"}\"}}",
                     "newText": "{{25.profundidade}}"
                   },
                   {
-                    "oldText": "{{NÚMERO_PROPOSTA}}",
+                    "oldText": "{{\"{\" + \"{NÚMERO_PROPOSTA\" + \"}\" + \"}\"}}",
                     "newText": "{{1.proposal_number}}"
                   },
                   {
-                    "oldText": "{{REVISÃO}}",
+                    "oldText": "{{\"{\" + \"{REVISÃO\" + \"}\" + \"}\"}}",
                     "newText": "Rev.01"
                   },
                   {
-                    "oldText": "{{LOGO_CLIENTE}}",
+                    "oldText": "{{\"{\" + \"{LOGO_CLIENTE\" + \"}\" + \"}\"}}",
                     "newText": ""
                   },
                   {
-                    "oldText": "{{PRAZO_TOTAL}}",
+                    "oldText": "{{\"{\" + \"{PRAZO_TOTAL\" + \"}\" + \"}\"}}",
                     "newText": "{{1.commercial.schedule}}"
                   },
                   {
-                    "oldText": "{{VALOR_NUMERICO}}",
+                    "oldText": "{{\"{\" + \"{VALOR_NUMERICO\" + \"}\" + \"}\"}}",
                     "newText": "{{formatNumber(1.commercial.total_value; 2; \",\"; \".\")}}"
                   },
                   {
-                    "oldText": "{{VALOR_EXTENSO}}",
+                    "oldText": "{{\"{\" + \"{VALOR_EXTENSO\" + \"}\" + \"}\"}}",
                     "newText": "{{1.commercial.total_value_in_words}}"
                   },
                   {
-                    "oldText": "{{CONDICOES_PAGAMENTO}}",
+                    "oldText": "{{\"{\" + \"{CONDICOES_PAGAMENTO\" + \"}\" + \"}\"}}",
                     "newText": "{{1.commercial.payment_terms}}"
                   },
                   {
-                    "oldText": "{{OBSERVACOES}}",
+                    "oldText": "{{\"{\" + \"{OBSERVACOES\" + \"}\" + \"}\"}}",
                     "newText": "{{ifempty(1.commercial.notes; \"\")}}"
                   }
                 ]
@@ -1355,7 +1355,8 @@
     }
   },
   "scheduling": {
-    "type": "immediately"
+    "type": "immediately",
+    "maximum_runs_per_minute": 100
   },
   "interface": {
     "input": [],

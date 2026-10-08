@@ -138,3 +138,14 @@ Pendências:
   - Presentes: `{{NOME_EMPRESA}}`, `{{NOME_CONTATO}}`, `{{DATA_SOLICITACAO}}`, `{{DESCRICAO_ESCOPO}}`, `{{PROFUNDIDADE}}`, `{{VALOR_NUMERICO}}`, `{{VALOR_EXTENSO}}`.
   - **Ausentes**: `{{CONDICOES_PAGAMENTO}}`, `{{OBSERVACOES}}`, `{{NÚMERO_PROPOSTA}}`, `{{PRAZO_TOTAL}}`. As condições de pagamento e o prazo de validade (90 dias) estão fixos no texto, e o cronograma é "ALTERAR CRONOGRAMA". Por isso número da proposta, cronograma, condições e observações do `commercial` **não aparecem no PDF** até o template ganhar esses placeholders (lacuna do RF-47, fora do T40, pois o template não pode ser alterado aqui). As substituições ficam no cenário e não têm efeito enquanto o placeholder não existir.
 - Correção 2026-10-08T18:32:10Z (`scenarios_update`, cenário OFF): o template já traz `R$ {{VALOR_NUMERICO}}`, então o módulo 31 passou a enviar só `formatNumber(total_value; 2; ","; ".")`, evitando "R$ R$".
+
+### T40 — execução 1 (bearer real), 2026-10-08T19:25:31Z
+
+- Execução `cbf996581d9944a0892aeead00a1b050`, manual, `status: 3` (erro), 12 operações. Autenticação OK: rota 20 (nova geração).
+- Módulos: 1 → 2 → 3 → 4 → 6 → 20 → 25 → 30 (cópia do template OK) → **31 erro** → 310 → 311 → 312 (callback `failure`, `document_generation_failed`, assinado, para o Rails de produção).
+- Erro: `[400] Invalid requests[0].replaceAllText: The substring match text should not be empty` (google-docs).
+- Causa: o Make interpreta o texto "antigo" `{{NOME_EMPRESA}}` como fórmula IML; um identificador desconhecido avalia para vazio. Isso já existia no blueprint original da `Entrada`, que nunca tinha sido executado.
+- Efeitos: 1 Google Doc não preenchido, `Proposta_ScanSOLO_Empresa Teste T40_2026-10-08_v999000001` (id `13XFpa3NPsTSaHEvkY3qjaSLBLkdjrLeaD_gmouTtqwA`, privado, na pasta de propostas); 0 PDF; 0 compartilhamento; `ScanSOLO_Proposta_Map` com `records: 0`; 1 callback `failure` enviado ao Rails (`correlation_id` `t40-runonce-1`, não emitido pelo Rails: resposta esperada 422 `unmatched_request`, não observável pelo MCP); 0 e-mail; 0 WhatsApp.
+- **Execução 1 não validada.**
+- Correção 2026-10-08T19:27:50Z (`scenarios_update`, cenário OFF): os 21 `oldText` do módulo 31 passaram a ser montados como texto literal, por exemplo `{{"{" + "{NOME_EMPRESA" + "}" + "}"}}`, que produz exatamente `{{NOME_EMPRESA}}` sem avaliação. `scheduling` preservado (`immediately`, 100/min). Resposta: `isActive: false`, `isinvalid: false`.
+- Limpeza pendente (junto com a do teste): mandar o Doc `13XFpa3N…` para a lixeira.

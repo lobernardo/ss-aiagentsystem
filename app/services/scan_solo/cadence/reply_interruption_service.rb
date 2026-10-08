@@ -13,6 +13,9 @@
 # reply (WhatsApp or the proposal e-mail thread) cancels every `scheduled`
 # attempt of each active enrollment older than the message, with one audit
 # per cancelled attempt; `sent`/`dispatched` attempts are untouched.
+#
+# RNF-06: the audit carries the opportunity's quote request correlation id
+# when it has one, so the request's chain includes the interruption.
 class ScanSolo::Cadence::ReplyInterruptionService
   EVENT_TYPE = 'cadence.attempt_interrupted_by_reply'.freeze
 
@@ -51,7 +54,7 @@ class ScanSolo::Cadence::ReplyInterruptionService
   def cancel!(enrollment, attempt)
     ScanSolo::Cadence::AttemptEvidenceRecorder.record_cancelled!(attempt)
     ScanSolo::AuditLogger.record!(
-      subject: enrollment, event_type: EVENT_TYPE, correlation_id: SecureRandom.uuid,
+      subject: enrollment, event_type: EVENT_TYPE, correlation_id: opportunity.quote_request&.correlation_id || SecureRandom.uuid,
       payload: { enrollment_id: enrollment.id, attempt_id: attempt.id, message_id: message.id }
     )
   end

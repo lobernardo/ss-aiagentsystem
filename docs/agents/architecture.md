@@ -47,7 +47,7 @@ Rails MVC monolith (Chatwoot) with a namespaced `ScanSolo::` extension layer. Th
 |---|---|---|
 | `Api::V1::Accounts::ScanSolo::BaseController` + controllers | `scansolo_enabled` gate (404), Pundit authorize (403), request-boundary 422 validation, strong params | Business rules, state transitions |
 | `Webhooks::ScanSolo::MakeController` | Mapping verifier/applier outcome to 401/422/200 | Signature check, persistence |
-| `ScanSolo::ConversationListener` | Eligibility classification, routing to services/jobs | AI logic, writes (delegates every write) |
+| `ScanSolo::ConversationListener` | Eligibility classification, routing to services/jobs; delivery reconciliation of the template origins `cadence`, `proposal`, `manual_lead`, `proposal_email` (lead proposal e-mail) and `proposal_notice` (WhatsApp notice) | AI logic, writes (delegates every write) |
 | `services/scan_solo/*` | Every write and business rule; one "sole path" service per state change | HTTP concerns |
 | `jobs/scan_solo/*` | Async boundary, locking, cron entry | Eligibility logic (`AttemptPrecheck` decides) |
 | `models/scan_solo/*` | Associations, enums, validations, unique-index invariants | Orchestration |
@@ -108,13 +108,21 @@ sidekiq-cron */5 ──> CadenceDueAttemptJob (scheduled_jobs)
 CompletionService (next_action proposta) ─after commit─> QuoteRequestJob
   ─> Quote::RequestService ─> email thread to commercial recipient + customer notice
 commercial reply (quote inbox) ─> ConversationListener ─> QuoteReplyJob ─> ReplyProcessor
-  ─ valid block ─> GenerateService ─> MakeProvider ─> OutboundRequestService ─> Make
+  ─ valid block (request open, incl. after a rejection) ─> GenerateService ─> MakeProvider ─> OutboundRequestService ─> Make
   ─ invalid     ─> correction email
-Make ─> POST /webhooks/scan_solo/make ─> CallbackVerifier ─> CallbackApplicationService
-  ─> CallbackHandler (value/currency/PDF) ─after commit─> ProposalDeliveryJob
-  ─> DeliveryService (WhatsApp template + PDF) ─> DeliveryReconciler ─> sent
-  ─> SuccessHandler (stage proposta_enviada) ─> FollowUpService
+  ─ request already replied ─> QuoteReply late_reply (never an approval)
+Make ─> POST /webhooks/scan_solo/make ─> CallbackVerifier ─> CallbackApplicationService (total_value check)
+  ─> CallbackHandler (value/currency/artifact_url, awaiting_approval) ─after commit─> ProposalApprovalRequestJob
+  ─> ApprovalRequestService (PDF to ActiveStorage, CT-05 e-mail on the quote thread)
+Proposals screen ─> POST approve ─> ApproveService ─after commit─> ProposalDeliveryJob
+  ─> DeliveryService (e-mail To lead, CC commercial, PDF; proposal thread)
+                 ─> POST reject ─> RejectService (request back to awaiting_reply)
+native SendReplyJob (source_id) ─> ConversationListener ─> DeliveryReconciler ─> sent
+  ─> SuccessHandler (stage proposta_enviada) ─after commit─> LeadNoticeService (WhatsApp, no PDF) ─> FollowUpService
+lead reply on the proposal thread ─> QuoteReplyJob ─> ReplyProcessor ─> LeadEmailReplyService ─> ReplyInterruptionService
 ```
+
+Contracts of this flow: `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (HTTP) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make request/callback, e-mails, notice).
 
 ## Related documents
 

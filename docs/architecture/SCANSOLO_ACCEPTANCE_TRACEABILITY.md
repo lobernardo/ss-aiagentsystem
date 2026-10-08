@@ -115,3 +115,47 @@ Maps every RF/UI id of `.spec/features/scansolo-operacao-centralizada/SPEC.md` t
 | UI-05 | Pending replies on the Proposals screen | `app/javascript/dashboard/routes/dashboard/scansolo/proposals/specs/QuoteRepliesPending.spec.js` |
 | UI-06 | No Approve/Send/toggle, readable history | `app/javascript/dashboard/routes/dashboard/scansolo/proposals/specs/Proposals.spec.js`, `app/javascript/dashboard/routes/dashboard/scansolo/agent/specs/AgentCenter.spec.js` |
 | UI-07 | Quote request resend action for admins only | `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/specs/OpportunityDetail.spec.js` |
+
+## Proposta com aprovação e e-mail (scansolo-proposta-aprovacao-email)
+
+Maps every RF/UI id of `.spec/features/scansolo-proposta-aprovacao-email/SPEC.md` to the automated test(s) that cover it. The end-to-end proofs live in `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` (scenarios a–f), scenario (b) of `spec/integration/scan_solo/operacao_centralizada_spec.rb` (RF-01/RF-11/RF-13) and `spec/integration/scan_solo/legacy_compatibility_spec.rb` (RF-26). RF-27 to RF-29 are operational requirements executed in Make (Phases 16–17, HG-03) and verified by execution records, not by the Rails suite.
+
+| Id | Requirement | Automated test(s) |
+|---|---|---|
+| RF-01 | Generate callback → `awaiting_approval`, PDF stored, nothing to the lead | `spec/services/scan_solo/proposal/callback_handler_spec.rb`, `spec/services/scan_solo/proposal/approval_request_service_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-02 | 1 approval request e-mail on the quote thread with PDF and link | `spec/services/scan_solo/proposal/approval_request_service_spec.rb`, `spec/jobs/scan_solo/proposal_approval_request_job_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-03 | A commercial e-mail reply never approves (late reply) | `spec/services/scan_solo/quote/reply_processor_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-04 | Idempotent, audited approval by admin or published commercial user | `spec/services/scan_solo/proposal/approve_service_spec.rb`, `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb`, `spec/policies/scan_solo/proposal_policy_spec.rb` |
+| RF-05 | Rejection with a required reason reopens the quote request | `spec/services/scan_solo/proposal/reject_service_spec.rb`, `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-06 | New CT-04 block after a rejection → next current version | `spec/services/scan_solo/quote/reply_processor_spec.rb`, `spec/services/scan_solo/proposal/generate_service_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-07 | ≤ 1 current and ≤ 1 non-terminal version per quote request | `spec/models/scan_solo/proposal_version_spec.rb`, `spec/db/scan_solo_proposal_approval_migrations_spec.rb`, `spec/services/scan_solo/proposal/generate_service_spec.rb` |
+| RF-08 | Missing lead e-mail → 422 `lead_email_missing` and warnings | `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb`, `spec/services/scan_solo/proposal/delivery_service_spec.rb`, `spec/services/scan_solo/quote/email_composer_spec.rb` |
+| RF-09 | Lead e-mail editable on the lead screen | `spec/services/scan_solo/pipeline/lead_email_service_spec.rb`, `spec/requests/api/v1/accounts/scan_solo/pipeline_opportunities_spec.rb` |
+| RF-10 | AI agent unchanged | `spec/services/scan_solo/ai_turn/prompt_builder_spec.rb`, `spec/services/scan_solo/ai_turn/input_guardrail_spec.rb`, `spec/services/scan_solo/ai_turn/output_validator_spec.rb`, `spec/services/scan_solo/ai_turn/context_assembler_spec.rb` |
+| RF-11 | Lead e-mail with commercial CC and PDF; WhatsApp notice only after `sent` | `spec/services/scan_solo/proposal/delivery_service_spec.rb`, `spec/services/scan_solo/proposal/lead_notice_service_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb`, `spec/integration/scan_solo/operacao_centralizada_spec.rb` |
+| RF-12 | ≤ 1 e-mail and ≤ 1 notice per version | `spec/services/scan_solo/proposal/delivery_service_spec.rb`, `spec/services/scan_solo/proposal/lead_notice_service_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-13 | `sent`/`proposta_enviada` only with the confirmed e-mail | `spec/services/scan_solo/messaging/delivery_reconciler_spec.rb`, `spec/services/scan_solo/proposal/success_handler_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-14 | E-mail/notice failure audited, stage unchanged | `spec/services/scan_solo/proposal/delivery_service_spec.rb`, `spec/services/scan_solo/messaging/delivery_reconciler_spec.rb`, `spec/services/scan_solo/proposal/lead_notice_service_spec.rb` |
+| RF-15 | Retry on the same version by cause (e-mail, Make, download) | `spec/services/scan_solo/proposal/retry_policy_spec.rb`, `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb` |
+| RF-16 | Lead e-mail reply correlated; other senders without effect | `spec/services/scan_solo/proposal/lead_email_reply_service_spec.rb`, `spec/services/scan_solo/quote/reply_processor_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-17 | Quote, proposal and negotiation threads kept apart | `spec/services/scan_solo/quote/reply_processor_spec.rb`, `spec/services/scan_solo/proposal/delivery_service_spec.rb` |
+| RF-18 | Reply in `proposta_enviada` cancels every scheduled attempt | `spec/services/scan_solo/cadence/reply_interruption_service_spec.rb`, `spec/services/scan_solo/conversation_listener_spec.rb`, `spec/integration/scan_solo/proposta_aprovacao_email_spec.rb` |
+| RF-19 | `total_value` mismatch → callback rejected and audited | `spec/services/scan_solo/make/callback_application_service_spec.rb`, `spec/requests/webhooks/scan_solo/make_spec.rb` |
+| RF-20 | Generation failures and rejected callbacks audited | `spec/services/scan_solo/proposal/make_provider_spec.rb`, `spec/services/scan_solo/proposal/callback_handler_spec.rb`, `spec/requests/webhooks/scan_solo/make_spec.rb` |
+| RF-21 | Legacy `/send` never emits `proposal.send` | `spec/services/scan_solo/proposal/send_service_spec.rb`, `spec/requests/api/v1/accounts/scan_solo/proposals_spec.rb` |
+| RF-22 | `QuoteRequestJob` retry sends the request e-mail once | `spec/services/scan_solo/quote/request_service_spec.rb` |
+| RF-23 | Negotiation notification ≤ 1 per correlation id | `spec/services/scan_solo/notifications/publisher_spec.rb` |
+| RF-24 | Unique `idempotency_key`, migration aborts on duplicates | `spec/services/scan_solo/make/outbound_request_service_spec.rb`, `spec/db/scan_solo_proposal_approval_migrations_spec.rb` |
+| RF-25 | Optional `artifact_sha256`/`template_version` | `spec/services/scan_solo/proposal/approval_request_service_spec.rb`, `spec/services/scan_solo/proposal/callback_handler_spec.rb`, `spec/requests/webhooks/scan_solo/make_spec.rb` |
+| RF-26 | N versions per quote request without losing history | `spec/db/scan_solo_proposal_approval_migrations_spec.rb`, `spec/integration/scan_solo/legacy_compatibility_spec.rb` |
+| RF-27 | Phase 16: 8 blueprints + 2 data store structures | operacional (Make) |
+| RF-28 | Phase 17: legacy scenarios inactive, `Entrada` adapted | operacional (Make) |
+| RF-29 | `Entrada` activated only after the Rails deploy | operacional (Make) |
+| UI-01 | Approve/Reject on the Proposals screen, blocked without lead e-mail | `app/javascript/dashboard/routes/dashboard/scansolo/proposals/specs/Proposals.spec.js`, `app/javascript/dashboard/store/scansolo/specs/proposals.spec.js` |
+| UI-02 | Editable lead e-mail and warning on the lead screen | `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/specs/OpportunityDetail.spec.js`, `app/javascript/dashboard/store/scansolo/specs/pipelineOpportunities.spec.js` |
+| UI-03 | New proposal labels on the Kanban card | `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/specs/KanbanBoard.spec.js` |
+| UI-04 | Teleported takeover dialog, Esc/Cancel | `app/javascript/dashboard/components-next/conversation/specs/HandoffControlBanner.spec.js` |
+| UI-05 | Dialog closes on error and on implicit takeover | `app/javascript/dashboard/components-next/conversation/specs/HandoffControlBanner.spec.js` |
+| UI-06 | Switch conversations after taking over (Playwright `tests/playwright/tests/e2e/scansolo/handoff-takeover-navigation.spec.ts`) | `app/javascript/dashboard/components-next/conversation/specs/HandoffControlBanner.spec.js` |
+| UI-07 | Header X closes only the panel | `app/javascript/dashboard/components/widgets/conversation/specs/ConversationHeader.spec.js` |
+| UI-08 | Navigation never changes handoff/assignment/status | `app/javascript/dashboard/components/widgets/conversation/specs/ConversationHeader.spec.js`, `app/javascript/dashboard/components-next/conversation/specs/HandoffControlBanner.spec.js` |

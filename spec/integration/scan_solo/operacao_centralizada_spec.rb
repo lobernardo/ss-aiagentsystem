@@ -10,6 +10,12 @@ require 'rails_helper'
 # the WhatsApp transport (360dialog stubbed by WebMock) and SMTP (ActionMailer
 # `:test`). Native events reach ScanSolo::ConversationListener the way
 # EventDispatcherJob delivers them, called here explicitly.
+#
+# scansolo-proposta-aprovacao-email T32 / RNF-10: scenario (b) no longer
+# delivers the PDF over WhatsApp right after the callback -- the callback
+# leaves the version `awaiting_approval` (RF-01), the approval sends it to the
+# lead by e-mail (RF-11) and `sent`/`proposta_enviada` follow the e-mail's
+# `source_id` (RF-13), with the short WhatsApp notice afterwards.
 RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:admin) { create(:user, account: account, role: :administrator) }
@@ -20,6 +26,8 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
         'components' => [{ 'type' => 'BODY', 'text' => 'Olá {{1}}, aqui é da ScanSolo.' }] },
       { 'name' => 'scansolo_proposal_send', 'status' => 'APPROVED', 'language' => 'pt_BR', 'category' => 'UTILITY',
         'components' => [{ 'type' => 'HEADER', 'format' => 'DOCUMENT' }, { 'type' => 'BODY', 'text' => 'Segue a sua proposta.' }] },
+      { 'name' => 'scansolo_proposta_aviso_email', 'status' => 'APPROVED', 'language' => 'pt_BR', 'category' => 'UTILITY',
+        'components' => [{ 'type' => 'BODY', 'text' => 'Enviamos a sua proposta para o seu e-mail.' }] },
       { 'name' => 'scansolo_proposta_acompanhamento', 'status' => 'APPROVED', 'language' => 'pt_BR', 'category' => 'UTILITY',
         'components' => [{ 'type' => 'BODY', 'text' => 'Conseguiu ver a proposta?' }] }
     ]
@@ -102,7 +110,8 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
   # Every native transport job (WhatsApp and e-mail) and every ScanSolo job
   # enqueued inside the block runs, as Sidekiq would.
   def run_jobs(&)
-    perform_enqueued_jobs(only: [SendReplyJob, ScanSolo::QuoteRequestJob, ScanSolo::QuoteReplyJob, ScanSolo::ProposalDeliveryJob], &)
+    perform_enqueued_jobs(only: [SendReplyJob, ScanSolo::QuoteRequestJob, ScanSolo::QuoteReplyJob, ScanSolo::ProposalApprovalRequestJob,
+                                 ScanSolo::ProposalDeliveryJob], &)
   end
 
   def customer_says(opportunity, content)
@@ -164,7 +173,9 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
   end
 
   # (b) invalid reply → correction; valid reply → generation (CT-05) →
-  # signed callback (CT-06) → PDF stored → template accepted by WhatsApp.
+  # signed callback (CT-06) → PDF stored and approval requested (RF-01) →
+  # lead e-mail filled and approved (RF-04, RF-09) → proposal e-mail accepted
+  # (RF-11, RF-13).
   def answer_quote!(opportunity)
     email_conversation = opportunity.quote_request.email_conversation
     luciano_replies(email_conversation, block_without_payment)
@@ -180,11 +191,22 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
 
     post_signed_callback(version)
     expect(response).to have_http_status(:ok)
+    expect(version.reload).to be_awaiting_approval
+    approve_with_lead_email!(opportunity, version)
 
-    proposal_message = version.reload.sent_message
-    expect(proposal_message.source_id).to start_with('wamid.')
-    run_jobs { listener.message_updated(Events::Base.new('message_updated', Time.zone.now, { message: proposal_message })) }
+    run_jobs { listener.message_updated(Events::Base.new('message_updated', Time.zone.now, { message: version.reload.sent_message })) }
     version.reload
+  end
+
+  def approve_with_lead_email!(opportunity, version)
+    patch "/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities/#{opportunity.id}",
+          params: { email: 'ana@solar.example' }, headers: admin.create_new_auth_token, as: :json
+    expect(response).to have_http_status(:ok)
+    run_jobs do
+      post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{version.proposal_id}/approve",
+           params: { proposal_version_id: version.id, correlation_id: SecureRandom.uuid }, headers: luciano.create_new_auth_token, as: :json
+    end
+    expect(response).to have_http_status(:ok)
   end
 
   def origin_messages(opportunity, origin)
@@ -210,30 +232,35 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     expect(ScanSolo::ConversationExtension.resolve_for(opportunity.conversation)).to be_ai_active
   end
 
-  it '(b) turns a corrected reply into a proposal delivered with the stored PDF and 1 follow-up (RF-18, RF-24..RF-31)' do
+  # RF-01 / RF-11 / RF-13 (replaces OC/RF-29, OC/RF-30): the stored PDF goes
+  # to the lead by e-mail after the approval, never over WhatsApp.
+  it '(b) turns a corrected reply into an approved proposal e-mailed with the stored PDF and 1 follow-up (RF-01, RF-11, RF-13, RF-31)' do
     opportunity = qualify_manual_lead!
 
     version = deliver_proposal!(opportunity)
 
     expect(version).to have_attributes(status: 'sent', value: 12_500, quote_request_id: opportunity.quote_request.id,
-                                       valid_until: Time.zone.parse('2026-11-04T00:00:00Z'), approved_at: nil)
+                                       valid_until: Time.zone.parse('2026-11-04T00:00:00Z'), approved_by: luciano, approved_at: be_present)
     expect(version.document.blob.content_type).to eq('application/pdf')
-    expect(version.sent_message.additional_attributes.dig('template_params', 'processed_params', 'header'))
-      .to eq('media_url' => version.document_url, 'media_type' => 'document', 'media_name' => "#{version.proposal_number}.pdf")
-    expect(opportunity.reload).to be_proposta_enviada
-    expect(opportunity.cadence_enrollments.active.sole.cadence_definition.stage).to eq('proposta_enviada')
-    expect(origin_messages(opportunity, 'proposal_follow_up').count).to eq(1)
+    expect(version.sent_message).to have_attributes(inbox_id: email_inbox.id, conversation_id: version.proposal.email_conversation_id,
+                                                    source_id: be_present)
+    expect(version.sent_message.attachments.sole.file.blob.checksum).to eq(version.document.blob.checksum)
+    expect(origin_messages(opportunity, 'proposal_notice').sole.additional_attributes.dig('template_params', 'processed_params').to_h)
+      .not_to have_key('header')
+    expect([opportunity.reload.stage, opportunity.cadence_enrollments.active.sole.cadence_definition.stage])
+      .to eq(%w[proposta_enviada proposta_enviada])
+    expect(%w[proposal proposal_follow_up].map { |origin| origin_messages(opportunity, origin).count }).to eq([0, 1])
   end
 
-  it '(b) asks for the correction by e-mail and calls no approve/send nor Make proposal.send, all after commit (RF-18, RF-55, RNF-01)' do
+  it '(b) asks for the correction by e-mail, approves once and never calls send nor Make proposal.send (RF-04, RF-18, RF-21, RNF-01)' do
     opportunity = qualify_manual_lead!
 
     deliver_proposal!(opportunity)
 
     correction = opportunity.quote_request.email_conversation.messages.outgoing.order(:id).second
     expect(correction.content).to include('Condições de pagamento', ScanSolo::Quote::EmailComposer.empty_block)
-    expect(ActionMailer::Base.deliveries.size).to eq(2)
-    expect(ScanSolo::Proposal::ApproveService).not_to have_received(:call)
+    expect(ActionMailer::Base.deliveries.map(&:to)).to eq(([['comercial@scansolo.com.br']] * 3) + [['ana@solar.example']])
+    expect(ScanSolo::Proposal::ApproveService).to have_received(:call).once
     expect(ScanSolo::Proposal::SendService).not_to have_received(:call)
     expect(ScanSolo::MakeRequest.pluck(:action)).to eq(['proposal.generate'])
     expect(transaction_open_at).to eq([[:make, false], [:download, false]])
@@ -247,7 +274,8 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     run_jobs { listener.message_updated(Events::Base.new('message_updated', Time.zone.now, { message: version.sent_message })) }
 
     expect(response).to have_http_status(:ok)
-    expect(origin_messages(opportunity, 'proposal').count).to eq(1)
+    expect(version.proposal.email_conversation.messages.outgoing.count).to eq(1)
+    expect(origin_messages(opportunity, 'proposal_notice').count).to eq(1)
     expect(origin_messages(opportunity, 'proposal_follow_up').count).to eq(1)
     expect(ScanSolo::ProposalVersion.count).to eq(1)
     expect(ScanSolo::PipelineStageEvent.where(opportunity: opportunity, to_stage: 'proposta_enviada').count).to eq(1)
@@ -332,7 +360,8 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
 
     quote_request = ScanSolo::PipelineOpportunity.find(opportunity.id).quote_request
     expect(correlation_chain(quote_request)).to eq(
-      %w[quote_request.sent quote_reply.rejected quote_reply.accepted proposal.generation_requested proposal.generated proposal.sent]
+      %w[quote_request.sent quote_reply.rejected quote_reply.accepted proposal.generation_requested proposal.generated
+         proposal.approval_requested proposal.approved proposal.sent]
     )
     expect(quote_request.reply_message.conversation).to eq(quote_request.email_conversation)
     expect(quote_request.proposal_versions.sole).to eq(version)

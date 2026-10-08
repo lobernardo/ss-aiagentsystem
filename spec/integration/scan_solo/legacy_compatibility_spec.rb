@@ -8,6 +8,10 @@ require 'rails_helper'
 # no quote request, link only in the message fallback) and historical
 # `proposal.send` Make requests/callbacks -- stay readable through every read
 # API with 0 errors and their values unchanged.
+#
+# scansolo-proposta-aprovacao-email T32 / RF-26: a legacy `generated` version
+# (code 1, never approved) joins the fixtures; the 0-4 status codes are kept
+# and the new read fields (CT-01) come back empty for every legacy version.
 RSpec.describe 'ScanSolo legacy records after the centralized operation', type: :request do
   let(:account) { create(:account, scansolo_enabled: true) }
   let(:agent) { create(:user, account: account, role: :agent) }
@@ -22,6 +26,10 @@ RSpec.describe 'ScanSolo legacy records after the centralized operation', type: 
     ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :proposta_enviada)
   end
   let!(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
+  let!(:generated_version) do
+    proposal.versions.create!(status: :generated, value: 700, currency: 'BRL', artifact_url: 'https://make.example/legacy/0.pdf',
+                              is_current: false)
+  end
   let!(:approved_version) do
     proposal.versions.create!(status: :approved, approved_at: approved_at, approved_by: admin, value: 900, currency: 'BRL',
                               artifact_url: 'https://make.example/legacy/1.pdf', is_current: false)
@@ -40,7 +48,8 @@ RSpec.describe 'ScanSolo legacy records after the centralized operation', type: 
     ScanSolo::AiAgent::PublishService.new(account: account).call
     # Pre-deploy rows: no lead source and no proposal number.
     opportunity.update_columns(lead_source: nil) # rubocop:disable Rails/SkipsModelValidations
-    ScanSolo::ProposalVersion.where(id: [approved_version.id, sent_version.id]).update_all(proposal_number: nil) # rubocop:disable Rails/SkipsModelValidations
+    ScanSolo::ProposalVersion.where(id: [generated_version.id, approved_version.id, sent_version.id])
+                             .update_all(proposal_number: nil) # rubocop:disable Rails/SkipsModelValidations
     writer = ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
     writer.complete!(at: 50.days.ago)
     writer.record_next_action!(value: 'proposta', source_message_id: nil)
@@ -78,7 +87,26 @@ RSpec.describe 'ScanSolo legacy records after the centralized operation', type: 
     expect(versions.fetch(approved_version.id)).to include('status' => 'approved', 'proposal_number' => nil)
     expect(Time.zone.parse(versions.fetch(approved_version.id)['approved_at'])).to eq(approved_at)
     expect(versions.fetch(sent_version.id)).to include('status' => 'sent', 'proposal_number' => nil, 'document_url' => nil)
-    expect(read("proposals/#{proposal.id}")['versions'].pluck('status')).to contain_exactly('approved', 'sent')
+    expect(read("proposals/#{proposal.id}")['versions'].pluck('status')).to contain_exactly('generated', 'approved', 'sent')
+  end
+
+  it 'keeps the legacy status codes and reads the new approval and delivery fields as empty (RF-26, CT-01)' do
+    expect(ScanSolo::ProposalVersion.statuses.slice('generating', 'generated', 'approved', 'sent', 'failed'))
+      .to eq('generating' => 0, 'generated' => 1, 'approved' => 2, 'sent' => 3, 'failed' => 4)
+    expect(ScanSolo::ProposalVersion.where(id: [generated_version.id, approved_version.id, sent_version.id]).pluck(:status).sort)
+      .to eq(%w[approved generated sent])
+
+    body = read('proposals').sole
+    versions = body['versions'].index_by { |version| version['id'] }
+
+    expect(body['lead_email_present']).to be(false)
+    expect(versions.fetch(generated_version.id)).to include('status' => 'generated', 'approved_at' => nil, 'approved_by' => nil)
+    expect(versions.fetch(approved_version.id)['approved_by']).to eq('id' => admin.id, 'name' => admin.name)
+    versions.each_value do |version|
+      expect(version).to include('rejected_at' => nil, 'rejected_by' => nil, 'rejection_reason' => nil,
+                                 'delivery' => { 'email_status' => nil, 'notice_status' => nil })
+    end
+    expect(read("pipeline_opportunities/#{opportunity.id}")).to include('lead_email' => nil)
   end
 
   it 'keeps the historical proposal.send request and callback untouched and readable (CT-06, CT-11)' do

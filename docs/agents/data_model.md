@@ -156,8 +156,8 @@ Published rows are immutable snapshots of `FIELDS`.
 
 | Table | Columns | Invariant |
 |---|---|---|
-| `scan_solo_proposals` | `opportunity_id` (FK), `current_version_id` | UNIQUE opportunity_id |
-| `scan_solo_proposal_versions` | `proposal_id` (FK), `version_number`, `is_current` default true, `status` (`generating 0, generated 1, approved 2, sent 3, failed 4`), `value` decimal(12,2), `currency`, `artifact_url`, `valid_until`, `proposal_number`, `failure_reason`, `generate_correlation_id`, `send_correlation_id`, `generate_requested_at`, `generate_callback_applied_at`, `send_requested_at`, `send_callback_applied_at`, polymorphic `approved_by`, `approved_at`, `sent_message_id`, `follow_up_message_id`, `quote_request_id` (FK); ActiveStorage `document` | UNIQUE (proposal_id, version_number); partial UNIQUE proposal_id WHERE is_current; UNIQUE generate_correlation_id, send_correlation_id, proposal_number, quote_request_id |
+| `scan_solo_proposals` | `opportunity_id` (FK), `current_version_id`, `email_conversation_id` (lead proposal e-mail thread) | UNIQUE opportunity_id, email_conversation_id |
+| `scan_solo_proposal_versions` | `proposal_id` (FK), `version_number`, `is_current` default true, `status` (`generating 0, generated 1, approved 2, sent 3, failed 4, awaiting_approval 5, rejected 6`), `value` decimal(12,2), `currency`, `artifact_url`, `artifact_sha256`, `valid_until`, `proposal_number`, `failure_reason`, `generate_correlation_id`, `send_correlation_id`, `generate_requested_at`, `generate_callback_applied_at`, `send_requested_at`, `send_callback_applied_at`, polymorphic `approved_by`, `approved_at`, polymorphic `rejected_by`, `rejected_at`, `rejection_reason`, `approval_requested_at`, `approval_request_message_id`, `sent_message_id` (lead e-mail), `notice_message_id`, `notice_failure_reason`, `follow_up_message_id`, `quote_request_id` (FK); ActiveStorage `document` | UNIQUE (proposal_id, version_number); partial UNIQUE proposal_id WHERE is_current; partial UNIQUE quote_request_id WHERE status IN (0, 2, 5) (≤ 1 non-terminal version per request); UNIQUE generate_correlation_id, send_correlation_id, proposal_number; index quote_request_id (N versions per request), notice_message_id, polymorphic rejected_by |
 
 `proposal_number` = `SS-<year>-<id 6 digits>`, set by `after_create`.
 
@@ -165,7 +165,7 @@ Published rows are immutable snapshots of `FIELDS`.
 
 | Table | Columns | Invariant |
 |---|---|---|
-| `scan_solo_make_requests` | `account_id` (FK), `correlation_id`, `idempotency_key`, `action`, `payload` jsonb, `status` (`pending 0, sent 1, completed 2, failed 3`), `retry_count` default 0 | UNIQUE correlation_id; `dead_letter` = failed AND retry_count ≥ 3 |
+| `scan_solo_make_requests` | `account_id` (FK), `correlation_id`, `idempotency_key`, `action`, `payload` jsonb, `status` (`pending 0, sent 1, completed 2, failed 3`), `retry_count` default 0 | UNIQUE correlation_id, idempotency_key; `dead_letter` = failed AND retry_count ≥ 3 |
 | `scan_solo_make_callbacks` | `correlation_id`, `action`, `payload` jsonb, `signature_valid`, `applied`, `rejection_reason`, `created_at` | partial UNIQUE correlation_id WHERE applied; read-only once persisted |
 
 ### Cache

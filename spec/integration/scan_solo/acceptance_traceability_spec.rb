@@ -65,7 +65,8 @@ RSpec.describe 'ScanSolo Section 20 acceptance traceability matrix' do # rubocop
     end
     let(:operational_ids) { %w[RF-48 RF-49 RF-50 RF-51 RF-52] }
     let(:rows) do
-      doc_content.split('## Operação centralizada').last.scan(/^\|\s*((?:RF|UI)-\d+)\s*\|[^|]*\|([^\n]*)\|$/).to_h
+      section = doc_content.split('## Operação centralizada').last.split('## Proposta com aprovação').first
+      section.scan(/^\|\s*((?:RF|UI)-\d+)\s*\|[^|]*\|([^\n]*)\|$/).to_h
     end
 
     it 'has a row for every RF and UI id of the feature SPEC' do
@@ -89,6 +90,45 @@ RSpec.describe 'ScanSolo Section 20 acceptance traceability matrix' do # rubocop
     it 'references the end-to-end and legacy compatibility suites' do
       expect(doc_content).to include('`spec/integration/scan_solo/operacao_centralizada_spec.rb`',
                                      '`spec/integration/scan_solo/legacy_compatibility_spec.rb`')
+    end
+  end
+
+  # scansolo-proposta-aprovacao-email T32: every RF/UI id of the feature SPEC
+  # (RF-01..RF-29, UI-01..UI-08) has a matrix row; RF-27..RF-29 are Make
+  # operational requirements, every other row points to existing Ruby or
+  # Vitest spec files.
+  describe 'proposta com aprovação e e-mail section' do
+    let(:spec_ids) do
+      File.read(Rails.root.join('.spec/features/scansolo-proposta-aprovacao-email/SPEC.md')).scan(/^- ((?:RF|UI)-\d+) \[/).flatten
+    end
+    let(:operational_ids) { %w[RF-27 RF-28 RF-29] }
+    let(:rows) do
+      doc_content.split('## Proposta com aprovação').last.scan(/^\|\s*((?:RF|UI)-\d+)\s*\|[^|]*\|([^\n]*)\|$/).to_h
+    end
+
+    it 'has a row for every RF and UI id of the feature SPEC' do
+      expect(spec_ids).to match_array((1..29).map { |n| format('RF-%02d', n) } + (1..8).map { |n| format('UI-%02d', n) })
+      expect(rows.keys).to match_array(spec_ids)
+    end
+
+    it 'points every non-operational row to existing spec files' do
+      rows.except(*operational_ids).each do |id, tests|
+        paths = tests.scan(%r{`((?:spec|app/javascript)/[\w./-]+(?:_spec\.rb|\.spec\.js))`}).flatten
+
+        expect(paths).not_to be_empty, "#{id} has no automated test"
+        paths.each { |path| expect(File.exist?(Rails.root.join(path))).to be(true), "#{id} references #{path}, which does not exist" }
+      end
+    end
+
+    it 'marks only the Make requirements as operational' do
+      expect(rows.select { |_id, tests| tests.include?('operacional (Make)') }.keys).to match_array(operational_ids)
+    end
+
+    it 'references the end-to-end and legacy compatibility suites' do
+      section = doc_content.split('## Proposta com aprovação').last
+
+      expect(section).to include('`spec/integration/scan_solo/proposta_aprovacao_email_spec.rb`',
+                                 '`spec/integration/scan_solo/legacy_compatibility_spec.rb`')
     end
   end
 end

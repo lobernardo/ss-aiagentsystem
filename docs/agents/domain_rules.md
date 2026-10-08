@@ -259,6 +259,8 @@ Attempts: `MAX_ATTEMPTS = 2`. A first-attempt violation in `OutputValidator::REG
 - Resume shifts the remaining `scheduled_at` values by the paused duration (`LifecycleService.resume!`).
 - Return to AI resumes the paused enrollment of the current stage, or enrolls fresh when none is open (`ResumeOnReturnService`).
 - Every customer reply cancels the next `scheduled` attempt of each enrollment older than the message, at most once per outgoing cycle (`ReplyInterruptionService`, audit `cadence.attempt_interrupted_by_reply`).
+- In `proposta_enviada`, a lead reply (eligible WhatsApp message, or the lead's e-mail on the proposal thread via `LeadEmailReplyService`) cancels every `scheduled` attempt of each enrollment older than the message, with 1 audit per cancelled attempt. `sent`/`dispatched` attempts are untouched.
+- The interruption audit carries the opportunity's quote request `correlation_id` when there is one.
 - When every required field is satisfied after the turn, all open enrollments that existed before the message are cancelled (`ReplyCompletenessDetector`). Superseded turns skip this.
 
 ### Cadence dispatch decision
@@ -299,12 +301,14 @@ Attempts: `MAX_ATTEMPTS = 2`. A first-attempt violation in `OutputValidator::REG
 
 - `Quote::RequestService` requires `concluida` + `proposta`.
   - Inbox and recipient come from the published config (`Quote::Mailbox`). A misconfigured inbox (`quote_inbox_missing` / `quote_inbox_not_email` / `quote_inbox_allowlisted`) audits `quote_request.misconfigured` and stops.
-  - The opportunity gets 1 request (unique `opportunity_id`) and 1 email thread. The email is posted after commit, with audit `quote_request.sent`.
+  - The opportunity gets 1 request (unique `opportunity_id`) and 1 email thread. The email is posted after commit, with audit `quote_request.sent`. A job retry for a request without `request_message_id` posts it once.
   - The customer notice is posted once (`customer_notice_message_id`).
 - `QuoteRequest.status`: `awaiting_reply`, `correction_requested`, `replied`. `open?` is true for the first two.
 - `Quote::ReplyProcessor` handles each email on the quote inbox:
   - Thread with a request → parse the block. A valid block marks the request `replied` and starts generation. An invalid one marks it `correction_requested` and sends a correction email.
-  - Request already `replied` → `QuoteReply` `late_reply` (pending).
+  - Request already `replied` → `QuoteReply` `late_reply` (pending). It is never read as a CT-04 block, so a commercial e-mail ("aprovado", "ok") never approves a version.
+  - After a rejection the request is back to `awaiting_reply`; a valid block on the same thread generates the next version (`version_number + 1`, same request, the only `is_current`).
+  - Lead proposal thread (`scansolo_thread = proposal_delivery`) → `Proposal::LeadEmailReplyService`. Only a sender equal to the contact's e-mail counts: it updates `last_customer_interaction_at`, interrupts the cadence and audits `proposal.lead_email_reply`. Never a `QuoteReply`, an opportunity or an AI turn. Any other sender has no effect.
   - Negotiation thread → ignored.
   - Other threads → `QuoteReply` `unmatched` (pending).
 - `Quote::ResponseBlockParser` is deterministic (no LLM):
@@ -318,34 +322,44 @@ Attempts: `MAX_ATTEMPTS = 2`. A first-attempt violation in `OutputValidator::REG
 
 ### Proposal lifecycle
 
-`ScanSolo::ProposalVersion.status`: `generating 0, generated 1, approved 2, sent 3, failed 4`.
+`ScanSolo::ProposalVersion.status`: `generating 0, generated 1, approved 2, sent 3, failed 4, awaiting_approval 5, rejected 6`. `generated` is only kept for legacy rows. Non-terminal: `generating`, `awaiting_approval`, `approved`.
+
+The approval is always required (`require_proposal_approval` is ignored).
 
 | Step | Gate | Implementation |
 |---|---|---|
-| Generate | Opportunity's quote request `replied` with no version yet; FieldResolver proposal gate empty (`concluida`: no `faltante`; `em_andamento`: all `confirmado`) | `Proposal::GenerateService` (422 `sem resposta de orçamento validada` / `campos obrigatórios da proposta incompletos`) |
+| Generate | Opportunity's quote request `replied` with no version other than `rejected` ones; FieldResolver proposal gate empty (`concluida`: no `faltante`; `em_andamento`: all `confirmado`) | `Proposal::GenerateService` (422 `sem resposta de orçamento validada` / `campos obrigatórios da proposta incompletos`) |
 | Provider | Make when `scenario_url`, `secret`, `inbound_signing_secret` credentials present; `MockProvider` in dev/test; else `ProposalIntegrationNotConfigured` (422) | `Proposal::Integration.provider!` |
-| Callback | Signed and schema-valid, matching `MakeRequest`, applied once per correlation id | `Make::CallbackVerifier`, `CallbackApplicationService`, `CallbackHandler` |
-| Deliver | `generated` and unclaimed (or `failed` on redelivery); WhatsApp template `scansolo_proposal_send` with PDF header | `ProposalDeliveryJob` → `Proposal::DeliveryService` |
-| Sent | Provider accepted the message | `DeliveryReconciler` → `SuccessHandler` (stage `proposta_enviada`) → `FollowUpService` (1 follow-up) |
-| Approve | Version must be current | `Proposal::ApproveService` (admin) |
-| Send (API) | Current, generated/approved/sent, approved when `approval_required?` | `Proposal::SendService` |
+| Callback | Signed and schema-valid, matching `MakeRequest`, `total_value` equal to the request's `commercial.total_value` (cents), applied once per correlation id → `awaiting_approval` (audit `proposal.generated`) | `Make::CallbackVerifier`, `CallbackApplicationService`, `CallbackHandler` |
+| Approval request | `awaiting_approval`, not yet requested (`approval_requested_at`); PDF downloaded from `artifact_url` (and checked against `artifact_sha256` when sent) | `ProposalApprovalRequestJob` → `Proposal::ApprovalRequestService` (CT-05 on the quote thread, PDF attached, audit `proposal.approval_requested`) |
+| Approve | Admin or published `commercial_user_id`; current version `awaiting_approval`; lead e-mail valid (422 `lead_email_missing`). `approved`/`sent` → no-op | `Proposal::ApproveService` (audit `proposal.approved`, delivery after commit) |
+| Reject | Same actors; reason required (422 `reason_required`); current version `awaiting_approval` | `Proposal::RejectService` (`rejected`, request back to `awaiting_reply`, audit `proposal.rejected`) |
+| Deliver | `approved` and unclaimed (or `failed` after approval on redelivery); e-mail To the contact, CC `quote_recipient_email`, stored PDF, on the opportunity's proposal thread (`proposal_delivery`, 1 per opportunity) | `ProposalDeliveryJob` → `Proposal::DeliveryService` (origin `proposal_email`) |
+| Sent | Proposal e-mail has `source_id` and is not `failed` | `DeliveryReconciler` (audit `proposal.sent`) → `SuccessHandler` (stage `proposta_enviada`) → `LeadNoticeService` (WhatsApp notice, slot `proposta_aviso_email`, no PDF) → `FollowUpService` (1 follow-up) |
+| Send (API, legacy) | Never emits `proposal.send`. `sent` → 422 `already_sent`; not `approved` → 422 `approval_required`; `approved` → same idempotent delivery | `Proposal::SendService` |
 
-- Versions: 1 `is_current` per proposal (partial unique index). A new version unmarks the previous one and syncs `Proposal#current_version_id`.
+- Delivery failures (`lead_email_missing`, `email_delivery_failed`, the message's `external_error`) mark the version `failed` with 1 `proposal.delivery_failed` audit; the stage never moves. A `sent` version whose e-mail later fails becomes `failed` with `proposal.delivery_failed_after_sent`, keeping the stage.
+- A blocked or failed WhatsApp notice keeps the version `sent`, stores `notice_failure_reason` and audits `proposal.lead_notice_failed`.
+- PDF download or checksum failure → `failed` with `artifact_download_failed` / `artifact_checksum_mismatch` and 1 `proposal.delivery_failed` audit; no approval request.
+- Per version: ≤ 1 approval request, ≤ 1 `proposal.approved` audit, ≤ 1 lead e-mail (except the explicit retry) and ≤ 1 accepted notice.
+- Versions: 1 `is_current` per proposal (partial unique index) and ≤ 1 non-terminal version per quote request (partial unique index). A new version unmarks the previous one and syncs `Proposal#current_version_id`.
 - `proposal_number` = `format('SS-%<year>d-%<id>06d')`, assigned after create.
-- `approval_required?` = no published config, or `require_proposal_approval`.
+- Every proposal audit carries the quote request `correlation_id` (`ProposalVersion#audit_correlation_id`).
 
 ### Proposal retry and dead letter
 
-`ScanSolo::Proposal::RetryPolicy`:
+`ScanSolo::Proposal::RetryPolicy` (admin or published `commercial_user_id`), always on the same version:
 
 | Case | Behavior |
 |---|---|
-| Not `failed`, or reason not in `timeout`, `network_error`, `provider_unavailable` (and not delivery stage) | `UnsafeRetryError` → 422 |
-| Delivery stage (`generate_callback_applied_at` + `value` present) | Redeliver stored PDF; no Make request, no count |
-| Previous `retry_count >= 3` (`MakeRequest::DEAD_LETTER_RETRY_THRESHOLD`) without `confirm_reprocess: true` | `ReprocessConfirmationRequiredError` → 422 |
-| Otherwise | Same version, new `generate_correlation_id`, `retry_count + 1`, audit `proposal.retry_requested` / `proposal.reprocess_requested` |
+| Not `failed`, or reason not retryable | `UnsafeRetryError` → 422 |
+| (a) Failed after approval (`approved_at` present: `email_delivery_failed`, `lead_email_missing`, message `external_error`) | Redeliver the e-mail with the stored PDF on the same proposal thread; no Make request, no count. The notice follows the new `source_id`, only if none was accepted |
+| (c) `artifact_download_failed` / `artifact_checksum_mismatch` | Download the PDF again; on success back to `awaiting_approval` and the approval request is sent. No Make request |
+| (b) Generate failure (`timeout`, `network_error`, `provider_unavailable`) with previous `retry_count >= 3` (`MakeRequest::DEAD_LETTER_RETRY_THRESHOLD`) without `confirm_reprocess: true` | `ReprocessConfirmationRequiredError` → 422 |
+| (b) Otherwise | Same version back to `generating`, new `generate_correlation_id`, `retry_count + 1`, audit `proposal.retry_requested` / `proposal.reprocess_requested` |
 
 - Outbound transport errors map to `timeout` / `network_error`. HTTP 5xx maps to `provider_unavailable` and 4xx to `provider_rejected`. A Make failure callback with `retryable: true` is stored as `provider_unavailable`.
+- Every generation failure (failure callback or transport error) audits `proposal.generation_failed`.
 
 ### Negotiation
 

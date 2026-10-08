@@ -24,22 +24,25 @@
 
 ### HTTP endpoints
 
-Paths are relative to `/api/v1/accounts/:account_id/scan_solo`. "Agent" means any account user, and "Admin" means an account administrator.
+Paths are relative to `/api/v1/accounts/:account_id/scan_solo`. "Agent" means any account user, "Admin" means an account administrator and "Commercial" means the published `commercial_user_id`.
+
+The proposal approval and e-mail delivery contracts are formalized in `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (approve, reject, send, retry, reads, PATCH `email`) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make `proposal.generate` request and callback webhook, approval request and lead e-mails, WhatsApp notice, lead e-mail reply).
 
 | Method | Path | Policy | Response (jbuilder) |
 |---|---|---|---|
 | GET | `/pipeline_opportunities` | Agent | Array of opportunity cards |
 | POST | `/pipeline_opportunities` | Agent | 201 detail + `contact_created` |
 | GET | `/pipeline_opportunities/:id` | Agent | detail + `lead_state` + `quote_request_resend_available` |
-| PATCH | `/pipeline_opportunities/:id` | Agent | detail (`owner_id` only) |
+| PATCH | `/pipeline_opportunities/:id` | Agent | detail (`owner_id`, `email`) |
 | POST | `/pipeline_opportunities/:id/stage_transitions` | Agent | detail |
 | POST | `/pipeline_opportunities/:id/quote_request/resend` | Admin | `{quote_request_id, status, correlation_id, recipient, resent_at}` |
 | POST | `/pipeline_opportunities/:pipeline_opportunity_id/proposals/generate` | Agent | proposal version |
 | GET | `/proposals` | Agent | Array of proposals with versions |
 | GET | `/proposals/:id` | Agent | proposal |
-| POST | `/proposals/:id/approve` | Admin | proposal version |
-| POST | `/proposals/:id/send` | Admin or opportunity owner | proposal version |
-| POST | `/proposals/:id/retry` | Admin | proposal version |
+| POST | `/proposals/:id/approve` | Admin or Commercial | proposal version |
+| POST | `/proposals/:id/reject` | Admin or Commercial | proposal version |
+| POST | `/proposals/:id/send` | Admin or opportunity owner | proposal version (legacy; never emits `proposal.send`) |
+| POST | `/proposals/:id/retry` | Admin or Commercial | proposal version |
 | GET | `/quote_replies?status=pending` | Admin or quote-inbox member | Array of pending replies |
 | POST | `/quote_replies/:id/link` | Admin or quote-inbox member | `{quote_request_id, status}` |
 | POST | `/quote_replies/:id/discard` | Admin or quote-inbox member | `{id, status}` |
@@ -82,19 +85,25 @@ Request: create a manual lead (`spec/requests/api/v1/accounts/scan_solo/pipeline
 }
 ```
 
+Request: lead e-mail (`pipeline_opportunities_spec.rb`), written to the native `Contact.email`; `owner_id` is still accepted:
+
+```json
+{ "email": "lead@empresa.com.br" }
+```
+
 Request: stage transition (`pipeline_opportunities_spec.rb`):
 
 ```json
 { "target_stage": "em_contato" }
 ```
 
-Card fields (`_pipeline_opportunity.json.jbuilder`): `id, account_id, contact_id, contact_name, conversation_id, owner_id, stage, last_customer_interaction_at, next_follow_up_at, created_at, updated_at, stage_history[{id, from_stage, to_stage, actor_type, actor_id, created_at}], lead_source, company, service, city_uf, ai_control_state, quote_request_status, proposal_status`.
+Card fields (`_pipeline_opportunity.json.jbuilder`): `id, account_id, contact_id, contact_name, conversation_id, owner_id, stage, last_customer_interaction_at, next_follow_up_at, created_at, updated_at, stage_history[{id, from_stage, to_stage, actor_type, actor_id, created_at}], lead_source, company, service, city_uf, ai_control_state, quote_request_status, proposal_status, lead_email`. `proposal_status` includes `awaiting_approval` and `rejected`.
 
 Detail adds (`_detail.json.jbuilder`):
 
 - `lead_state{intent, qualification, next_action, authorized_actions, blocks, status, history}`
 - `quote_request{id, status, sent_at, replied_at, email_conversation_id}`
-- `proposal{version_number, proposal_number, status, value, currency, valid_until, document_url, failure_reason}`
+- `proposal{version_number, proposal_number, status, value, currency, valid_until, document_url, failure_reason, rejection_reason}`
 - `initial_template_failure{reason, status, occurred_at}`
 
 Errors:
@@ -103,6 +112,7 @@ Errors:
 |---|---|---|
 | Create boundary | 422 | `{"error":"missing_name"\|"invalid_phone"\|"invalid_email"\|"invalid_owner"\|"invalid_inbox"}` |
 | Create DB rule | 422 | `{"error":"contact_opted_out"\|"contact_conflict"}` or `{"error":"opportunity_exists","opportunity_id":N}` |
+| Update `email` | 422 | `{"error":"invalid_email"\|"contact_conflict"}` |
 | Unknown / terminal / unauthorized `negociacao` | 422 | RecordInvalid errors |
 | Resend refused | 422 | `{"error":"quote_request_closed"\|"quote_request_not_eligible"\|"quote_inbox_misconfigured"}` |
 
@@ -124,20 +134,29 @@ Request: approve / send (`proposal_version_id` and `correlation_id` required):
 { "proposal_version_id": 41, "correlation_id": "8b1d2e44-0a9c-4f7b-b6d3-52c9e1f0a7d6" }
 ```
 
+- `approve` is the active approval: the current `awaiting_approval` version becomes `approved` (audit `proposal.approved`) and the e-mail delivery to the lead runs after the commit. Repeating it on an `approved`/`sent` version returns 200 with no new audit or delivery.
+- `send` is legacy and never emits `proposal.send` to Make: `sent` → 422 `already_sent`, not `approved` → 422 `approval_required`, `approved` → the same idempotent e-mail delivery as `approve`.
+
+Request: reject (`reason` required, not blank):
+
+```json
+{ "proposal_version_id": 41, "reason": "Valor acima do combinado" }
+```
+
 Request: retry (`confirm_reprocess` must be a JSON boolean):
 
 ```json
 { "proposal_version_id": 41, "confirm_reprocess": false }
 ```
 
-- Version fields (`_proposal_version.json.jbuilder`): `id, proposal_id, version_number, status, is_current, value, currency, artifact_url, failure_reason, correlation_id, approved_at, approval_required, sent_at, retry_count, dead_letter, proposal_number, valid_until, document_url`.
-- Proposal fields: `id, opportunity_id, owner_id, contact_name, integration_state ("configured"|"blocked"), current_version_id, versions[], quote_request_status`.
+- Version fields (`_proposal_version.json.jbuilder`): `id, proposal_id, version_number, status, is_current, value, currency, artifact_url, failure_reason, correlation_id, approved_at, approval_required, sent_at, retry_count, dead_letter, proposal_number, valid_until, document_url, approved_by{id, name}|null, rejected_at, rejected_by{id, name}|null, rejection_reason, delivery{email_status: "pending"|"sent"|"failed"|null, notice_status: "pending"|"sent"|"failed"|"blocked"|null}`.
+- Proposal fields: `id, opportunity_id, owner_id, contact_name, integration_state ("configured"|"blocked"), current_version_id, versions[], quote_request_status, lead_email_present`.
 
 | Case | Status | Body |
 |---|---|---|
 | No validated quote reply | 422 | contains `sem resposta de orçamento validada` |
 | Required fields incomplete | 422 | `campos obrigatórios da proposta incompletos: ...` |
-| Non-current version / not generated / approval missing | 422 | RecordInvalid message |
+| Approve / reject / send refused | 422 | `{"error":"not_current_version"\|"not_awaiting_approval"\|"lead_email_missing"\|"reason_required"\|"already_sent"\|"approval_required"}` |
 | Unsafe retry / dead letter without confirm | 422 | `{"error":"<message>"}` |
 | `confirm_reprocess` not boolean | 422 | `{"error":"confirm_reprocess must be a boolean"}` |
 
@@ -247,7 +266,10 @@ Request: upsert template mapping (`cadence_templates_spec.rb`):
 | 3 | JSON schema (`CallbackVerifier::SCHEMA`) | fail → 422 `schema_invalid` |
 | 4 | `MakeRequest` with same `correlation_id` + `action` | none → 422 `unmatched_request` |
 | 5 | Already applied correlation id | 200, no change |
-| 6 | Apply in 1 transaction | 200 |
+| 6 | Generate success `total_value` equal to the request's `commercial.total_value` (cents) | differs → 422 `total_value_mismatch`, version still `generating` |
+| 7 | Apply in 1 transaction | 200 (generate success → `awaiting_approval`) |
+
+Every rejection with a valid signature stores the `MakeCallback` (`applied: false`) and audits `make.callback_rejected` with the `rejection_reason`. Contract: `makeIntegrationCallback` in `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml`.
 
 Success callback (`spec/requests/webhooks/scan_solo/make_spec.rb`):
 
@@ -267,6 +289,8 @@ Success callback (`spec/requests/webhooks/scan_solo/make_spec.rb`):
 }
 ```
 
+Optional generate success fields: `artifact_sha256` (64 lowercase hex; a mismatch with the downloaded PDF fails the version with `artifact_checksum_mismatch`) and `template_version` (stored on the `proposal.generated` audit).
+
 Failure callback (`retryable: true` is stored as `failure_reason: provider_unavailable`):
 
 ```json
@@ -279,7 +303,7 @@ Failure callback (`retryable: true` is stored as `failure_reason: provider_unava
 }
 ```
 
-`proposal.send` result shape: `{proposal_version_id, sent_at, transport_message_id}`.
+`proposal.send` result shape: `{proposal_version_id, sent_at, transport_message_id}` — accepted only for historical callbacks; no new request emits `proposal.send`.
 
 ### Message formats
 

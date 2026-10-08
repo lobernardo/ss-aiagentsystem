@@ -32,7 +32,7 @@ class Api::V1::Accounts::ScanSolo::Conversations::HandoffController < Api::V1::A
   private
 
   def set_conversation
-    @conversation = Conversation.where(account_id: Current.account.id).find(params[:conversation_id])
+    @conversation = Current.account.conversations.find_by!(display_id: params[:conversation_id])
   end
 
   def handoff_params

@@ -158,7 +158,7 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do #
     let(:conversation) { create(:conversation, account: account, contact: contact, assignee: agent) }
 
     it 'restores ai_active for the assigned agent through the handoff API' do
-      base_path = "/api/v1/accounts/#{account.id}/scan_solo/conversations/#{conversation.id}"
+      base_path = "/api/v1/accounts/#{account.id}/scan_solo/conversations/#{conversation.display_id}"
       post "#{base_path}/handoff", params: { reason: 'transferência' }, headers: agent.create_new_auth_token, as: :json
       expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_human_active
 

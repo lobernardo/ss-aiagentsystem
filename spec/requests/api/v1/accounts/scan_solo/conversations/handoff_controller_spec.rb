@@ -10,7 +10,7 @@ RSpec.describe 'ScanSolo Conversation Handoff API', type: :request do
   let(:contact) { create(:contact, account: account) }
   let(:conversation) { create(:conversation, account: account, contact: contact, assignee: assigned_agent) }
 
-  let(:base_path) { "/api/v1/accounts/#{account.id}/scan_solo/conversations/#{conversation.id}" }
+  let(:base_path) { "/api/v1/accounts/#{account.id}/scan_solo/conversations/#{conversation.display_id}" }
 
   describe 'GET .../control_state' do
     it 'returns the resolvable control state for the conversation' do

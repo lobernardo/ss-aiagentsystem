@@ -38,7 +38,7 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
 
       expect { described_class.retry!(proposal_version: version) }.not_to change(ScanSolo::Proposal, :count)
 
-      expect(version.reload).to be_generated
+      expect(version.reload).to be_awaiting_approval
       expect(version.value).to eq(ScanSolo::Proposal::MockProvider::DEFAULT_VALUE)
     end
 
@@ -76,12 +76,13 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
           .to have_attributes(actor: agent, payload: include('operation' => 'delivery'))
       end
 
-      it 'downloads the PDF again only when it is missing' do
+      # RF-01: the PDF download moved to ApprovalRequestService (RF-15 c re-downloads it there).
+      it 'never downloads the PDF and fails the redelivery when it is missing' do
         described_class.retry!(proposal_version: version, actor: agent)
 
-        expect(a_request(:get, artifact_url)).to have_been_made.once
-        expect(version.reload.document).to be_attached
-        expect(proposal_messages.count).to eq(1)
+        expect(a_request(:get, artifact_url)).not_to have_been_made
+        expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'artifact_download_failed')
+        expect(proposal_messages.count).to eq(0)
       end
     end
 

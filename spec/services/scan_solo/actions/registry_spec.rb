@@ -113,7 +113,7 @@ RSpec.describe ScanSolo::Actions::Registry do
 
       expect(result.pending).to be false
       expect(result.side_effect_result[:action]).to eq('proposal.generate')
-      expect(ScanSolo::ProposalVersion.find(result.side_effect_result[:proposal_version_id])).to be_generated
+      expect(ScanSolo::ProposalVersion.find(result.side_effect_result[:proposal_version_id])).to be_awaiting_approval
     end
 
     it 'gates proposal_send behind confirmation (requires_confirmation classification)' do

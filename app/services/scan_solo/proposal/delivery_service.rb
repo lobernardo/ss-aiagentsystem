@@ -6,10 +6,10 @@
 # The version is claimed under its row lock (`generated` and never claimed,
 # or `failed` on an explicit redelivery -- CT-10), so two jobs send one template
 # (RNF-02). Download and message creation run after that short transaction,
-# never inside one (RNF-01). A redelivery reuses the stored PDF and only downloads
-# it again when it is missing.
+# never inside one (RNF-01). The PDF is the one stored by
+# ScanSolo::Proposal::ApprovalRequestService before approval (RF-01).
 #
-# A failed download (`artifact_download_failed`), a blocked template
+# A missing stored PDF (`artifact_download_failed`), a blocked template
 # (`guard.reason`) or a message born `failed` (`external_error`) fails the
 # version with 1 `proposal.delivery_failed` audit, keeping value,
 # artifact_url and the stored PDF; the stage never moves here (RF-33).
@@ -28,7 +28,7 @@ class ScanSolo::Proposal::DeliveryService
 
   def call
     return unless claim!
-    return fail!(DOWNLOAD_FAILED) unless store_document
+    return fail!(DOWNLOAD_FAILED) unless proposal_version.document.attached?
 
     template = ScanSolo::Messaging::TemplateResolver.call(
       account: opportunity.account, stage: STAGE_SLOT, step: nil, opportunity: opportunity,
@@ -59,17 +59,6 @@ class ScanSolo::Proposal::DeliveryService
 
       proposal_version.update!(status: :generated, failure_reason: nil, send_requested_at: Time.current)
     end
-  end
-
-  def store_document
-    return true if proposal_version.document.attached?
-
-    SafeFetch.fetch(proposal_version.artifact_url, allowed_content_type_prefixes: [], allowed_content_types: ['application/pdf']) do |result|
-      proposal_version.document.attach(io: result.tempfile, filename: document_name, content_type: 'application/pdf')
-    end
-    true
-  rescue SafeFetch::Error
-    false
   end
 
   def fail!(reason)

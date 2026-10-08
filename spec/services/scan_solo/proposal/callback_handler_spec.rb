@@ -28,26 +28,44 @@ RSpec.describe ScanSolo::Proposal::CallbackHandler do
   describe '.apply_generate_result!' do
     let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id) }
 
-    def apply_generate(success: true)
+    def apply_generate(success: true, **extra)
       described_class.apply_generate_result!(
         proposal_version: version, correlation_id: correlation_id, success: success, value: 4321.5, currency: 'BRL',
-        artifact_url: 'https://make.example/7.pdf', valid_until: '2026-11-04T00:00:00Z', failure_reason: 'docs_copy_failed'
+        artifact_url: 'https://make.example/7.pdf', valid_until: '2026-11-04T00:00:00Z', failure_reason: 'docs_copy_failed', **extra
       )
     end
 
-    it 'persists value and valid_until and schedules the delivery without moving the stage (RF-26, RF-29, RF-33)' do
-      expect { apply_generate }.to have_enqueued_job(ScanSolo::ProposalDeliveryJob).with(version.id)
+    # RF-01 replaces OC/RF-29: the callback only awaits the commercial approval; nothing reaches the lead.
+    it 'moves the version to awaiting_approval and schedules only the approval request (RF-01)' do
+      version
+      expect { apply_generate }.to not_change(conversation.messages, :count).and not_change(ScanSolo::PipelineStageEvent, :count)
 
-      expect(version.reload).to have_attributes(status: 'generated', value: BigDecimal('4321.5'),
+      expect(ScanSolo::ProposalApprovalRequestJob).to have_been_enqueued.with(version.id).exactly(:once)
+      expect(ScanSolo::ProposalDeliveryJob).not_to have_been_enqueued
+
+      expect(version.reload).to have_attributes(status: 'awaiting_approval', value: BigDecimal('4321.5'),
                                                 valid_until: Time.zone.parse('2026-11-04T00:00:00Z'))
       expect(opportunity.reload).to be_qualificado
       expect(opportunity.cadence_enrollments).to be_none
     end
 
-    it 'keeps the failure path without a delivery (RF-27)' do
-      expect { apply_generate(success: false) }.not_to have_enqueued_job(ScanSolo::ProposalDeliveryJob)
+    it 'stores artifact_sha256 and audits template_version on proposal.generated (RF-25)' do
+      apply_generate(artifact_sha256: 'a' * 64, template_version: 'proposta-v3')
+
+      expect(version.reload.artifact_sha256).to eq('a' * 64)
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generated').sole.payload)
+        .to include('template_version' => 'proposta-v3', 'generate_correlation_id' => correlation_id)
+    end
+
+    it 'keeps the failure path without any job and audits proposal.generation_failed (RF-20, RF-27)' do
+      apply_generate(success: false)
+
+      expect(ScanSolo::ProposalApprovalRequestJob).not_to have_been_enqueued
+      expect(ScanSolo::ProposalDeliveryJob).not_to have_been_enqueued
 
       expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'docs_copy_failed')
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generation_failed').sole)
+        .to have_attributes(subject: opportunity, payload: include('reason' => 'docs_copy_failed', 'generate_correlation_id' => correlation_id))
     end
   end
 

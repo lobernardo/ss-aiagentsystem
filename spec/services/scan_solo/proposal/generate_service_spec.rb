@@ -134,7 +134,7 @@ RSpec.describe ScanSolo::Proposal::GenerateService do
       version = call
 
       expect(version).to be_persisted
-      expect(version).to be_generated
+      expect(version).to be_awaiting_approval
       expect(version.value).to eq(ScanSolo::Proposal::MockProvider::DEFAULT_VALUE)
       expect(version.currency).to eq(ScanSolo::Proposal::MockProvider::DEFAULT_CURRENCY)
       expect(version.artifact_url).to be_present

@@ -267,7 +267,7 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do #
       quote_request = ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied)
       version = ScanSolo::Proposal::GenerateService.call(opportunity: opportunity, quote_request: quote_request, correlation_id: SecureRandom.uuid)
 
-      expect(version).to be_generated
+      expect(version).to be_awaiting_approval
       expect(version.value).to eq(ScanSolo::Proposal::MockProvider::DEFAULT_VALUE)
       expect(version.artifact_url).to be_present
     end
@@ -300,7 +300,7 @@ RSpec.describe 'ScanSolo full isolated test mode', :scansolo_full_test_mode do #
 
       expect(response).to have_http_status(:ok)
       expect(make_request.reload).to be_completed
-      expect(version.reload).to have_attributes(status: 'generated', value: BigDecimal(1800))
+      expect(version.reload).to have_attributes(status: 'awaiting_approval', value: BigDecimal(1800))
     end
   end
 

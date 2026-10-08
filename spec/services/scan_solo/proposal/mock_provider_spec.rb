@@ -18,7 +18,7 @@ RSpec.describe ScanSolo::Proposal::MockProvider do
 
       described_class.request_generation(proposal_version: version, correlation_id: version.generate_correlation_id)
 
-      expect(version.reload).to be_generated
+      expect(version.reload).to be_awaiting_approval
       expect(version.value).to eq(described_class::DEFAULT_VALUE)
       expect(version.artifact_url).to be_present
     end

@@ -19,29 +19,27 @@ RSpec.describe ScanSolo::Proposal::DeliveryService do
   let(:follow_ups) { conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'proposal_follow_up'") }
 
   before do
-    allow(Resolv).to receive(:getaddresses).and_call_original
-    allow(Resolv).to receive(:getaddresses).with('make.example').and_return(['93.184.216.34'])
-    stub_request(:get, artifact_url).to_return do
-      transaction_open_at << [:download, ActiveRecord::Base.connection.current_transaction.joinable?]
-      { status: 200, body: '%PDF-1.4 proposta', headers: { 'Content-Type' => 'application/pdf' } }
-    end
     allow(ScanSolo::Messaging::NativeTemplateSender).to receive(:call).and_wrap_original do |original, **kwargs|
       transaction_open_at << [:message, ActiveRecord::Base.connection.current_transaction.joinable?]
       original.call(**kwargs)
     end
   end
 
-  def apply_callback
-    perform_enqueued_jobs(only: ScanSolo::ProposalDeliveryJob) do
-      ScanSolo::Proposal::CallbackHandler.apply_generate_result!(
-        proposal_version: version, correlation_id: correlation_id, success: true, value: 12_500, currency: 'BRL',
-        artifact_url: artifact_url, valid_until: '2026-11-04T00:00:00Z'
-      )
+  # RF-01 moved the generate callback to `awaiting_approval` and the PDF download to
+  # ApprovalRequestService; until this service is rewritten for the e-mail delivery (T19), it is
+  # exercised from a `generated` version with the PDF already stored.
+  def apply_callback(store_pdf: true)
+    if store_pdf
+      version.document.attach(io: StringIO.new('%PDF-1.4 proposta'), filename: "#{version.proposal_number}.pdf",
+                              content_type: 'application/pdf')
     end
+    version.update!(status: :generated, value: 12_500, currency: 'BRL', artifact_url: artifact_url, valid_until: '2026-11-04T00:00:00Z',
+                    generate_callback_applied_at: Time.current)
+    ScanSolo::ProposalDeliveryJob.perform_now(version.id)
     version.reload
   end
 
-  it 'stores the PDF and sends one proposal template with the stored document in the header (RF-29)' do
+  it 'sends one proposal template with the stored document in the header (RF-29)' do
     apply_callback
 
     expect(version.document).to be_attached
@@ -69,10 +67,10 @@ RSpec.describe ScanSolo::Proposal::DeliveryService do
     expect(version).to have_attributes(status: 'generated', approved_at: nil)
   end
 
-  it 'downloads and creates the message outside any open transaction (RNF-01)' do
+  it 'creates the message outside any open transaction (RNF-01)' do
     apply_callback
 
-    expect(transaction_open_at).to eq([[:download, false], [:message, false]])
+    expect(transaction_open_at).to eq([[:message, false]])
   end
 
   it 'keeps the stage and enrollments untouched while the version is only generated (RF-33)' do
@@ -90,25 +88,14 @@ RSpec.describe ScanSolo::Proposal::DeliveryService do
     expect(proposal_messages.count).to eq(1)
   end
 
-  context 'when the download fails (RF-32)' do
-    [
-      { status: 500, body: 'error', headers: { 'Content-Type' => 'text/plain' } },
-      { status: 200, body: '<html></html>', headers: { 'Content-Type' => 'text/html' } }
-    ].each do |reply|
-      it "fails the version as artifact_download_failed on HTTP #{reply[:status]} #{reply.dig(:headers, 'Content-Type')}" do
-        stub_request(:get, artifact_url).to_return(reply)
+  it 'fails the version as artifact_download_failed when the PDF was never stored (RF-01)' do
+    apply_callback(store_pdf: false)
 
-        apply_callback
-
-        expect(version).to have_attributes(status: 'failed', failure_reason: 'artifact_download_failed', value: 12_500,
-                                           artifact_url: artifact_url)
-        expect(version.document).not_to be_attached
-        expect(proposal_messages.count).to eq(0)
-        expect(ScanSolo::AuditEvent.where(event_type: 'proposal.delivery_failed', subject: opportunity).sole.payload)
-          .to include('reason' => 'artifact_download_failed')
-        expect(opportunity.reload).to be_qualificado
-      end
-    end
+    expect(version).to have_attributes(status: 'failed', failure_reason: 'artifact_download_failed', value: 12_500, artifact_url: artifact_url)
+    expect(proposal_messages.count).to eq(0)
+    expect(ScanSolo::AuditEvent.where(event_type: 'proposal.delivery_failed', subject: opportunity).sole.payload)
+      .to include('reason' => 'artifact_download_failed')
+    expect(opportunity.reload).to be_qualificado
   end
 
   context 'with an unavailable WhatsApp proposal template (RF-32)' do

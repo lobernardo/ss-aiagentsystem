@@ -39,7 +39,7 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       post path, params: { correlation_id: SecureRandom.uuid }, headers: agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:success)
-      expect(response.parsed_body['status']).to eq('generated')
+      expect(response.parsed_body['status']).to eq('awaiting_approval')
       expect(response.parsed_body['is_current']).to be true
       expect(ScanSolo::ProposalVersion.sole.quote_request).to eq(quote_request)
     end
@@ -242,7 +242,7 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       post "#{path}/retry", params: { proposal_version_id: version.id, confirm_reprocess: false },
                             headers: admin.create_new_auth_token, as: :json
       expect(response).to have_http_status(:success)
-      expect(version.reload).to be_generated
+      expect(version.reload).to be_awaiting_approval
     end
 
     it 'rejects a retry without a boolean confirm_reprocess (CT-04 boundary)' do

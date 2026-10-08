@@ -64,10 +64,11 @@ RSpec.describe 'ScanSolo attachment upload path reuse audit' do
       memo[file] = count if count.positive?
     end
 
-    # scansolo-operacao-centralizada RF-29 (RNF-11): the proposal delivery
-    # attaches the downloaded PDF through ActiveStorage.
+    # scansolo-proposta-aprovacao-email RF-01: the approval request attaches
+    # the downloaded PDF through ActiveStorage.
     expect(attach_call_sites.keys.map { |file| relative_to_root(file) })
-      .to contain_exactly('app/services/scan_solo/knowledge/source_write_service.rb', 'app/services/scan_solo/proposal/delivery_service.rb')
+      .to contain_exactly('app/services/scan_solo/knowledge/source_write_service.rb',
+                          'app/services/scan_solo/proposal/approval_request_service.rb')
   end
 end
 # rubocop:enable RSpec/DescribeClass

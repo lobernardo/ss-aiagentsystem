@@ -37,7 +37,7 @@ RSpec.describe ScanSolo::Make::CallbackApplicationService do
 
     expect(ScanSolo::MakeCallback.applied.where(correlation_id: correlation_id).count).to eq(1)
     expect(make_request.reload).to be_completed
-    expect(version.reload).to have_attributes(status: 'generated', value: BigDecimal(2500), artifact_url: 'https://make.example/p.pdf')
+    expect(version.reload).to have_attributes(status: 'awaiting_approval', value: BigDecimal(2500), artifact_url: 'https://make.example/p.pdf')
   end
 
   it 'returns :duplicate and changes nothing when the correlation id was already applied' do
@@ -53,7 +53,7 @@ RSpec.describe ScanSolo::Make::CallbackApplicationService do
     expect(ScanSolo::MakeCallback.find_by(correlation_id: correlation_id)).to have_attributes(applied: false, rejection_reason: 'schema_invalid')
 
     expect(described_class.call(result: valid_result)).to eq(:applied)
-    expect(version.reload).to be_generated
+    expect(version.reload).to be_awaiting_approval
   end
 
   it 'rolls back the callback row when applying to the version fails' do
@@ -73,5 +73,39 @@ RSpec.describe ScanSolo::Make::CallbackApplicationService do
 
     expect(version.reload).to have_attributes(status: 'failed', failure_reason: 'invalid_price_table')
     expect(make_request.reload).to be_failed
+  end
+
+  it 'audits every rejection with the reason (RF-20)' do
+    described_class.call(result: rejected_result('unmatched_request'))
+
+    expect(ScanSolo::AuditEvent.where(event_type: 'make.callback_rejected').sole)
+      .to have_attributes(subject: ScanSolo::MakeCallback.sole, payload: include('rejection_reason' => 'unmatched_request'))
+  end
+
+  context 'with a quote request for the version (RF-19)' do
+    let(:quote_request) do
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied,
+                                     commercial: { 'total_value' => '2500.00' })
+    end
+    let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id, quote_request: quote_request) }
+
+    it 'rejects a total_value off by one cent without touching the version or the request' do
+      body = payload.merge('result' => payload['result'].merge('total_value' => 2500.01))
+
+      expect(described_class.call(result: valid_result(body))).to eq(:rejected)
+
+      expect(version.reload).to have_attributes(status: 'generating', value: nil)
+      expect(make_request.reload).to be_sent
+      expect(ScanSolo::AuditEvent.where(event_type: 'make.callback_rejected').sole)
+        .to have_attributes(correlation_id: quote_request.correlation_id, payload: include('rejection_reason' => 'total_value_mismatch'))
+    end
+
+    it 'passes artifact_sha256 and template_version on to the callback handler (RF-25)' do
+      body = payload.merge('result' => payload['result'].merge('artifact_sha256' => 'c' * 64, 'template_version' => 'v3'))
+
+      expect(described_class.call(result: valid_result(body))).to eq(:applied)
+
+      expect(version.reload).to have_attributes(status: 'awaiting_approval', artifact_sha256: 'c' * 64)
+    end
   end
 end

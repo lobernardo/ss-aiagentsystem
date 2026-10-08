@@ -91,6 +91,7 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
       expect(callback.correlation_id).to be_nil
       expect(callback.applied).to be false
       expect(callback.rejection_reason).to eq('malformed_json')
+      expect(ScanSolo::AuditEvent.where(event_type: 'make.callback_rejected', subject: callback).count).to eq(1)
     end
 
     it 'rejects a callback missing required fields, recording it as an error without mutating proposal/pipeline state' do
@@ -105,6 +106,7 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
       expect(callback.applied).to be false
       expect(callback.rejection_reason).to eq('schema_invalid')
       expect(make_request.reload.status).to eq('sent')
+      expect(ScanSolo::AuditEvent.where(event_type: 'make.callback_rejected').sole.payload).to include('rejection_reason' => 'schema_invalid')
     end
   end
 
@@ -152,14 +154,17 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(version.reload).to have_attributes(
-        status: 'generated', value: BigDecimal('4321.5'), currency: 'BRL', artifact_url: 'https://make.example/proposals/7.pdf'
+        status: 'awaiting_approval', value: BigDecimal('4321.5'), currency: 'BRL', artifact_url: 'https://make.example/proposals/7.pdf'
       )
     end
 
-    it 'RF-26/RF-29/RF-33: persists valid_until, schedules the delivery and leaves the stage untouched' do
+    # RF-01 replaces OC/RF-29: the callback schedules the approval request, never the delivery.
+    it 'RF-01/RF-26/RF-33: persists valid_until, schedules the approval request and leaves the stage untouched' do
       make_request
 
-      expect { post_callback(success_payload.to_json) }.to have_enqueued_job(ScanSolo::ProposalDeliveryJob).with(version.id)
+      expect { post_callback(success_payload.to_json) }.to have_enqueued_job(ScanSolo::ProposalApprovalRequestJob).with(version.id)
+
+      expect(ScanSolo::ProposalDeliveryJob).not_to have_been_enqueued
 
       expect(version.reload.valid_until).to eq(Time.zone.parse('2026-11-04T00:00:00Z'))
       expect(opportunity.reload).to be_qualificado
@@ -167,10 +172,10 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
       expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generated', subject: opportunity).count).to eq(1)
     end
 
-    it 'RF-26: schedules no delivery for a rejected callback' do
+    it 'RF-26: schedules no approval request for a rejected callback' do
       make_request
 
-      expect { post_callback(success_payload.to_json, signature: 'bad') }.not_to have_enqueued_job(ScanSolo::ProposalDeliveryJob)
+      expect { post_callback(success_payload.to_json, signature: 'bad') }.not_to have_enqueued_job(ScanSolo::ProposalApprovalRequestJob)
 
       expect(version.reload).to be_generating
     end
@@ -198,6 +203,66 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
     end
   end
 
+  describe 'RF-19: total_value checked against the quote request (CT-08)' do
+    let(:quote_request) do
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied,
+                                     commercial: { 'total_value' => '12500.00' })
+    end
+    let(:version) { proposal.versions.create!(generate_correlation_id: correlation_id, quote_request: quote_request) }
+    let(:rejections) { ScanSolo::AuditEvent.where(event_type: 'make.callback_rejected') }
+
+    before { make_request }
+
+    def callback_with(**result)
+      success_payload.merge(result: success_payload[:result].merge(result)).to_json
+    end
+
+    it 'rejects a divergent total_value with 422 and writes nothing to the version' do
+      post_callback(callback_with(total_value: 12_000.00))
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(version.reload).to have_attributes(status: 'generating', value: nil, artifact_url: nil)
+      expect(make_request.reload).to be_sent
+      expect(ScanSolo::MakeCallback.sole).to have_attributes(applied: false, rejection_reason: 'total_value_mismatch')
+      expect(rejections.sole).to have_attributes(correlation_id: quote_request.correlation_id, subject: ScanSolo::MakeCallback.sole)
+      expect(rejections.sole.payload).to include('rejection_reason' => 'total_value_mismatch', 'expected_total_value' => '12500.00',
+                                                 'total_value' => 12_000.0)
+    end
+
+    it 'applies an equal total_value in another notation' do
+      post_callback(callback_with(total_value: 12_500.0))
+
+      expect(response).to have_http_status(:ok)
+      expect(version.reload).to have_attributes(status: 'awaiting_approval', value: BigDecimal(12_500))
+      expect(rejections.count).to eq(0)
+    end
+
+    it 'accepts and stores the optional artifact_sha256 and template_version (RF-25)' do
+      post_callback(callback_with(total_value: 12_500, artifact_sha256: 'ab' * 32, template_version: 'proposta-v3'))
+
+      expect(response).to have_http_status(:ok)
+      expect(version.reload).to have_attributes(status: 'awaiting_approval', artifact_sha256: 'ab' * 32)
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generated').sole.payload).to include('template_version' => 'proposta-v3')
+    end
+
+    it 'rejects a malformed artifact_sha256 as schema_invalid and audits it (RF-20)' do
+      post_callback(callback_with(total_value: 12_500, artifact_sha256: 'not-a-sha'))
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(version.reload).to be_generating
+      expect(rejections.sole).to have_attributes(correlation_id: quote_request.correlation_id)
+      expect(rejections.sole.payload).to include('rejection_reason' => 'schema_invalid')
+    end
+
+    it 'writes no audit nor callback for an invalid signature (RF-20)' do
+      post_callback(callback_with(total_value: 12_000), signature: 'bad')
+
+      expect(response).to have_http_status(:unauthorized)
+      expect(ScanSolo::AuditEvent.count).to eq(0)
+      expect(ScanSolo::MakeCallback.count).to eq(0)
+    end
+  end
+
   describe 'RF-39: a rejected callback does not block a later valid one' do
     it 'applies a valid callback after a schema-invalid one with the same correlation id' do
       make_request
@@ -209,7 +274,7 @@ RSpec.describe 'ScanSolo Make callback webhook (CT-06)', type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(ScanSolo::MakeCallback.where(correlation_id: correlation_id).pluck(:applied)).to contain_exactly(false, true)
-      expect(version.reload).to be_generated
+      expect(version.reload).to be_awaiting_approval
     end
   end
 

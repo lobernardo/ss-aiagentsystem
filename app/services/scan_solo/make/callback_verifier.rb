@@ -8,6 +8,8 @@
 # (RF-87). Returns a Result the controller uses to decide what to persist
 # and whether to apply anything -- this service never itself persists or
 # mutates state, keeping the trust decision and its side effects separate.
+# CT-08 / RF-25: a generate success may carry the optional `artifact_sha256`
+# (64 lowercase hex) and `template_version`.
 class ScanSolo::Make::CallbackVerifier
   SCHEMA = {
     'type' => 'object',
@@ -28,7 +30,9 @@ class ScanSolo::Make::CallbackVerifier
               'artifact_url' => { 'type' => 'string' },
               'total_value' => { 'type' => 'number' },
               'currency' => { 'type' => 'string', 'minLength' => 3, 'maxLength' => 3 },
-              'valid_until' => { 'type' => 'string' }
+              'valid_until' => { 'type' => 'string' },
+              'artifact_sha256' => { 'type' => 'string', 'pattern' => '^[0-9a-f]{64}$' },
+              'template_version' => { 'type' => 'string', 'minLength' => 1 }
             }
           },
           {

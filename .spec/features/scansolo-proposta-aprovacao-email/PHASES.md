@@ -373,7 +373,7 @@ Antes de implementar, leia:
 1. `.spec/features/scansolo-proposta-aprovacao-email/SPEC.md` — requisitos RIGID que esta fase cobre
 2. `.spec/features/scansolo-proposta-aprovacao-email/PLAN.md` — decomposição completa, dependências e riscos
 
-- [ ] T38 — GATE HUMANO HG-D ampliado: backup de 8 cenários e estrutura de 2 data stores (RF-27)
+- [x] T38 — GATE HUMANO HG-D ampliado: backup de 8 cenários e estrutura de 2 data stores (RF-27)
       Arquivos: `.spec/features/scansolo-operacao-centralizada/make/backups/<scenarioId>-<AAAAMMDD>.json` (8 novos), `.spec/features/scansolo-operacao-centralizada/make/backups/datastore-<id>-structure-<AAAAMMDD>.json` (2 novos), `.spec/features/scansolo-operacao-centralizada/make/REGISTRO.md`
       Mudança: tarefa humana, sem alterar cenário. Exportar (team 701134, pasta `scanSolo` 247121) os blueprints de 6406463, 6177829, 6019491, 6036802, 6177833, 5497443, 5325058 e 5237984; exportar só a estrutura de `ScanSOLO_Config` (158313) e `ScanSOLO_Proposta_Map` (158314); grep de segredos; registrar a aprovação explícita do desenvolvedor para T39/T40.
       Cobre: RF-27, HG-D, RNF-07, RNF-09

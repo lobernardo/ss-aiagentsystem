@@ -5,7 +5,7 @@ Regra: só registrar fatos verificados, com data. Segredos nunca entram aqui (no
 
 ## T38 — HG-D ampliado: backup de 8 cenários e estrutura de 2 data stores (RF-27)
 
-Status: **backup concluído** (2026-10-08) — 10 arquivos válidos, conferidos e com scan de segredos limpo. Falta só a aprovação do desenvolvedor para T39/T40.
+Status: **backup concluído** (2026-10-08) — 10 arquivos válidos, conferidos e com scan de segredos limpo. Aprovação para T39/T40 registrada.
 
 ### Inventário confirmado (leitura via Make MCP, 2026-10-08)
 
@@ -65,4 +65,6 @@ Comando do T38 nos 10 arquivos: `grep -lE "Bearer [A-Za-z0-9]|\"secret\"\s*:\s*\
 
 ### Aprovação do desenvolvedor para T39/T40
 
-Pendente — registrar aqui, com data, depois dos 10 arquivos e do scan limpo.
+2026-10-08 — **aprovado** pelo desenvolvedor (Leonardo), depois dos 10 arquivos conferidos e do scan limpo (commit `5f4bcd6559`).
+Libera T39 (desativar, sem apagar, 6177829, 6036802, 6019491, 5497443 e 6177833) e T40 (adaptar a `Entrada` 6406463, mantida inativa).
+Não libera a ativação da `Entrada` nem o deploy: os dois continuam presos à ordem do T41 (deploy → HG-03 → ativação).

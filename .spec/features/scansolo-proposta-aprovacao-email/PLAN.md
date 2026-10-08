@@ -450,13 +450,13 @@ T01/T02/T03 alteram `HandoffControlBanner.vue` e `ConversationHeader.vue`. T04/T
 ### T34 — Gates de qualidade e regressão
 - **Files**: nenhum arquivo novo; só corrige quebras residuais nos arquivos já alterados.
 - **Change**: rodar e corrigir:
-  - `bundle exec rubocop --force-exclusion` nos `.rb` alterados; `pnpm eslint` nos `.js/.vue` alterados (`.vue` explícitos); `pnpm test` nos specs tocados; `./scripts/ralph-test.sh`.
+  - `bundle exec rubocop --force-exclusion` nos `.rb` alterados, no stack do `ralph-test.sh` (`docker compose -f docker-compose.yaml -f local/docker-compose.override.yml exec -T rails ...`), sem depender de `scansolo-phase2-test`; `<base>` = `939175833b`; `pnpm eslint` nos `.js/.vue` alterados (`.vue` explícitos); `pnpm test` nos specs tocados; `./scripts/ralph-test.sh`.
   - RNF-05/RF-10: `git diff <base> --stat -- app/services/scan_solo/ai_turn/ app/services/scan_solo/actions/ app/services/whatsapp/ app/models/channel/whatsapp.rb db/seeds` vazio; `grep -n "scan_solo_ai_agent_configs" db/migrate/20261007*` vazio.
   - RNF-07: `grep -nE "remove_column|rename_column|drop_table|change_column" db/migrate/20261007*` vazio (o único `remove_index` é o de 100002).
   - RNF-03: `git diff <base> -- config/schedule.yml` vazio.
   - RNF-09: `grep -rnE "Bearer|secret|api_access_token|hook\.make" app/services/scan_solo/proposal app/services/scan_solo/quote config/locales/en.yml` só nomes, sem literais.
   - RNF-10: `git diff <base> -- spec app/javascript tests/playwright | grep -E '^\+\s*(skip|pending|xit|xdescribe|xcontext)\b|\b(it|describe|test)\.(skip|todo)\('` vazio; cada spec existente alterado citado em alguma task.
-  - RF-21: `grep -rn "request_send\|'proposal.send'" app/services app/controllers` só em `make_provider.rb`, `callback_handler.rb`, `callback_verifier.rb`, `callback_application_service.rb` (histórico).
+  - RF-21: `grep -rn "request_send\|'proposal.send'" app/services app/controllers --exclude-dir=actions` sem nenhuma ocorrência fora de `make_provider.rb`, `callback_handler.rb`, `callback_verifier.rb`, `callback_application_service.rb` (histórico; nenhum deles precisa aparecer). `actions/proposal_actions.rb` e `actions/registry.rb` são exceções históricas congeladas pelo RNF-05 (ação de IA `proposal_send`, `requires_confirmation`, que só devolve um hash); a proteção real é `grep -rnE "request_send|MakeProvider|OutboundRequestService|Net::HTTP|Faraday|HTTParty" app/services/scan_solo/actions` vazio.
   - Enterprise: `grep -rnE "enterprise/|Captain::"` nos arquivos alterados vazio.
 - **Covers**: RNF-03, RNF-04, RNF-05, RNF-07, RNF-08, RNF-09, RNF-10, RF-10, RF-21
 - **Tests**: rubocop 0 offenses; eslint 0 erros; `./scripts/ralph-test.sh` exit 0.

@@ -1,7 +1,7 @@
 # RF-83: usable without any real proposal API/Make production credential --
-# the sole provider ScanSolo::Proposal::GenerateService/SendService talk to
-# in this phase (a real Make-backed provider is a separate future injection
-# point behind the same two class methods, mirroring
+# the provider ScanSolo::Proposal::GenerateService talks to outside
+# production (ScanSolo::Proposal::MakeProvider is the real injection point
+# behind the same class method, mirroring
 # ScanSolo::AiTurn::ModelInvoker's `llm_provider` seam). Every call here is
 # synchronous pure Ruby -- no HTTP client -- so the full T59-T63 proposal
 # suite passes with zero outbound request and zero production credential.
@@ -25,20 +25,6 @@ class ScanSolo::Proposal::MockProvider
       value: value,
       currency: currency,
       artifact_url: artifact_url || "https://mock-proposals.scansolo.test/#{proposal_version.id}.pdf",
-      failure_reason: failure_reason
-    )
-  end
-
-  # rubocop:disable Metrics/ParameterLists
-  def self.request_send(proposal_version:, correlation_id:, conversation:, actor: nil, outcome: :success,
-                        failure_reason: 'mock_send_failed', **)
-    # rubocop:enable Metrics/ParameterLists
-    ScanSolo::Proposal::CallbackHandler.apply_send_result!(
-      proposal_version: proposal_version,
-      correlation_id: correlation_id,
-      success: outcome == :success,
-      conversation: conversation,
-      actor: actor,
       failure_reason: failure_reason
     )
   end

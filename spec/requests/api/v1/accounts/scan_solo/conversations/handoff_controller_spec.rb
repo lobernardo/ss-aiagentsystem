@@ -25,7 +25,7 @@ RSpec.describe 'ScanSolo Conversation Handoff API', type: :request do
   describe 'POST .../handoff (takeover)' do
     it 'applies takeover for the assigned agent, creating the private note and setting human_active' do
       post "#{base_path}/handoff", params: { reason: 'Cliente pediu para falar com humano' },
-                                    headers: assigned_agent.create_new_auth_token, as: :json
+                                   headers: assigned_agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:success)
       expect(response.parsed_body['ai_control_state']).to eq('human_active')
@@ -34,7 +34,7 @@ RSpec.describe 'ScanSolo Conversation Handoff API', type: :request do
 
     it 'applies takeover for an account administrator' do
       post "#{base_path}/handoff", params: { reason: 'Assumindo conversa' },
-                                    headers: administrator.create_new_auth_token, as: :json
+                                   headers: administrator.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:success)
       expect(response.parsed_body['ai_control_state']).to eq('human_active')
@@ -42,7 +42,7 @@ RSpec.describe 'ScanSolo Conversation Handoff API', type: :request do
 
     it 'rejects takeover from a user who is neither the assigned agent nor an administrator' do
       post "#{base_path}/handoff", params: { reason: 'Tentando assumir' },
-                                    headers: other_agent.create_new_auth_token, as: :json
+                                   headers: other_agent.create_new_auth_token, as: :json
 
       expect(response).to have_http_status(:forbidden)
       expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_ai_active
@@ -57,7 +57,7 @@ RSpec.describe 'ScanSolo Conversation Handoff API', type: :request do
       expect do
         post "#{base_path}/handoff", params: { reason: 'segunda vez' }, headers: headers, as: :json
       end.to not_change(ScanSolo::AuditEvent, :count)
-         .and not_change { conversation.messages.where(private: true).count }
+         .and(not_change { conversation.messages.where(private: true).count })
 
       expect(response).to have_http_status(:success)
       expect(response.parsed_body['ai_control_state']).to eq('human_active')

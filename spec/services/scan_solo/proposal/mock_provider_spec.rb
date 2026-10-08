@@ -10,7 +10,6 @@ RSpec.describe ScanSolo::Proposal::MockProvider do
     ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
   end
   let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
-  let(:agent) { create(:user, account: account) }
 
   describe '.request_generation' do
     it 'applies a successful generate result with no real HTTP call and no production credential' do
@@ -30,21 +29,6 @@ RSpec.describe ScanSolo::Proposal::MockProvider do
 
       expect(version.reload).to be_failed
       expect(version.value).to be_nil
-    end
-  end
-
-  describe '.request_send' do
-    it 'applies a successful send result through the native template sender with no real transport' do
-      version = proposal.versions.create!(status: :generated, value: 1000, currency: 'BRL', send_correlation_id: SecureRandom.uuid)
-
-      perform_enqueued_jobs(only: EventDispatcherJob) do
-        described_class.request_send(
-          proposal_version: version, correlation_id: version.send_correlation_id, conversation: conversation, actor: agent
-        )
-      end
-
-      expect(version.reload).to be_sent
-      expect(version.sent_message).to be_persisted
     end
   end
 

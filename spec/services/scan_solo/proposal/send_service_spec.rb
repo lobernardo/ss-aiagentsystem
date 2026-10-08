@@ -21,7 +21,6 @@ RSpec.describe ScanSolo::Proposal::SendService do
     ScanSolo::AiAgentConfig.draft_for!(account).update!(name: 'Agente', enabled: true, allowed_inbox_ids: [customer_inbox.id],
                                                         quote_inbox_id: email_inbox.id)
     ScanSolo::AiAgent::PublishService.new(account: account).call
-    allow(ScanSolo::Proposal::MockProvider).to receive(:request_send)
   end
 
   def create_version(status)
@@ -68,7 +67,6 @@ RSpec.describe ScanSolo::Proposal::SendService do
     expect { call(version) }.to change(proposal_emails, :count).by(1).and not_change(ScanSolo::MakeRequest, :count)
 
     expect(version.reload).to have_attributes(status: 'approved', sent_message: proposal_emails.sole, send_correlation_id: nil)
-    expect(ScanSolo::Proposal::MockProvider).not_to have_received(:request_send)
   end
 
   it 'sends 0 new e-mails for an approved version already delivered (RF-12)' do

@@ -240,4 +240,28 @@ describe('TemplatesPanel', () => {
     ).toBe('Acompanhamento da proposta');
     expect(wrapper.text()).not.toContain('lead_manual_inicial ·');
   });
+  it('labels the proposta_aviso_email slot row with its slot label (CT-07)', async () => {
+    ScanSoloCadenceTemplatesAPI.get.mockResolvedValue({
+      data: [
+        availableRow,
+        {
+          ...pausedRow,
+          stage: 'proposta_aviso_email',
+          template_name: 'scansolo_proposta_aviso_email',
+          availability: 'available',
+          block_reason: null,
+          meta_status: 'APPROVED',
+        },
+      ],
+    });
+    const wrapper = mountPanel();
+    await flushPromises();
+
+    expect(
+      row(wrapper, 'proposta_aviso_email:proposal')
+        .find('[data-testid="template-title"]')
+        .text()
+    ).toBe('Aviso de proposta enviada por e-mail');
+    expect(wrapper.text()).not.toContain('proposta_aviso_email ·');
+  });
 });

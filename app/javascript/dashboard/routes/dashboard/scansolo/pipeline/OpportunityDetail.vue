@@ -11,10 +11,12 @@ import { useAlert } from 'dashboard/composables';
 import { useStore, useMapGetter } from 'dashboard/composables/store.js';
 import Button from 'dashboard/components-next/button/Button.vue';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
+import { useScansoloPipelineOpportunitiesStore } from 'dashboard/store/scansolo/pipelineOpportunities';
 import { useScanSoloRole } from '../composables/useScanSoloRole';
 import {
   FIELD_STATUS_LABELS,
   INITIAL_TEMPLATE_FAILURE_STATUS_LABELS,
+  LEAD_EMAIL_ERROR_LABELS,
   LEAD_SOURCE_LABELS,
   PROPOSAL_STATUS_LABELS,
   QUOTE_REQUEST_RESEND_ERROR_LABELS,
@@ -25,7 +27,12 @@ import {
 } from '../scansoloLabels';
 
 // UI-04: value and validity only mean something once the PDF exists.
-const PROPOSAL_STATUSES_WITH_TERMS = ['generated', 'sent'];
+const PROPOSAL_STATUSES_WITH_TERMS = [
+  'generated',
+  'awaiting_approval',
+  'approved',
+  'sent',
+];
 const FIELD_STATUSES = Object.keys(FIELD_STATUS_LABELS);
 
 const { t } = useI18n();
@@ -34,11 +41,17 @@ const router = useRouter();
 const vuexStore = useStore();
 const agents = useMapGetter('agents/getAgents');
 const { isAdministrator } = useScanSoloRole();
+const opportunitiesStore = useScansoloPipelineOpportunitiesStore();
 
 const opportunity = ref(null);
 const loading = ref(false);
 const loadError = ref(false);
 const resendingQuoteRequest = ref(false);
+// UI-02 / CT-09: inline edit of the lead e-mail.
+const editingLeadEmail = ref(false);
+const leadEmailDraft = ref('');
+const leadEmailError = ref('');
+const savingLeadEmail = ref(false);
 
 // UI-02: contact and conversation come straight off the opportunity payload
 // (T13's serializer now embeds contact_name/stage_history for this view);
@@ -163,6 +176,37 @@ const resendQuoteRequest = async () => {
   }
 };
 
+const startEditingLeadEmail = () => {
+  leadEmailDraft.value = opportunity.value.leadEmail || '';
+  leadEmailError.value = '';
+  editingLeadEmail.value = true;
+};
+
+const cancelEditingLeadEmail = () => {
+  editingLeadEmail.value = false;
+  leadEmailError.value = '';
+};
+
+const saveLeadEmail = async () => {
+  savingLeadEmail.value = true;
+  leadEmailError.value = '';
+  try {
+    const updated = await opportunitiesStore.updateLeadEmail(
+      opportunity.value.id,
+      leadEmailDraft.value.trim()
+    );
+    opportunity.value.leadEmail = updated.leadEmail;
+    editingLeadEmail.value = false;
+    useAlert(t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.SUCCESS'));
+  } catch (error) {
+    leadEmailError.value =
+      enumLabel(t, LEAD_EMAIL_ERROR_LABELS, error?.response?.data?.error) ||
+      t('SCANSOLO.COMMON.ACTION_ERROR');
+  } finally {
+    savingLeadEmail.value = false;
+  }
+};
+
 const technicalItems = computed(() => [
   { label: t('SCANSOLO.TECHNICAL_DETAILS.ID'), value: opportunity.value.id },
   {
@@ -188,7 +232,12 @@ onMounted(() => {
   fetchOpportunity();
 });
 
-defineExpose({ fetchOpportunity, goToConversation, resendQuoteRequest });
+defineExpose({
+  fetchOpportunity,
+  goToConversation,
+  resendQuoteRequest,
+  saveLeadEmail,
+});
 </script>
 
 <template>
@@ -239,6 +288,82 @@ defineExpose({ fetchOpportunity, goToConversation, resendQuoteRequest });
               class="text-sm font-medium text-n-blue-11"
             >
               {{ commercialStatusLabel }}
+            </p>
+          </section>
+
+          <section data-testid="opportunity-lead-email" class="mb-4">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-n-slate-11 text-sm font-medium">
+                {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.TITLE') }}
+              </h3>
+              <Button
+                v-if="!editingLeadEmail"
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="lead-email-edit-button"
+                :label="t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.EDIT')"
+                @click="startEditingLeadEmail"
+              />
+            </div>
+            <form
+              v-if="editingLeadEmail"
+              data-testid="lead-email-form"
+              class="flex flex-col gap-2"
+              @submit.prevent="saveLeadEmail"
+            >
+              <label class="block text-sm text-n-slate-11">
+                {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.LABEL') }}
+                <input
+                  v-model="leadEmailDraft"
+                  type="email"
+                  data-testid="lead-email-input"
+                  :placeholder="
+                    t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.PLACEHOLDER')
+                  "
+                  class="mt-1 w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
+                />
+              </label>
+              <p
+                v-if="leadEmailError"
+                data-testid="lead-email-error"
+                class="text-xs text-n-ruby-11"
+              >
+                {{ leadEmailError }}
+              </p>
+              <div class="flex items-center gap-2">
+                <Button
+                  type="submit"
+                  size="sm"
+                  data-testid="lead-email-save-button"
+                  :is-loading="savingLeadEmail"
+                  :disabled="savingLeadEmail || !leadEmailDraft.trim()"
+                  :label="t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.SAVE')"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="faded"
+                  color="slate"
+                  data-testid="lead-email-cancel-button"
+                  :label="t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.CANCEL')"
+                  @click="cancelEditingLeadEmail"
+                />
+              </div>
+            </form>
+            <p
+              v-else-if="opportunity.leadEmail"
+              data-testid="lead-email-value"
+              class="text-sm text-n-slate-12"
+            >
+              {{ opportunity.leadEmail }}
+            </p>
+            <p
+              v-if="!opportunity.leadEmail"
+              data-testid="lead-email-missing-notice"
+              class="mt-1 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3 py-2 text-sm text-n-amber-11"
+            >
+              {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.LEAD_EMAIL.MISSING') }}
             </p>
           </section>
 
@@ -411,6 +536,20 @@ defineExpose({ fetchOpportunity, goToConversation, resendQuoteRequest });
                     opportunity.proposal.status
                   )
                 }}
+              </p>
+              <p
+                v-if="
+                  opportunity.proposal.status === 'rejected' &&
+                  opportunity.proposal.rejectionReason
+                "
+                data-testid="proposal-rejection-reason"
+              >
+                {{
+                  t(
+                    'SCANSOLO.PIPELINE_BOARD.DETAIL.PROPOSAL.REJECTION_REASON_LABEL'
+                  )
+                }}:
+                {{ opportunity.proposal.rejectionReason }}
               </p>
               <template v-if="showProposalTerms">
                 <p

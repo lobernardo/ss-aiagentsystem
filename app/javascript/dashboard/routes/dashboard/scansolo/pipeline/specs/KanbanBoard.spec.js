@@ -288,6 +288,28 @@ describe('KanbanBoard', () => {
       );
     });
 
+    it('labels a proposal awaiting approval "Aguardando aprovação" (UI-03)', async () => {
+      const card = await mountWith({
+        quote_request_status: 'replied',
+        proposal_status: 'awaiting_approval',
+      });
+
+      expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
+        'Aguardando aprovação'
+      );
+    });
+
+    it('labels a rejected proposal "Proposta rejeitada" (UI-03)', async () => {
+      const card = await mountWith({
+        quote_request_status: 'awaiting_reply',
+        proposal_status: 'rejected',
+      });
+
+      expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
+        'Proposta rejeitada'
+      );
+    });
+
     it('counts whole days without interaction: 49 hours → 2 days', async () => {
       const card = await mountWith({
         last_customer_interaction_at: hoursAgo(49),

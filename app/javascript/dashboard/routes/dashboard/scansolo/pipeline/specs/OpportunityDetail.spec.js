@@ -1,4 +1,5 @@
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import { createStore } from 'vuex';
 import { withFullI18n } from 'test-i18n';
 import { useAlert } from 'dashboard/composables';
@@ -9,6 +10,7 @@ vi.mock('dashboard/api/scansoloPipelineOpportunities', () => ({
   default: {
     show: vi.fn(),
     resendQuoteRequest: vi.fn(),
+    updateLeadEmail: vi.fn(),
   },
 }));
 
@@ -75,6 +77,7 @@ const mountDetail = ({ role = 'administrator' } = {}) =>
 
 describe('OpportunityDetail', () => {
   beforeEach(() => {
+    setActivePinia(createPinia());
     vi.clearAllMocks();
     ScanSoloPipelineOpportunitiesAPI.show.mockResolvedValue({
       data: seededOpportunity,
@@ -436,6 +439,142 @@ describe('OpportunityDetail', () => {
       });
 
       expect(wrapper.text()).not.toContain('SCANSOLO.');
+    });
+  });
+  describe('UI-02: lead e-mail and proposal status', () => {
+    const mountWith = async overrides => {
+      ScanSoloPipelineOpportunitiesAPI.show.mockResolvedValue({
+        data: { ...seededOpportunity, ...overrides },
+      });
+      const wrapper = mountDetail();
+      await flushPromises();
+      return wrapper;
+    };
+
+    const editAndSave = async (wrapper, email) => {
+      await wrapper
+        .find('[data-testid="lead-email-edit-button"]')
+        .trigger('click');
+      await wrapper.find('[data-testid="lead-email-input"]').setValue(email);
+      await wrapper.find('[data-testid="lead-email-form"]').trigger('submit');
+      await flushPromises();
+    };
+
+    it('shows the lead e-mail without the missing notice', async () => {
+      const wrapper = await mountWith({ lead_email: 'ada@empresa.com.br' });
+
+      expect(wrapper.find('[data-testid="lead-email-value"]').text()).toBe(
+        'ada@empresa.com.br'
+      );
+      expect(
+        wrapper.find('[data-testid="lead-email-missing-notice"]').exists()
+      ).toBe(false);
+    });
+
+    it('shows the missing notice without a lead e-mail (RF-08)', async () => {
+      const wrapper = await mountWith({ lead_email: null });
+
+      expect(
+        wrapper.find('[data-testid="lead-email-missing-notice"]').text()
+      ).toContain('Falta o e-mail do lead');
+    });
+
+    it('saves the e-mail with 1 PATCH and hides the notice on success (RF-09)', async () => {
+      ScanSoloPipelineOpportunitiesAPI.updateLeadEmail.mockResolvedValue({
+        data: { ...seededOpportunity, lead_email: 'ada@empresa.com.br' },
+      });
+      const wrapper = await mountWith({ lead_email: null });
+
+      await editAndSave(wrapper, 'ada@empresa.com.br');
+
+      expect(
+        ScanSoloPipelineOpportunitiesAPI.updateLeadEmail
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        ScanSoloPipelineOpportunitiesAPI.updateLeadEmail
+      ).toHaveBeenCalledWith(7, 'ada@empresa.com.br');
+      expect(
+        wrapper.find('[data-testid="lead-email-missing-notice"]').exists()
+      ).toBe(false);
+      expect(wrapper.find('[data-testid="lead-email-value"]').text()).toBe(
+        'ada@empresa.com.br'
+      );
+      expect(useAlert).toHaveBeenCalledWith('E-mail do lead atualizado.');
+    });
+
+    it('shows the i18n message of a 422 invalid_email and keeps the form open', async () => {
+      ScanSoloPipelineOpportunitiesAPI.updateLeadEmail.mockRejectedValue({
+        response: { status: 422, data: { error: 'invalid_email' } },
+      });
+      const wrapper = await mountWith({ lead_email: null });
+
+      await editAndSave(wrapper, 'x@');
+
+      expect(wrapper.find('[data-testid="lead-email-error"]').text()).toBe(
+        'Informe um e-mail válido.'
+      );
+      expect(wrapper.find('[data-testid="lead-email-form"]').exists()).toBe(
+        true
+      );
+      expect(
+        wrapper.find('[data-testid="lead-email-missing-notice"]').exists()
+      ).toBe(true);
+    });
+
+    it('shows the i18n message of a 422 contact_conflict', async () => {
+      ScanSoloPipelineOpportunitiesAPI.updateLeadEmail.mockRejectedValue({
+        response: { status: 422, data: { error: 'contact_conflict' } },
+      });
+      const wrapper = await mountWith({ lead_email: null });
+
+      await editAndSave(wrapper, 'outro@empresa.com.br');
+
+      expect(wrapper.find('[data-testid="lead-email-error"]').text()).toBe(
+        'Este e-mail já pertence a outro contato da conta.'
+      );
+    });
+
+    it('shows "Aguardando aprovação" for an awaiting_approval proposal', async () => {
+      const wrapper = await mountWith({
+        proposal_status: 'awaiting_approval',
+        proposal: {
+          version_number: 1,
+          status: 'awaiting_approval',
+          value: '15000.0',
+          currency: 'BRL',
+          rejection_reason: null,
+        },
+      });
+
+      expect(wrapper.find('[data-testid="proposal-status"]').text()).toBe(
+        'Status da proposta: Aguardando aprovação'
+      );
+      expect(
+        wrapper.find('[data-testid="opportunity-commercial-status"]').text()
+      ).toBe('Aguardando aprovação');
+    });
+
+    it('shows "Rejeitada" with the rejection reason for a rejected proposal', async () => {
+      const wrapper = await mountWith({
+        proposal_status: 'rejected',
+        proposal: {
+          version_number: 1,
+          status: 'rejected',
+          value: '15000.0',
+          currency: 'BRL',
+          rejection_reason: 'Valor acima do combinado',
+        },
+      });
+
+      expect(wrapper.find('[data-testid="proposal-status"]').text()).toBe(
+        'Status da proposta: Rejeitada'
+      );
+      expect(
+        wrapper.find('[data-testid="proposal-rejection-reason"]').text()
+      ).toBe('Motivo da rejeição: Valor acima do combinado');
+      expect(
+        wrapper.find('[data-testid="opportunity-commercial-status"]').text()
+      ).toBe('Proposta rejeitada');
     });
   });
 });

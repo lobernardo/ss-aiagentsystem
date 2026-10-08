@@ -1,9 +1,16 @@
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
+import {
+  mount,
+  flushPromises,
+  enableAutoUnmount,
+  DOMWrapper,
+  RouterLinkStub,
+} from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { createStore } from 'vuex';
 import { withFullI18n } from 'test-i18n';
 import { useAlert } from 'dashboard/composables';
 import ScanSoloProposalsAPI from 'dashboard/api/scansoloProposals';
+import ScanSoloAiAgentConfigAPI from 'dashboard/api/scansoloAiAgentConfig';
 import Proposals from '../Proposals.vue';
 
 vi.mock('dashboard/api/scansoloProposals', () => ({
@@ -11,9 +18,14 @@ vi.mock('dashboard/api/scansoloProposals', () => ({
     get: vi.fn(),
     generate: vi.fn(),
     approve: vi.fn(),
+    reject: vi.fn(),
     send: vi.fn(),
     retry: vi.fn(),
   },
+}));
+
+vi.mock('dashboard/api/scansoloAiAgentConfig', () => ({
+  default: { get: vi.fn() },
 }));
 
 vi.mock('dashboard/composables', () => ({ useAlert: vi.fn() }));
@@ -22,6 +34,7 @@ withFullI18n();
 enableAutoUnmount(afterEach);
 
 const OWNER_ID = 5;
+const COMMERCIAL_USER_ID = 7;
 const CORRELATION_ID = '8a6b2c1d-3e4f-4a5b-9c8d-7e6f5a4b3c2d';
 
 const currentVersion = {
@@ -76,10 +89,14 @@ const mountProposals = ({ role = 'administrator', userId = 1 } = {}) =>
           getters: {
             getCurrentRole: () => role,
             getCurrentUser: () => ({ id: userId }),
+            'accounts/isRTL': () => false,
           },
         }),
       ],
-      stubs: { QuoteRepliesPending: QuoteRepliesPendingStub },
+      stubs: {
+        QuoteRepliesPending: QuoteRepliesPendingStub,
+        RouterLink: RouterLinkStub,
+      },
     },
   });
 
@@ -99,6 +116,13 @@ describe('Proposals', () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     ScanSoloProposalsAPI.get.mockResolvedValue({ data: [proposal] });
+    ScanSoloAiAgentConfigAPI.get.mockResolvedValue({
+      data: {
+        draft: { id: 1 },
+        published: { id: 2, commercial_user_id: COMMERCIAL_USER_ID },
+        available_models: [],
+      },
+    });
   });
 
   it('shows proposal versions with current/non-current status and approval state (UI-08)', async () => {
@@ -533,6 +557,280 @@ describe('Proposals', () => {
       const generated = mountProposals();
       await flushPromises();
       expect(generated.findAll('[data-testid="retry-button"]')).toHaveLength(0);
+    });
+  });
+  describe('UI-01: approve and reject an awaiting_approval version', () => {
+    const awaitingVersion = {
+      status: 'awaiting_approval',
+      document_url: 'https://chat.test/proposal.pdf',
+    };
+    const dialog = () => new DOMWrapper(document.body.querySelector('dialog'));
+    const reasonInput = () =>
+      new DOMWrapper(
+        document.body.querySelector('[data-testid="reject-reason-input"]')
+      );
+    const confirmButton = () =>
+      new DOMWrapper(
+        document.body.querySelector('dialog button[type="submit"]')
+      );
+    const actionButtons = wrapper => {
+      const row = versionRow(wrapper, currentVersion.id);
+      return {
+        approve: row.find('[data-testid="approve-button"]'),
+        reject: row.find('[data-testid="reject-button"]'),
+      };
+    };
+
+    beforeEach(() => {
+      // jsdom does not implement the native dialog lifecycle.
+      Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+        configurable: true,
+        value: function open() {
+          this.setAttribute('open', '');
+        },
+      });
+      Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+        configurable: true,
+        value: function close() {
+          if (!this.open) return;
+          this.removeAttribute('open');
+          this.dispatchEvent(new Event('close'));
+        },
+      });
+      ScanSoloProposalsAPI.get.mockResolvedValue({
+        data: [
+          {
+            ...withCurrentVersion(awaitingVersion),
+            lead_email_present: true,
+          },
+        ],
+      });
+    });
+
+    afterEach(() => {
+      delete HTMLDialogElement.prototype.showModal;
+      delete HTMLDialogElement.prototype.close;
+      document.body.innerHTML = '';
+    });
+
+    it('shows Aprovar and Rejeitar with the "Aguardando aprovação" status to an administrator', async () => {
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      const { approve, reject } = actionButtons(wrapper);
+      expect(approve.text()).toBe('Aprovar');
+      expect(approve.attributes('disabled')).toBeUndefined();
+      expect(reject.text()).toBe('Rejeitar');
+      expect(
+        versionRow(wrapper, currentVersion.id)
+          .find('[data-testid="version-status"]')
+          .text()
+      ).toBe('Aguardando aprovação');
+      expect(wrapper.findAll('[data-testid="send-button"]')).toHaveLength(0);
+    });
+
+    it('shows Aprovar and Rejeitar to the published commercial agent', async () => {
+      const wrapper = mountProposals({
+        role: 'agent',
+        userId: COMMERCIAL_USER_ID,
+      });
+      await flushPromises();
+
+      const { approve, reject } = actionButtons(wrapper);
+      expect(approve.exists()).toBe(true);
+      expect(reject.exists()).toBe(true);
+    });
+
+    it('hides Aprovar and Rejeitar from an agent that is not the commercial user', async () => {
+      const wrapper = mountProposals({ role: 'agent', userId: OWNER_ID });
+      await flushPromises();
+
+      expect(wrapper.findAll('[data-testid="approve-button"]')).toHaveLength(0);
+      expect(wrapper.findAll('[data-testid="reject-button"]')).toHaveLength(0);
+    });
+
+    it('approves with 1 POST approve and shows the new status', async () => {
+      ScanSoloProposalsAPI.approve.mockResolvedValue({
+        data: {
+          ...currentVersion,
+          ...awaitingVersion,
+          status: 'approved',
+          approved_at: '2026-10-08T00:00:00Z',
+        },
+      });
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      await actionButtons(wrapper).approve.trigger('click');
+      await flushPromises();
+
+      expect(ScanSoloProposalsAPI.approve).toHaveBeenCalledTimes(1);
+      expect(ScanSoloProposalsAPI.approve).toHaveBeenCalledWith(
+        proposal.id,
+        currentVersion.id,
+        expect.any(String)
+      );
+      expect(
+        versionRow(wrapper, currentVersion.id)
+          .find('[data-testid="version-status"]')
+          .text()
+      ).toBe('Aprovada');
+      expect(wrapper.findAll('[data-testid="approve-button"]')).toHaveLength(0);
+    });
+
+    it('rejects with a reason through the dialog with 1 POST reject', async () => {
+      ScanSoloProposalsAPI.reject.mockResolvedValue({
+        data: {
+          ...currentVersion,
+          status: 'rejected',
+          rejection_reason: 'Valor errado',
+        },
+      });
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      await actionButtons(wrapper).reject.trigger('click');
+      expect(dialog().attributes('open')).toBeDefined();
+      await reasonInput().setValue('Valor errado');
+      await confirmButton().trigger('submit');
+      await flushPromises();
+
+      expect(ScanSoloProposalsAPI.reject).toHaveBeenCalledTimes(1);
+      expect(ScanSoloProposalsAPI.reject).toHaveBeenCalledWith(
+        proposal.id,
+        currentVersion.id,
+        'Valor errado'
+      );
+      expect(dialog().attributes('open')).toBeUndefined();
+      const row = versionRow(wrapper, currentVersion.id);
+      expect(row.find('[data-testid="version-status"]').text()).toBe(
+        'Rejeitada'
+      );
+      expect(row.find('[data-testid="version-rejection-reason"]').text()).toBe(
+        'Motivo da rejeição: Valor errado'
+      );
+    });
+
+    it('keeps confirm disabled and sends 0 requests with an empty reason', async () => {
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      await actionButtons(wrapper).reject.trigger('click');
+      await reasonInput().setValue('   ');
+
+      expect(confirmButton().attributes('disabled')).toBeDefined();
+      await dialog().find('form').trigger('submit');
+      await flushPromises();
+
+      expect(ScanSoloProposalsAPI.reject).not.toHaveBeenCalled();
+    });
+
+    it('disables Aprovar with a notice and a link to the lead screen without a lead e-mail (RF-08)', async () => {
+      ScanSoloProposalsAPI.get.mockResolvedValue({
+        data: [
+          {
+            ...withCurrentVersion(awaitingVersion),
+            lead_email_present: false,
+          },
+        ],
+      });
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      expect(
+        actionButtons(wrapper).approve.attributes('disabled')
+      ).toBeDefined();
+      const notice = wrapper.find('[data-testid="lead-email-missing-notice"]');
+      expect(notice.text()).toContain('Falta o e-mail do lead');
+      expect(wrapper.findComponent(RouterLinkStub).props('to')).toEqual({
+        name: 'scansolo_pipeline_opportunity_detail',
+        params: { opportunityId: proposal.opportunity_id },
+      });
+    });
+
+    it('disables Aprovar while the PDF is not stored yet', async () => {
+      ScanSoloProposalsAPI.get.mockResolvedValue({
+        data: [
+          {
+            ...withCurrentVersion({ ...awaitingVersion, document_url: null }),
+            lead_email_present: true,
+          },
+        ],
+      });
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      expect(
+        actionButtons(wrapper).approve.attributes('disabled')
+      ).toBeDefined();
+      expect(
+        wrapper.find('[data-testid="document-pending-notice"]').exists()
+      ).toBe(true);
+    });
+
+    it('shows a 422 error by its code', async () => {
+      ScanSoloProposalsAPI.approve.mockRejectedValue({
+        response: { status: 422, data: { error: 'lead_email_missing' } },
+      });
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      await actionButtons(wrapper).approve.trigger('click');
+      await flushPromises();
+
+      expect(useAlert).toHaveBeenCalledWith(
+        'Falta o e-mail do lead. Cadastre o e-mail na tela do lead e tente novamente.'
+      );
+    });
+
+    it('offers 0 action buttons on a sent version and shows its delivery', async () => {
+      ScanSoloProposalsAPI.get.mockResolvedValue({
+        data: [
+          {
+            ...withCurrentVersion({
+              status: 'sent',
+              approved_at: '2026-10-08T00:00:00Z',
+              delivery: { email_status: 'sent', notice_status: 'pending' },
+            }),
+            lead_email_present: true,
+          },
+        ],
+      });
+      const wrapper = mountProposals();
+      await flushPromises();
+
+      const row = versionRow(wrapper, currentVersion.id);
+      expect(row.findAll('button')).toHaveLength(0);
+      expect(row.find('[data-testid="version-status"]').text()).toBe('Enviada');
+      expect(row.find('[data-testid="version-delivery"]').text()).toContain(
+        'E-mail ao lead Enviado'
+      );
+    });
+
+    it('shows a delivery failure with its reason and offers Reenviar to the commercial agent (RF-15)', async () => {
+      ScanSoloProposalsAPI.get.mockResolvedValue({
+        data: [
+          withCurrentVersion({
+            status: 'failed',
+            failure_reason: 'email_delivery_failed',
+            delivery: { email_status: 'failed', notice_status: null },
+          }),
+        ],
+      });
+      const wrapper = mountProposals({
+        role: 'agent',
+        userId: COMMERCIAL_USER_ID,
+      });
+      await flushPromises();
+
+      const row = versionRow(wrapper, currentVersion.id);
+      expect(row.find('[data-testid="version-failure-reason"]').text()).toBe(
+        'Motivo da falha: Falha no envio do e-mail ao lead'
+      );
+      expect(row.find('[data-testid="version-delivery-email"]').text()).toBe(
+        'E-mail ao lead Falhou'
+      );
+      expect(row.find('[data-testid="retry-button"]').text()).toBe('Reenviar');
     });
   });
 });

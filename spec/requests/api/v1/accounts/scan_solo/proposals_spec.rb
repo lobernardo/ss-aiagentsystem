@@ -71,6 +71,18 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
       expect(response).to have_http_status(:unprocessable_entity)
       expect(ScanSolo::ProposalVersion.count).to eq(0)
     end
+
+    it 'rejects generation while the request has an awaiting_approval version (RF-07)' do
+      quote_request = create_quote_request(:replied)
+      ScanSolo::Proposal.create!(opportunity: opportunity).versions.create!(status: :awaiting_approval, quote_request: quote_request)
+
+      expect do
+        post path, params: { correlation_id: SecureRandom.uuid }, headers: agent.create_new_auth_token, as: :json
+      end.not_to change(ScanSolo::ProposalVersion, :count)
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body.to_s).to include('sem resposta de orçamento validada')
+    end
   end
 
   describe 'POST .../proposals/:id/approve and .../send' do

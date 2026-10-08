@@ -10,11 +10,12 @@
 # artifact_url itself -- only ScanSolo::Proposal::CallbackHandler, invoked
 # from a validated provider result, ever sets those fields (RF-76). Calling
 # this alone never sends anything to the customer (RF-73).
-# RF-24 / RF-25 / RNF-02: a version is only generated from a validated
-# commercial reply -- the opportunity's `replied` quote request without a
-# version yet; anything else is rejected with no record (422 at the API). The
-# version keeps `quote_request_id` (unique index), and the check runs under
-# the request lock, so concurrent calls create one version.
+# RF-24 / RF-25 / RF-07 / RNF-02: a version is only generated from a validated
+# commercial reply -- the opportunity's `replied` quote request whose versions,
+# if any, were all rejected (RF-06); anything else is rejected with no record
+# (422 at the API). The check runs under the request lock and the partial
+# unique index keeps one non-terminal version per request, so concurrent calls
+# create one version.
 class ScanSolo::Proposal::GenerateService
   def self.call(opportunity:, quote_request:, correlation_id:, actor: nil, provider: nil)
     new(opportunity: opportunity, quote_request: quote_request, correlation_id: correlation_id, actor: actor, provider: provider).call
@@ -47,8 +48,7 @@ class ScanSolo::Proposal::GenerateService
   attr_reader :opportunity, :quote_request, :correlation_id, :actor, :provider
 
   def reject_if_no_validated_reply!
-    return if quote_request&.opportunity_id == opportunity.id && quote_request.replied? &&
-              !ScanSolo::ProposalVersion.exists?(quote_request_id: quote_request.id)
+    return if quote_request&.opportunity_id == opportunity.id && quote_request.replied? && quote_request.generation_open?
 
     reject!('sem resposta de orçamento validada')
   end

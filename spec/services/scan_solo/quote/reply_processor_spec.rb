@@ -241,6 +241,97 @@ RSpec.describe ScanSolo::Quote::ReplyProcessor do
     end
   end
 
+  describe 'reply while the current version is not rejected (RF-03)' do
+    let(:version) { ScanSolo::ProposalVersion.sole }
+
+    before do
+      process(reply(valid_block))
+      version.update_columns(status: ScanSolo::ProposalVersion.statuses.fetch('awaiting_approval')) # rubocop:disable Rails/SkipsModelValidations
+    end
+
+    ['Aprovado, pode enviar', :valid_block].each do |content|
+      it "never approves nor delivers on #{content.inspect}, recording a late_reply" do
+        body = content == :valid_block ? valid_block : content
+
+        expect { process(reply(body)) }.not_to change(Message.where.not(conversation_id: email_conversation.id), :count)
+
+        expect(version.reload).to have_attributes(status: 'awaiting_approval', approved_at: nil)
+        expect(ScanSolo::QuoteReply.sole).to have_attributes(kind: 'late_reply', quote_request_id: quote_request.id)
+        expect(ScanSolo::ProposalVersion.count).to eq(1)
+        expect(ScanSolo::MakeRequest.count).to eq(1)
+        expect(ScanSolo::Proposal.sole.email_conversation_id).to be_nil
+      end
+    end
+
+    it 'keeps a failed version out of the flow on a valid reply (only retry brings it back)' do
+      version.update_columns(status: ScanSolo::ProposalVersion.statuses.fetch('failed'), failure_reason: 'artifact_download_failed') # rubocop:disable Rails/SkipsModelValidations
+
+      process(reply(valid_block))
+
+      expect(ScanSolo::QuoteReply.sole).to have_attributes(kind: 'late_reply', quote_request_id: quote_request.id)
+      expect(ScanSolo::ProposalVersion.count).to eq(1)
+      expect(ScanSolo::MakeRequest.count).to eq(1)
+      expect(version.reload).to be_failed
+    end
+  end
+
+  describe 'reply after a rejection (RF-06, RF-07)' do
+    let(:first_version) { ScanSolo::ProposalVersion.sole }
+
+    before do
+      process(reply(valid_block))
+      first_version.update_columns(status: ScanSolo::ProposalVersion.statuses.fetch('awaiting_approval')) # rubocop:disable Rails/SkipsModelValidations
+      ScanSolo::Proposal::RejectService.call(proposal_version: first_version, actor: create(:user, account: account), reason: 'Valor alto')
+    end
+
+    it 'generates the next current version of the same request with the new commercial data' do
+      process(reply(valid_block.sub('R$ 12.500,00', 'R$ 9.000,00')))
+
+      second = ScanSolo::ProposalVersion.where.not(id: first_version.id).sole
+      expect(second).to have_attributes(status: 'generating', version_number: first_version.version_number + 1,
+                                        quote_request_id: quote_request.id, is_current: true)
+      expect(first_version.reload).to have_attributes(status: 'rejected', is_current: false, rejection_reason: 'Valor alto')
+      expect(ScanSolo::Proposal.sole.current_version).to eq(second)
+      make_request = ScanSolo::MakeRequest.find_by!(correlation_id: second.generate_correlation_id)
+      expect(make_request.payload.dig('commercial', 'total_value')).to eq(9000.0)
+      expect(ScanSolo::QuoteReply.count).to eq(0)
+    end
+
+    it 'asks for a correction on an invalid block and creates no version' do
+      expect { process(reply(block_without_payment)) }.to change { email_conversation.messages.outgoing.count }.by(1)
+
+      expect(quote_request.reload).to be_correction_requested
+      expect(ScanSolo::ProposalVersion.count).to eq(1)
+      expect(ScanSolo::MakeRequest.count).to eq(1)
+    end
+
+    it 'creates one version for two concurrent valid replies' do
+      messages = Array.new(2) { reply(valid_block.sub('R$ 12.500,00', 'R$ 9.000,00')) }
+
+      messages.map { |message| Thread.new { described_class.call(message: message) } }.each(&:join)
+
+      expect(ScanSolo::ProposalVersion.where(quote_request: quote_request).count).to eq(2)
+      expect(ScanSolo::ProposalVersion.where(quote_request: quote_request).where.not(status: :rejected).count).to eq(1)
+      expect(ScanSolo::QuoteReply.sole.kind).to eq('late_reply')
+    end
+  end
+
+  it 'routes a reply in the lead proposal thread to LeadEmailReplyService (RF-16, RF-17)' do
+    contact.update!(email: 'ana@cliente.com.br')
+    proposal_thread = ScanSolo::Quote::EmailThread.open!(inbox: email_inbox, recipient: contact.email, subject: 'Proposta',
+                                                         marker: 'proposal_delivery')
+    ScanSolo::Proposal.create!(opportunity: opportunity, email_conversation: proposal_thread)
+    allow(ScanSolo::Proposal::LeadEmailReplyService).to receive(:call).and_call_original
+    message = reply(valid_block, in_conversation: proposal_thread)
+
+    expect { process(message) }.not_to(change { quote_request.reload.attributes })
+
+    expect(ScanSolo::Proposal::LeadEmailReplyService).to have_received(:call).with(message: message)
+    expect(ScanSolo::AuditEvent.where(event_type: 'proposal.lead_email_reply').sole.correlation_id).to eq(quote_request.correlation_id)
+    expect(ScanSolo::QuoteReply.count).to eq(0)
+    expect(ScanSolo::ProposalVersion.count).to eq(0)
+  end
+
   it 'ignores a reply to a negotiation notification (RF-42)' do
     notification = ScanSolo::Quote::EmailThread.open!(inbox: email_inbox, recipient: 'comercial@scansolo.com.br',
                                                       subject: 'Pedido de negociação', marker: 'negotiation_notification')
@@ -249,5 +340,6 @@ RSpec.describe ScanSolo::Quote::ReplyProcessor do
 
     expect(ScanSolo::QuoteReply.count).to eq(0)
     expect(ScanSolo::ProposalVersion.count).to eq(0)
+    expect(ScanSolo::AuditEvent.where(event_type: 'proposal.lead_email_reply').count).to eq(0)
   end
 end

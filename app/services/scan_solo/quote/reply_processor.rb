@@ -1,18 +1,23 @@
 # CT-04 / RF-17..RF-24 / RF-42: an incoming e-mail of the quote inbox.
 #
+# - A reply in the lead's proposal thread goes to
+#   `Proposal::LeadEmailReplyService` (RF-16, RF-17).
 # - A reply in a negotiation notification thread is ignored (RF-42).
 # - A reply in any other thread without a quote request becomes an
 #   `unmatched` pending reply (RF-19), listed for a manual link (CT-08).
 # - A reply to a request is read by `.apply`, also used by the manual link
 #   (RF-20): under the request lock, a request already `replied` turns the
-#   reply into a `late_reply` pending (RF-23, never read commercially); a
+#   reply into a `late_reply` pending (RF-23, never read commercially, so an
+#   e-mail never approves a version, RF-03); after a rejection the request is
+#   open again and a valid block generates the next version (RF-06); a
 #   valid CT-04 block marks the request `replied` with its commercial data and
 #   then, after commit, requests the generation (RF-24); an invalid one marks
 #   it `correction_requested` and, after commit, posts the correction in the
 #   request thread (RF-18). The read is deterministic, never an LLM (RF-21).
 # - The accepted message itself, read again (job retry after a failed
 #   generation), is not a late reply: it requests the generation again while
-#   the request has no version, and is a no-op once it has one.
+#   the request has no version other than rejected ones (RF-07), and is a
+#   no-op once it has one.
 # - A generation error other than the proposal gate (e.g. the Make
 #   integration not configured) is audited and re-raised, so the job fails
 #   visibly and its retry regenerates from the kept reply.
@@ -22,7 +27,10 @@ class ScanSolo::Quote::ReplyProcessor
   def self.call(message:)
     quote_request = ScanSolo::QuoteRequest.find_by(email_conversation_id: message.conversation_id)
     return apply(quote_request: quote_request, message: message) if quote_request
-    return if message.conversation.additional_attributes.to_h['scansolo_thread'] == ScanSolo::Notifications::EmailAdapter::MARKER
+
+    thread = message.conversation.additional_attributes.to_h['scansolo_thread']
+    return ScanSolo::Proposal::LeadEmailReplyService.call(message: message) if thread == ScanSolo::Proposal::DeliveryService::THREAD_MARKER
+    return if thread == ScanSolo::Notifications::EmailAdapter::MARKER
 
     record_pending!(message: message, kind: :unmatched)
   end
@@ -74,7 +82,7 @@ class ScanSolo::Quote::ReplyProcessor
     end
 
     def request_generation!(quote_request)
-      return if ScanSolo::ProposalVersion.exists?(quote_request_id: quote_request.id)
+      return unless quote_request.generation_open?
 
       generate_correlation_id = SecureRandom.uuid
       version = ScanSolo::Proposal::GenerateService.call(

@@ -67,6 +67,25 @@ RSpec.describe ScanSolo::Proposal::GenerateService do
       expect(ScanSolo::ProposalVersion.count).to eq(1)
     end
 
+    %w[generating awaiting_approval approved sent failed].each do |status|
+      it "rejects a new version while the request has a #{status} version (RF-07)" do
+        call.update_columns(status: ScanSolo::ProposalVersion.statuses.fetch(status)) # rubocop:disable Rails/SkipsModelValidations
+
+        expect { call }.to raise_error(ActiveRecord::RecordInvalid, /sem resposta de orçamento validada/)
+        expect(ScanSolo::ProposalVersion.count).to eq(1)
+      end
+    end
+
+    it 'creates the next current version of the same request after a rejection (RF-06)' do
+      first = call
+      first.update!(status: :rejected)
+
+      second = described_class.call(opportunity: opportunity, quote_request: quote_request, correlation_id: SecureRandom.uuid)
+
+      expect(second).to have_attributes(version_number: first.version_number + 1, quote_request_id: quote_request.id, is_current: true)
+      expect(first.reload).to have_attributes(status: 'rejected', is_current: false)
+    end
+
     it 'creates one version for two concurrent calls' do
       outcomes = Array.new(2) do
         Thread.new do

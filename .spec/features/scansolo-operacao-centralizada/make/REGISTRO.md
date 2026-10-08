@@ -128,6 +128,12 @@ Pendências:
   - Evidências de que **nada foi gerado**: `ScanSOLO_Proposta_Map` (158314) com `records: 0`; Drive sem nenhum arquivo "Empresa Teste T40"/"v999000001"; logo, nenhum callback ao Rails e nenhum e-mail ou WhatsApp.
   - Cenário: segue `isActive: false`. Às 18:52:06Z houve um save pela UI (eventos `modify` + `schedule`) que acrescentou `maximum_runs_per_minute: 100`, sem alterar a lógica.
   - **Resultado: execução 1 NÃO validada.** É preciso identificar qual rota respondeu antes de repetir.
+- 2026-10-08, limpeza da fila do webhook 2859035, autorizada pelo desenvolvedor (só a fila; blueprint, webhook, cenário, data stores, credenciais e conexões intactos):
+  - `hook-incomings_list` antes: 3 itens. `6a25b702f78a67389a1f02f2bd1863d8` (2026-09-29T13:08:55Z, 1433 B), `cd0c1abca10ad44254684a24fb7ddfb4` (2026-09-29T13:11:10Z, 1433 B) e `99af5cbd794d0e90b0f40be0aa574c45` (2026-10-08T19:05:56Z, 1216 B, o POST do teste T40 com bearer vazio, segundo o desenvolvedor).
+  - Os payloads **não** foram abertos (`hook-incomings_get` não chamado), para não trazer headers/bearer ao contexto. A identificação foi por data, quantidade e tamanho.
+  - `hook-incomings_delete` (por ids, sem `all`): `deletedIds` = os 3 acima.
+  - Depois: `hook-incomings_list` = `[]`; `hook-incomings_stats` = `queue: 0`.
+  - Cenário 6406463: `isActive: false`, `lastEdit` inalterado (2026-10-08T18:52:06Z).
 - Template `1iXxNeqP…` ("ScanSOLO Proposta Georadar") lido sem alteração em 2026-10-08, via conector Google Drive:
   - Presentes: `{{NOME_EMPRESA}}`, `{{NOME_CONTATO}}`, `{{DATA_SOLICITACAO}}`, `{{DESCRICAO_ESCOPO}}`, `{{PROFUNDIDADE}}`, `{{VALOR_NUMERICO}}`, `{{VALOR_EXTENSO}}`.
   - **Ausentes**: `{{CONDICOES_PAGAMENTO}}`, `{{OBSERVACOES}}`, `{{NÚMERO_PROPOSTA}}`, `{{PRAZO_TOTAL}}`. As condições de pagamento e o prazo de validade (90 dias) estão fixos no texto, e o cronograma é "ALTERAR CRONOGRAMA". Por isso número da proposta, cronograma, condições e observações do `commercial` **não aparecem no PDF** até o template ganhar esses placeholders (lacuna do RF-47, fora do T40, pois o template não pode ser alterado aqui). As substituições ficam no cenário e não têm efeito enquanto o placeholder não existir.

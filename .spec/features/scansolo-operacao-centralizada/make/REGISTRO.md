@@ -68,3 +68,21 @@ Comando do T38 nos 10 arquivos: `grep -lE "Bearer [A-Za-z0-9]|\"secret\"\s*:\s*\
 2026-10-08 — **aprovado** pelo desenvolvedor (Leonardo), depois dos 10 arquivos conferidos e do scan limpo (commit `5f4bcd6559`).
 Libera T39 (desativar, sem apagar, 6177829, 6036802, 6019491, 5497443 e 6177833) e T40 (adaptar a `Entrada` 6406463, mantida inativa).
 Não libera a ativação da `Entrada` nem o deploy: os dois continuam presos à ordem do T41 (deploy → HG-03 → ativação).
+
+## T39 — Make: desativar os legados, sem apagar (RF-28)
+
+Status: **concluído** (2026-10-08).
+
+Estado lido via Make MCP imediatamente antes (2026-10-08): ON = 6177829, 6019491, 6036802; OFF = 6177833, 5497443, 5325058, 5237984, 6406463 (igual ao inventário do T38).
+
+| Cenário | Nome | Antes | Ação 2026-10-08 | Depois |
+|---|---|---|---|---|
+| 6036802 | Lexus_ScanSolo_Proposta_v2 | ON | `scenarios_deactivate` → "Scenario has been deactivated." | OFF |
+| 6177829 | Aprovacao_Gate_Processor | ON | desativado pelo desenvolvedor na UI do Make (o `scenarios_deactivate` foi negado no Claude Code) | OFF |
+| 6019491 | CRM_Agente_Proposta | ON | desativado pelo desenvolvedor na UI do Make (o `scenarios_deactivate` foi negado no Claude Code) | OFF |
+| 6177833 | Aprovacao_Confirmada | OFF | nenhuma (já inativo) | OFF |
+| 5497443 | Aprovacao_Finalizar_Proposta | OFF | nenhuma (já inativo) | OFF |
+| 5325058 | Aprovacao_envia_proposta | OFF | nenhuma (já inativo) | OFF |
+| 5237984 | Proposta_automatizada | OFF | nenhuma (já inativo) | OFF |
+
+Listagem final via Make MCP (`scenarios_list`, team 701134, pasta 247121, 2026-10-08): os 8 cenários existem (`deleted: false`) e todos estão `isActive: false`: 6177833, 5325058, 5497443, 6177829, 6019491, 6036802, 5237984 e 6406463 (`Entrada`, ainda inativa). Os 7 legados estão OFF, 5325058 e 5237984 continuam inativos, e nenhum cenário foi apagado.

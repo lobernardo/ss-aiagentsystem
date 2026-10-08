@@ -390,7 +390,7 @@ Antes de implementar, leia:
 3. `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` — `makeIntegrationCallback` (CT-08, exemplo `generateSuccessWithChecksum`)
 4. `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` — CT-05 (request) e CT-06 (callback base)
 
-- [ ] T39 — Make: desativar os legados, sem apagar (RF-28)
+- [x] T39 — Make: desativar os legados, sem apagar (RF-28)
       Arquivos: `.spec/features/scansolo-operacao-centralizada/make/REGISTRO.md`
       Mudança: tarefa humana. Com T38 aprovada, desativar (nunca apagar) 6177829, 6036802, 6019491, 5497443 e 6177833; confirmar 5325058 e 5237984 inativos e não apagados; registrar estado anterior e data.
       Cobre: RF-28, RNF-07

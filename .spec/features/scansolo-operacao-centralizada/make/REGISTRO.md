@@ -164,3 +164,14 @@ Pendências:
 - Execução `32644118690f4547a6edd2f3de1756fd`, manual, `status: 3`, 12 operações. **Falhou no módulo 31** (`google-docs:replaceATextInADocument`): `[400] Invalid requests[0].replaceAllText: The substring match text should not be empty`.
 - Efeitos: mais 1 Doc não preenchido, `15HNyox0KxPnD0GzRuME2tBnqeUe6sikjyKu1mR6ShBw` (privado, na pasta de propostas); 0 PDF; `ScanSOLO_Proposta_Map` com `records: 0`; 1 callback `failure` ao Rails (`t40-runonce-1`, não emitido pelo Rails); 0 e-mail; 0 WhatsApp.
 - **Execução 1 não validada.** Limpeza pendente: Docs `13XFpa3N…`, `1til-p3t…` e `15HNyox0…`.
+
+### T40 — conferência do módulo 31 após a revisão no Make Desktop, 2026-10-09
+
+- Relato do Make Desktop: o módulo 31 "foi corrigido". Ele ficou com 7 replacements, só os placeholders que existem no template. Cada `oldText` é `{{replace(replace("[[NOME]]"; "["; "{"); "]"; "}")}}`. O `validate_module_configuration` retornou `valid: true`.
+- Conferência via MCP (`scenarios_get` + `executions_list`): `isActive: false`. O blueprint confere com o relato. O último `modify` é **2026-10-08T19:42:17Z**, sem nenhuma alteração depois. A fila do hook 2859035 está vazia.
+- Conclusão: essa configuração é a mesma que **já rodou e falhou** na 3ª tentativa (`32644118…`, 2026-10-09T12:17Z).
+  - Falharam as três formas de montar o texto literal: concatenação com `+`, justaposição e `replace()`.
+  - A nomenclatura dos campos confere com o `app-module_get` (`replaceText[].oldText`/`newText`, versão 1).
+  - Hipótese principal: o módulo ou o motor de mapeamento remove ou avalia `{{…}}` no valor final de `oldText`, e não só na hora de interpretar o mapeamento.
+  - Prova pendente: o bundle de entrada do módulo 31 no histórico da execução `32644118…`.
+- Nenhuma execução, nenhuma alteração.

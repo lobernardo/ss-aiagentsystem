@@ -407,22 +407,53 @@
             },
             {
               "id": 30,
-              "mapper": {
-                "file": "1iXxNeqPgdJXoPiOTC8KEv2xnU7MuvfRkSOUWit_1V70",
-                "name": "Proposta_ScanSOLO_{{25.empresa}}_{{formatDate(now; \"YYYY-MM-DD\")}}_v{{1.proposal_version_id}}",
-                "select": "map",
-                "folderId": "13c13lzgtf94AYACCq9DcQaP-KLzqEvRfN6CmWv3HAuJsDFFmm3ym2B3S_jHw1x969QxtVNLP"
+              "module": "google-docs:createADocumentFromTemplate",
+              "version": 1,
+              "parameters": {
+                "__IMTCONN__": 9163373
               },
-              "module": "google-drive:copyAFile",
-              "version": 4,
+              "mapper": {
+                "select": "map",
+                "name": "Proposta_ScanSOLO_{{25.empresa}}_{{formatDate(now; \"YYYY-MM-DD\")}}_v{{1.proposal_version_id}}",
+                "document": "/1iXxNeqPgdJXoPiOTC8KEv2xnU7MuvfRkSOUWit_1V70",
+                "requests": [
+                  {
+                    "text": "NOME_EMPRESA",
+                    "replaceText": "{{25.empresa}}"
+                  },
+                  {
+                    "text": "NOME_CONTATO",
+                    "replaceText": "{{25.nome}}"
+                  },
+                  {
+                    "text": "DATA_SOLICITACAO",
+                    "replaceText": "{{25.data_hoje}}"
+                  },
+                  {
+                    "text": "DESCRICAO_ESCOPO",
+                    "replaceText": "{{ifempty(1.commercial.scope; 25.escopo)}}"
+                  },
+                  {
+                    "text": "PROFUNDIDADE",
+                    "replaceText": "{{25.profundidade}}"
+                  },
+                  {
+                    "text": "VALOR_NUMERICO",
+                    "replaceText": "{{formatNumber(1.commercial.total_value; 2; \",\"; \".\")}}"
+                  },
+                  {
+                    "text": "VALOR_EXTENSO",
+                    "replaceText": "{{1.commercial.total_value_in_words}}"
+                  }
+                ],
+                "destination": "drive",
+                "folderId": "/13c13lzgtf94AYACCq9DcQaP-KLzqEvRfN6CmWv3HAuJsDFFmm3ym2B3S_jHw1x969QxtVNLP"
+              },
               "metadata": {
                 "designer": {
                   "x": 2100,
                   "y": 0
                 }
-              },
-              "parameters": {
-                "__IMTCONN__": 8175929
               },
               "onerror": [
                 {
@@ -435,7 +466,7 @@
                     "result": {
                       "proposal_version_id": "{{1.proposal_version_id}}",
                       "error_code": "document_generation_failed",
-                      "error_message": "Falha ao copiar o modelo da proposta.",
+                      "error_message": "Falha ao gerar o documento da proposta a partir do modelo.",
                       "retryable": true
                     }
                   },
@@ -518,209 +549,6 @@
                     "designer": {
                       "x": 3000,
                       "y": 300
-                    }
-                  },
-                  "parameters": {}
-                }
-              ]
-            },
-            {
-              "id": 31,
-              "mapper": {
-                "document": "/{{30.id}}",
-                "destination": "drive",
-                "replaceText": [
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}NOME_EMPRESA{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.empresa}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}NOME_CONTATO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.nome}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}NOME_CLIENTE{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.nome}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}PROJETO_CLIENTE_FINAL{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{ifempty(25.projeto; 25.empresa)}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}RUA_CIDADE_ESTADO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.endereco}}{{if(25.endereco; \", \"; \"\")}}{{25.cidade_uf}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}ENDERECO_LOGRADOURO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{ifempty(25.endereco; 25.cidade_uf)}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}CIDADE_ESTADO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.cidade_uf}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}LOCAL_SERVICO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.cidade_uf}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}DATA_SOLICITACAO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.data_hoje}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}DESCRICAO_ESCOPO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{ifempty(1.commercial.scope; 25.escopo)}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}TÍTULO_SERVIÇO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.escopo}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}AREA_TOTAL{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.area}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}PROFUNDIDADE{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{25.profundidade}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}NÚMERO_PROPOSTA{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{1.proposal_number}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}REVISÃO{{\"}\"}}{{\"}\"}}",
-                    "newText": "Rev.01"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}LOGO_CLIENTE{{\"}\"}}{{\"}\"}}",
-                    "newText": ""
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}PRAZO_TOTAL{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{1.commercial.schedule}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}VALOR_NUMERICO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{formatNumber(1.commercial.total_value; 2; \",\"; \".\")}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}VALOR_EXTENSO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{1.commercial.total_value_in_words}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}CONDICOES_PAGAMENTO{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{1.commercial.payment_terms}}"
-                  },
-                  {
-                    "oldText": "{{\"{\"}}{{\"{\"}}OBSERVACOES{{\"}\"}}{{\"}\"}}",
-                    "newText": "{{ifempty(1.commercial.notes; \"\")}}"
-                  }
-                ]
-              },
-              "module": "google-docs:replaceATextInADocument",
-              "version": 1,
-              "metadata": {
-                "designer": {
-                  "x": 2400,
-                  "y": 0
-                }
-              },
-              "parameters": {
-                "__IMTCONN__": 9163373
-              },
-              "onerror": [
-                {
-                  "id": 310,
-                  "mapper": {
-                    "correlation_id": "{{1.correlation_id}}",
-                    "idempotency_key": "{{1.idempotency_key}}",
-                    "action": "proposal.generate",
-                    "status": "failure",
-                    "result": {
-                      "proposal_version_id": "{{1.proposal_version_id}}",
-                      "error_code": "document_generation_failed",
-                      "error_message": "Falha ao preencher os dados da proposta no documento.",
-                      "retryable": true
-                    }
-                  },
-                  "module": "json:CreateJSON",
-                  "version": 1,
-                  "metadata": {
-                    "designer": {
-                      "x": 2400,
-                      "y": 600
-                    }
-                  },
-                  "parameters": {
-                    "type": 528276
-                  }
-                },
-                {
-                  "id": 311,
-                  "mapper": {
-                    "scope": "roundtrip",
-                    "variables": [
-                      {
-                        "name": "cb_sig",
-                        "value": "{{sha256(310.json; \"hex\"; 2.signing_secret; \"utf8\")}}"
-                      }
-                    ]
-                  },
-                  "module": "util:SetVariables",
-                  "version": 1,
-                  "metadata": {
-                    "designer": {
-                      "x": 2700,
-                      "y": 600
-                    }
-                  },
-                  "parameters": {}
-                },
-                {
-                  "id": 312,
-                  "mapper": {
-                    "qs": [],
-                    "url": "{{2.chatwoot_base_url}}/webhooks/scan_solo/make",
-                    "data": "{{310.json}}",
-                    "gzip": true,
-                    "method": "post",
-                    "headers": [
-                      {
-                        "name": "X-Make-Signature",
-                        "value": "{{311.cb_sig}}"
-                      }
-                    ],
-                    "useMtls": false,
-                    "bodyType": "raw",
-                    "contentType": "application/json",
-                    "serializeUrl": false,
-                    "shareCookies": false,
-                    "parseResponse": false,
-                    "followRedirect": true,
-                    "useQuerystring": false,
-                    "rejectUnauthorized": true
-                  },
-                  "module": "http:ActionSendData",
-                  "version": 3,
-                  "metadata": {
-                    "designer": {
-                      "x": 3000,
-                      "y": 600
-                    }
-                  },
-                  "parameters": {
-                    "handleErrors": true,
-                    "useNewZLibDeCompress": true
-                  }
-                },
-                {
-                  "id": 313,
-                  "mapper": {},
-                  "module": "builtin:Ignore",
-                  "version": 1,
-                  "metadata": {
-                    "designer": {
-                      "x": 3300,
-                      "y": 600
                     }
                   },
                   "parameters": {}

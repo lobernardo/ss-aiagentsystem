@@ -175,3 +175,15 @@ Pendências:
   - Hipótese principal: o módulo ou o motor de mapeamento remove ou avalia `{{…}}` no valor final de `oldText`, e não só na hora de interpretar o mapeamento.
   - Prova pendente: o bundle de entrada do módulo 31 no histórico da execução `32644118…`.
 - Nenhuma execução, nenhuma alteração.
+
+### T40 — troca para o módulo nativo de template, 2026-10-09T15:54:17Z
+
+- Causa: o Make não deixa montar o texto literal `{{…}}` no mapper. Três variantes chegaram vazias ao Google Docs.
+- Solução: os módulos 30 (`google-drive:copyAFile`) e 31 (`google-docs:replaceATextInADocument`) viraram um único módulo 30, `google-docs:createADocumentFromTemplate` v1 (conexão 9163373).
+  - Segundo a definição do módulo, o campo `requests[].text` (Tags) "already contains `{{}}` delimiter", então as tags são escritas sem chaves, por exemplo `NOME_EMPRESA`.
+  - O template original `1iXxNeq…` **não foi alterado**.
+- Tags (7): `NOME_EMPRESA`, `NOME_CONTATO`, `DATA_SOLICITACAO`, `DESCRICAO_ESCOPO`, `PROFUNDIDADE`, `VALOR_NUMERICO` e `VALOR_EXTENSO`. Os valores são os mesmos do módulo 31 anterior.
+- O módulo 35 continua lendo `{{30.id}}`. A mensagem do tratador de erro 300 passou a ser "Falha ao gerar o documento da proposta a partir do modelo.". Os demais módulos não mudaram.
+- `validate_module_configuration`: `valid: true`, com um aviso sobre `folderId`: "Path … not found in options", porque a pasta não aparece na listagem da raiz. Isso só se confirma na execução.
+- `scenarios_update`: `isActive: false`, `isinvalid: false`. O blueprint aplicado está em `t40/6406463-entrada-t40.json`.
+- Rollback: reaplicar o blueprint anterior (backup T38 + histórico deste registro).

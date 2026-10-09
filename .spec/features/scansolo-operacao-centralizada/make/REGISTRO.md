@@ -187,3 +187,19 @@ Pendências:
 - `validate_module_configuration`: `valid: true`, com um aviso sobre `folderId`: "Path … not found in options", porque a pasta não aparece na listagem da raiz. Isso só se confirma na execução.
 - `scenarios_update`: `isActive: false`, `isinvalid: false`. O blueprint aplicado está em `t40/6406463-entrada-t40.json`.
 - Rollback: reaplicar o blueprint anterior (backup T38 + histórico deste registro).
+
+### T40 — teste 1 com ativação temporária autorizada, 2026-10-09T16:18Z
+
+- Pré-checagem: `ScanSOLO_Proposta_Map` vazio e fila do hook 2859035 vazia.
+- Janela ativa: `start` em 16:18:01.648Z e `stop` em 16:18:39.665Z (desativado via MCP logo após o teste). **O cenário terminou OFF.**
+- POST: feito por script local que lê `~/.scansolo-t40.env` sem imprimir valores. Payload de teste `proposal_version_id` 999000001, `correlation_id`/`idempotency_key` `t40-run1`. Resposta `HTTP 200 {"status":"accepted","correlation_id":"t40-run1"}`.
+- Execução `4d870c5dfdb84e589efc261c6236fb71`, `type: auto`, `status: 3`, 16 operações. **Falhou** com `BundleValidationError: Validation failed for 1 parameter(s).` O `executions_get-detail` não informa o módulo.
+  - O registro `pv_999000001` foi gravado às 16:18:26.449Z e a execução terminou às 16:18:26.566Z, então a falha veio depois do módulo 32.
+  - Pela contagem de operações (16), o último módulo executado foi provavelmente o 52 (HTTP do callback). Não confirmado.
+- O que funcionou:
+  - Doc `1OuXYpAoa_DGq3mXCmKZzpbKXAPzKEWgSs9J0o7bwv5g` gerado pelo módulo nativo, com as 7 tags preenchidas: empresa, contato, data, escopo, profundidade, `R$ 12.500,00` e "doze mil e quinhentos reais".
+  - PDF `1-dtbguQfpEohI9-De-a7a3aBek44wT7L` na pasta de propostas.
+  - Registro `pv_999000001` com `total_value` 12500 e `doc_id` = PDF.
+- Achado de segurança: a pasta de propostas `13c13l…` tem a permissão `anyone` = **writer**, e o Doc e o PDF herdam isso. Qualquer pessoa com o link pode editar. Não alterado (fora da autorização).
+- Achado no template: a tag de data aparece em pontos onde o texto fica incoerente ("Conforme solicitação realizada no dia vestigação geofísica…"). É conteúdo do template, não foi alterado.
+- **Teste 2 não executado. Limpeza não executada. T40 não concluído.** 0 e-mail e 0 WhatsApp (o cenário não tem módulos de envio).

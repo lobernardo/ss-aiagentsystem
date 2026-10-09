@@ -157,3 +157,10 @@ Pendências:
 - Diagnóstico: `"{" + "{NOME…"` também avaliou para vazio, porque o `+` do IML não concatena texto.
 - Correção 2026-10-08T19:35:28Z (`scenarios_update`, cenário OFF): o `oldText` passou a ser montado por justaposição, por exemplo `{{"{"}}{{"{"}}NOME_EMPRESA{{"}"}}{{"}"}}`, com cada expressão devolvendo uma chave literal. Resposta: `isActive: false`, `isinvalid: false`.
 - Limpeza pendente: Docs `13XFpa3N…` e `1til-p3t…`.
+
+### T40 — execução 1, 3ª tentativa, 2026-10-09T12:17:32Z
+
+- Antes: alteração do cenário pelo desenvolvedor no Claude Desktop (evento `modify` em 2026-10-08T19:42:17Z), depois da correção por justaposição de 19:35:28Z.
+- Execução `32644118690f4547a6edd2f3de1756fd`, manual, `status: 3`, 12 operações. **Falhou no módulo 31** (`google-docs:replaceATextInADocument`): `[400] Invalid requests[0].replaceAllText: The substring match text should not be empty`.
+- Efeitos: mais 1 Doc não preenchido, `15HNyox0KxPnD0GzRuME2tBnqeUe6sikjyKu1mR6ShBw` (privado, na pasta de propostas); 0 PDF; `ScanSOLO_Proposta_Map` com `records: 0`; 1 callback `failure` ao Rails (`t40-runonce-1`, não emitido pelo Rails); 0 e-mail; 0 WhatsApp.
+- **Execução 1 não validada.** Limpeza pendente: Docs `13XFpa3N…`, `1til-p3t…` e `15HNyox0…`.

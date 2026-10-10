@@ -138,6 +138,24 @@ RSpec.describe ScanSolo::Quote::RequestService do
       expect(quote_request).to have_attributes(rendered_digest: Digest::SHA256.hexdigest(snapshot.to_json), update_window_ends_at: nil)
     end
 
+    it 'opens the update window for a field written while the request e-mail was being sent (RF-14)' do
+      allow(ScanSolo::Quote::EmailThread).to receive(:post!).and_wrap_original do |original, **kwargs|
+        writer.apply_field!(key: 'cidade_uf', value: 'Sinop/MT', status: 'confirmado', source_message_id: message.id)
+        original.call(**kwargs)
+      end
+
+      run_service
+
+      expect(quote_request.update_window_ends_at).to be_present
+      expect(enqueued_jobs.pluck(:job)).to include(ScanSolo::QuoteRequestUpdateJob)
+    end
+
+    it 'leaves the update window closed when nothing changed during the send' do
+      run_service
+
+      expect(enqueued_jobs.pluck(:job)).not_to include(ScanSolo::QuoteRequestUpdateJob)
+    end
+
     it 'records 1 quote_request.sent with the CT-06 payload and no e-mail body (RF-19)' do
       run_service
 

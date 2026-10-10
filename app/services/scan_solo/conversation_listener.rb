@@ -79,8 +79,8 @@ class ScanSolo::ConversationListener < BaseListener
       ScanSolo::OptOut::MarkService.call(contact: message.conversation.contact, source: 'keyword')
     end
 
-    ScanSolo::AiTurnJob.perform_later(message.id)
     schedule_quote_update(bootstrap.opportunity, message)
+    ScanSolo::AiTurnJob.perform_later(message.id)
   end
 
   # RF-14 (b): a new attachment, location or map URL never goes through the

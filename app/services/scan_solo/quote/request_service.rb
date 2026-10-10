@@ -20,7 +20,10 @@
 #    It stores the message id, the rendered snapshot and its SHA-256 digest
 #    (the base of the next update e-mail, RF-14/RF-20), closes any update
 #    window and records `quote_request.sent` with the request's correlation
-#    id and the CT-06 payload (RF-19, RNF-09).
+#    id and the CT-06 payload (RF-19, RNF-09). A change that landed between
+#    the snapshot and `request_message_id` (when UpdateScheduler still saw no
+#    request message) opens the update window here (RF-14); the opportunity is
+#    read again so no cached lead state hides it.
 # 5. The RF-53 notice is posted once to the customer conversation, guarded by
 #    `customer_notice_message_id`: never repeated by later turns, job retries
 #    or resends. Its `scansolo_origin` keeps it out of the implicit takeover.
@@ -65,6 +68,8 @@ class ScanSolo::Quote::RequestService
                  template_version: ScanSolo::Quote::RequestEmail::TEMPLATE_VERSION, recipient: settings.recipient,
                  message_id: message.id, result: 'sent' }
     )
+    current = ScanSolo::PipelineOpportunity.find(quote_request.opportunity_id)
+    ScanSolo::Quote::UpdateScheduler.call(opportunity: current) if ScanSolo::Quote::RequestEmail.changed?(snapshot(current), snapshot)
     post_customer_notice!(quote_request)
   end
 

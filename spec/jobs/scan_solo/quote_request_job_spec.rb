@@ -68,6 +68,22 @@ RSpec.describe ScanSolo::QuoteRequestJob do
     end
   end
 
+  context 'when every attempt fails before the request is opened' do
+    before do
+      allow(ScanSolo::Quote::RequestEmail::Snapshot).to receive(:call).and_raise(KeyError, 'bad field')
+      allow(ChatwootExceptionTracker).to receive(:new).and_call_original
+    end
+
+    it 'reports the error to the exception tracker, with no request, note or delivery_failed' do
+      run_job
+
+      expect(ChatwootExceptionTracker).to have_received(:new).with(an_instance_of(KeyError))
+      expect(ScanSolo::QuoteRequest.count).to eq(0)
+      expect(notes).to be_empty
+      expect(failures).to be_empty
+    end
+  end
+
   context 'when only the first attempt fails' do
     before { fail_attempts(1) }
 

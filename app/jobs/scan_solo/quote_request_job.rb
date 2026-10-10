@@ -6,7 +6,9 @@
 # failed attempt (4 attempts in total). A retry reuses the request left
 # without `request_message_id`, so it never opens a 2nd request or thread.
 # Once exhausted, and only while no request message exists, the failure goes
-# to ScanSolo::Quote::DeliveryFailureService (private note + audit).
+# to ScanSolo::Quote::DeliveryFailureService (private note + audit). Any other
+# exhausted failure (no request opened, or the customer notice after the
+# e-mail) goes to the exception tracker.
 class ScanSolo::QuoteRequestJob < ApplicationJob
   WAITS = [1.minute, 5.minutes, 15.minutes].freeze
 
@@ -14,9 +16,11 @@ class ScanSolo::QuoteRequestJob < ApplicationJob
 
   retry_on StandardError, attempts: WAITS.size + 1, wait: ->(executions) { WAITS.fetch(executions - 1) } do |job, error|
     quote_request = ScanSolo::QuoteRequest.find_by(opportunity_id: job.arguments.first)
-    next if quote_request.nil? || quote_request.request_message_id.present?
-
-    ScanSolo::Quote::DeliveryFailureService.call(opportunity: quote_request.opportunity, reason: error.class.name)
+    if quote_request.nil? || quote_request.request_message_id.present?
+      ChatwootExceptionTracker.new(error).capture_exception
+    else
+      ScanSolo::Quote::DeliveryFailureService.call(opportunity: quote_request.opportunity, reason: error.class.name)
+    end
   end
 
   def perform(opportunity_id)

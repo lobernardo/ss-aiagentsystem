@@ -1,0 +1,435 @@
+asyncapi: 3.0.0
+info:
+  title: ScanSolo Solicitação de Orçamento por E-mail — async contract delta (CT-01, CT-03, CT-06, RF-18)
+  version: "1.0.0"
+  description: >
+    Delta over `.spec/features/scansolo-operacao-centralizada/asyncapi.yaml` (v1.5.0) and
+    `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (v1.0.0). Channels listed
+    here are NEW or CHANGED by SPEC `scansolo-solicitacao-orcamento-email` v1.2; every other
+    channel of the prior contracts is unchanged, including the quote reply (OC CT-04 block,
+    `ResponseBlockParser`, `ReplyProcessor`) and the correction e-mail (OC RF-18).
+
+    COMPAT notes:
+    (1) INTENTIONAL BREAKING CHANGE, flagged (OC/RF-13 and OC/CT-03 superseded by RF-02..RF-13
+    and CT-01): `QuoteRequestEmailPayload.subject` changes from
+    `^Solicitação de orçamento #\d+ — .+$` to
+    `Solicitação de orçamento | {empresa_curta} | {servico_label}[ | {cidade}/{uf}]` (≤ 120
+    characters, no control characters), and the body changes from "identification → every
+    collected field → block" to the CT-01 sections. The only consumer is the human commercial
+    recipient; the trailing instructions + empty OC CT-04 block are byte-identical, so reply
+    parsing stays compatible. Transport, From/To, thread (`scansolo_thread = quote_request`),
+    HTML with `<br>` and native Message-ID threading are unchanged. The thread `mail_subject`
+    of NEW requests is the new subject; existing threads keep theirs.
+    (2) NEW: the update e-mail (CT-03, RF-14) in the same request thread, subject
+    `Re: <mail_subject>` from the native mailer.
+    (3) NEW: private note in the opportunity WhatsApp conversation on delivery failure (RF-18).
+    (4) Native events — `additional_attributes.scansolo_origin` gains `quote_request_email` and
+    `quote_request_update` (additive); a `failed` update of those messages triggers RF-18 case B.
+    (5) Audit events (CT-06): `quote_request.sent` payload extended (additive);
+    `quote_request.update_sent` and `quote_request.delivery_failed` are new.
+    (6) Protocol values `smtp` and `wisper` follow the OC precedent (documentation-only).
+servers:
+  chatwootEmailInbox:
+    host: "{quoteInboxHost}"
+    protocol: smtp
+    description: >
+      The Chatwoot native e-mail inbox published as the account's quote inbox
+      (`AiAgentConfig#quote_inbox_id`, `atendimento.comercial@scansolo.com.br`). Outbound:
+      `Message` → `SendReplyJob` → `Email::SendOnEmailService` →
+      `ConversationReplyMailer#email_reply` (message attachments honored). From display name
+      comes from the inbox (`business_name` + `sender_name_type: professional` →
+      `Atendimento Comercial ScanSolo <atendimento.comercial@scansolo.com.br>`, RF-15); no new
+      Reply-To.
+    variables:
+      quoteInboxHost:
+        default: mail.scansolo.com.br
+  chatwootWhatsappInbox:
+    host: "{whatsappInboxHost}"
+    protocol: https
+    description: The opportunity's native WhatsApp conversation (private notes are never sent to the customer).
+    variables:
+      whatsappInboxHost:
+        default: graph.facebook.com
+  chatwootEventBus:
+    host: in-process
+    protocol: wisper
+    description: Internal Chatwoot dispatcher (`AsyncDispatcher` → `ScanSolo::ConversationListener`) and `ScanSolo::AuditLogger`. Not network-exposed.
+
+channels:
+  quoteRequestEmail:
+    address: quote-request
+    servers:
+      - $ref: '#/servers/chatwootEmailInbox'
+    description: >
+      CHANGED (CT-01; RF-01..RF-13, RF-15..RF-17, RF-20). Same conversation and trigger as OC
+      CT-03 (`QuoteRequestJob` after `CompletionService` with next action `proposta`; manual
+      resend OC RF-56 in the same thread). Content assembled deterministically by
+      `ScanSolo::Quote::RequestEmail` (no LLM, no HTTP, no writes) from the published config,
+      lead state, contact native fields/`custom_attributes` and the incoming messages and
+      attachments of the opportunity's WhatsApp conversation. Created only after commit
+      (RNF-04). Case A failures (before the message exists) are retried 3 times at 1, 5 and 15
+      minutes; then RF-18 applies.
+    messages:
+      quoteRequest:
+        $ref: '#/components/messages/QuoteRequestEmailV2'
+
+  quoteRequestUpdateEmail:
+    address: quote-request
+    servers:
+      - $ref: '#/servers/chatwootEmailInbox'
+    description: >
+      NEW (CT-03; RF-14). Same conversation as `quoteRequestEmail`. Sent at most once per
+      qualification version (unique `(quote_request_id, version_digest)` in
+      `scan_solo_quote_request_updates`) and per fixed 10-minute window opened by the first
+      unsent change after the last e-mail; only while the request is `awaiting_reply` or
+      `correction_requested` (checked at send time); never when nothing rendered changed. Never
+      creates a request or thread, never changes the request status and never posts the
+      customer notice (OC RF-53).
+    messages:
+      quoteRequestUpdate:
+        $ref: '#/components/messages/QuoteRequestUpdateEmail'
+
+  quoteDeliveryFailureNote:
+    address: opportunity-whatsapp-conversation
+    servers:
+      - $ref: '#/servers/chatwootWhatsappInbox'
+    description: >
+      NEW (RF-18). One private note in the opportunity's WhatsApp conversation when (A) the 4
+      attempts to create the request/update message failed, or (B) a created message was
+      marked `failed` with `external_error` (no automatic retry). Created outside any
+      transaction (RNF-04), idempotent per failed message. Does not change the stage, the
+      request status or the handoff state.
+    messages:
+      quoteDeliveryFailureNote:
+        $ref: '#/components/messages/QuoteDeliveryFailureNote'
+
+  quoteRequestAudit:
+    address: scan_solo_audit_events
+    servers:
+      - $ref: '#/servers/chatwootEventBus'
+    description: >
+      CT-06 (RF-18, RF-19). `AuditEvent` rows recorded with the request's `correlation_id`.
+      The payload never carries the e-mail body or personal data beyond the recipient.
+    messages:
+      quoteRequestAuditEvent:
+        $ref: '#/components/messages/QuoteRequestAuditEvent'
+
+  nativeMessageUpdated:
+    address: message.updated
+    servers:
+      - $ref: '#/servers/chatwootEventBus'
+    description: >
+      CHANGED (additive; RF-18 case B). `ScanSolo::ConversationListener` reconciles messages
+      whose `scansolo_origin` is `quote_request_email` or `quote_request_update`; status
+      `failed` → `quoteDeliveryFailureNote` + `quote_request.delivery_failed`.
+    messages:
+      nativeMessageEvent:
+        $ref: '#/components/messages/NativeQuoteMessageEvent'
+
+operations:
+  sendQuoteRequestEmail:
+    action: send
+    channel:
+      $ref: '#/channels/quoteRequestEmail'
+    summary: Quote request e-mail in the CT-01 model (RF-01, RF-20).
+    messages:
+      - $ref: '#/channels/quoteRequestEmail/messages/quoteRequest'
+
+  sendQuoteRequestUpdateEmail:
+    action: send
+    channel:
+      $ref: '#/channels/quoteRequestUpdateEmail'
+    summary: Update e-mail with the changed items and the full current summary (RF-14).
+    messages:
+      - $ref: '#/channels/quoteRequestUpdateEmail/messages/quoteRequestUpdate'
+
+  postQuoteDeliveryFailureNote:
+    action: send
+    channel:
+      $ref: '#/channels/quoteDeliveryFailureNote'
+    summary: Private note on delivery failure (RF-18).
+    messages:
+      - $ref: '#/channels/quoteDeliveryFailureNote/messages/quoteDeliveryFailureNote'
+
+  recordQuoteRequestAudit:
+    action: send
+    channel:
+      $ref: '#/channels/quoteRequestAudit'
+    summary: Audit of sent, update_sent and delivery_failed (RF-18, RF-19).
+    messages:
+      - $ref: '#/channels/quoteRequestAudit/messages/quoteRequestAuditEvent'
+
+  consumeNativeMessageUpdated:
+    action: receive
+    channel:
+      $ref: '#/channels/nativeMessageUpdated'
+    summary: Asynchronous failure of a quote request/update e-mail (RF-18 case B).
+    messages:
+      - $ref: '#/channels/nativeMessageUpdated/messages/nativeMessageEvent'
+
+components:
+  messages:
+    QuoteRequestEmailV2:
+      name: QuoteRequestEmailV2
+      title: Quote request e-mail (CT-01, template quote_request_email.v2)
+      contentType: message/rfc822
+      payload:
+        $ref: '#/components/schemas/QuoteRequestEmailV2Payload'
+      examples:
+        - name: amaggiReference
+          summary: Fictitious AMAGGI reference case of CT-01.
+          payload:
+            from: Atendimento Comercial ScanSolo <atendimento.comercial@scansolo.com.br>
+            to: [comercial@scansolo.com.br]
+            subject: Solicitação de orçamento | AMAGGI | GeoRadar | Lucas do Rio Verde/MT
+            message_id: <conversation/0b7c1e2a-5d3f-4a8e-9c61-2f4d8e7a1b90/messages/812@scansolo.com.br>
+            template_version: quote_request_email.v2
+            scansolo_origin: quote_request_email
+            text_body: "Olá, Luciano.\n\nSegue uma nova solicitação de orçamento recebida pelo atendimento comercial da ScanSolo.\n…"
+            html_body: "Olá, Luciano.<br><br>Segue uma nova solicitação de orçamento recebida pelo atendimento comercial da ScanSolo.<br>…"
+            attachments:
+              - filename: planta-executiva.pdf
+                content_type: application/pdf
+                byte_size: 2097152
+
+    QuoteRequestUpdateEmail:
+      name: QuoteRequestUpdateEmail
+      title: Quote request update e-mail (CT-03)
+      contentType: message/rfc822
+      payload:
+        $ref: '#/components/schemas/QuoteRequestUpdateEmailPayload'
+
+    QuoteDeliveryFailureNote:
+      name: QuoteDeliveryFailureNote
+      title: Private note on quote e-mail delivery failure (RF-18)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QuoteDeliveryFailureNotePayload'
+
+    QuoteRequestAuditEvent:
+      name: QuoteRequestAuditEvent
+      title: Quote request audit event (CT-06)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QuoteRequestAuditEventPayload'
+
+    NativeQuoteMessageEvent:
+      name: NativeQuoteMessageEvent
+      title: Native message.updated of a quote request/update e-mail
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/NativeQuoteMessageEventPayload'
+
+  schemas:
+    EmailAddress:
+      type: string
+      format: email
+
+    QuoteRequestEmailV2Payload:
+      type: object
+      description: >
+        CT-01. Body sections in order: greeting; opening; [validation-mode paragraph when the
+        published `quote_email_validation_mode` is true, RF-12]; data intro; DADOS DO CLIENTE;
+        LOCAL DO SERVIÇO (with `Cidade/UF:` below the address and deduplicated Google Maps
+        links, RF-10); SERVIÇO SOLICITADO; OBJETIVO DO LEVANTAMENTO; [DETALHES TÉCNICOS
+        INFORMADOS]; [OUTRAS INFORMAÇÕES]; DOCUMENTAÇÃO RECEBIDA (RF-13); [INFORMAÇÕES AINDA NÃO
+        CONFIRMADAS, CT-07]; exactly one closing paragraph (RF-09); `Conversa no ScanSOLO:`
+        link; signature; the unchanged OC CT-04 instructions and empty block (RF-11). Optional
+        lines without value are omitted; lead values are quoted verbatim (RF-06), HTML-escaped
+        (RF-17). The only links are the RF-10 map links and the ScanSOLO conversation link
+        (RF-16). No price, AI/system mention, internal URL or secret.
+      required: [from, to, subject, message_id, template_version, scansolo_origin, text_body, html_body, attachments]
+      properties:
+        from:
+          type: string
+          description: Display name + channel e-mail from the inbox configuration (RF-15).
+          examples:
+            - Atendimento Comercial ScanSolo <atendimento.comercial@scansolo.com.br>
+        to:
+          type: array
+          minItems: 1
+          maxItems: 1
+          description: Published `quote_recipient_email` (OC RF-54).
+          items:
+            $ref: '#/components/schemas/EmailAddress'
+        subject:
+          type: string
+          maxLength: 120
+          pattern: '^Solicitação de orçamento \| [^\r\n\t|]+ \| [^\r\n\t]+$'
+          description: >
+            RF-02/RF-03/RF-04. `Solicitação de orçamento | {empresa_curta} | {servico_label}`
+            plus ` | {cidade}/{uf}` only when `cidade_uf` ends in one of the 27 Brazilian UF
+            codes. Company truncated first with `…` above 120 characters.
+        message_id:
+          type: string
+          pattern: '^<conversation/[0-9a-f-]+/messages/\d+@.+>$'
+          description: Native Message-ID used for threading the reply and the update e-mails.
+        template_version:
+          type: string
+          const: quote_request_email.v2
+          description: RF-19 — recorded in the audit payload, not rendered.
+        scansolo_origin:
+          type: string
+          const: quote_request_email
+          description: '`additional_attributes.scansolo_origin` of the native message.'
+        text_body:
+          type: string
+        html_body:
+          type: string
+        attachments:
+          type: array
+          description: >
+            RF-13 — lead attachments (`image`/`audio`/`video`/`file` of incoming WhatsApp
+            messages) in chronological order while the cumulative size stays ≤ 15 MiB
+            (15 × 1024 × 1024 bytes); the rest are listed in the body with the conversation link.
+          items:
+            $ref: '#/components/schemas/EmailAttachment'
+
+    QuoteRequestUpdateEmailPayload:
+      type: object
+      description: >
+        CT-03. Body: first line `Atualização:`; one line per changed item
+        (`{label}: {previous | não informado} → {current}` or `Novo anexo: {name} ({type})`);
+        a blank line; the full CT-01 summary from DADOS DO CLIENTE to the signature with the
+        current data; the unchanged OC CT-04 instructions and empty block. New attachments only,
+        ≤ 15 MiB for this e-mail.
+      required: [from, to, subject, message_id, template_version, scansolo_origin, text_body, html_body, changes, attachments]
+      properties:
+        from:
+          type: string
+        to:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: '#/components/schemas/EmailAddress'
+        subject:
+          type: string
+          pattern: '^Re: Solicitação de orçamento .+$'
+          description: 'Native threading subject `Re: <mail_subject>` (conversation_reply_mailer.rb:121-129).'
+        message_id:
+          type: string
+          pattern: '^<conversation/[0-9a-f-]+/messages/\d+@.+>$'
+        template_version:
+          type: string
+          const: quote_request_email.v2
+        scansolo_origin:
+          type: string
+          const: quote_request_update
+        text_body:
+          type: string
+          pattern: '^Atualização:'
+        html_body:
+          type: string
+        changes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/QuoteRequestChange'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmailAttachment'
+
+    QuoteRequestChange:
+      type: object
+      description: One rendered difference against the last sent e-mail (RF-14).
+      required: [kind, label]
+      properties:
+        kind:
+          type: string
+          enum: [field, pending_item, location, new_attachment]
+        label:
+          type: string
+          description: Catalog/CT-01 label, CT-07 pending label, location label or attachment file name.
+        previous_value:
+          type: [string, "null"]
+          description: Null renders as `não informado`; absent for `new_attachment`.
+        current_value:
+          type: [string, "null"]
+
+    EmailAttachment:
+      type: object
+      required: [filename, content_type, byte_size]
+      properties:
+        filename:
+          type: string
+        content_type:
+          type: string
+        byte_size:
+          type: integer
+          minimum: 1
+          maximum: 15728640
+
+    QuoteDeliveryFailureNotePayload:
+      type: object
+      required: [conversation_id, private, content]
+      properties:
+        conversation_id:
+          type: integer
+          format: int64
+          description: The opportunity's WhatsApp conversation.
+        private:
+          type: boolean
+          const: true
+        content:
+          type: string
+          description: >
+            `scan_solo.quote.request_email.failure_note` with the failure reason (exception class
+            name in case A, native `external_error` truncated to 200 characters in case B) and
+            the ScanSOLO link of the quote e-mail conversation. No secret.
+
+    QuoteRequestAuditEventPayload:
+      type: object
+      description: CT-06. `subject` = the opportunity; `correlation_id` = the quote request's.
+      required: [event_type, correlation_id, payload]
+      properties:
+        event_type:
+          type: string
+          enum: [quote_request.sent, quote_request.update_sent, quote_request.delivery_failed]
+        correlation_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+          required: [quote_request_id, opportunity_id, template_version, recipient, message_id, result]
+          additionalProperties: false
+          properties:
+            quote_request_id:
+              type: integer
+              format: int64
+            opportunity_id:
+              type: integer
+              format: int64
+            template_version:
+              type: string
+              const: quote_request_email.v2
+            recipient:
+              $ref: '#/components/schemas/EmailAddress'
+            message_id:
+              type: [integer, "null"]
+              format: int64
+              description: Null only for `delivery_failed` in RF-18 case A (no message was created).
+            result:
+              type: string
+              description: '`sent` for `sent`/`update_sent`; the RF-18 failure reason for `delivery_failed`.'
+
+    NativeQuoteMessageEventPayload:
+      type: object
+      required: [message_id, conversation_id, status, scansolo_origin]
+      properties:
+        message_id:
+          type: integer
+          format: int64
+        conversation_id:
+          type: integer
+          format: int64
+          description: The quote request e-mail conversation.
+        status:
+          type: string
+          enum: [sent, delivered, read, failed]
+        external_error:
+          type: [string, "null"]
+        scansolo_origin:
+          type: string
+          enum: [quote_request_email, quote_request_update]

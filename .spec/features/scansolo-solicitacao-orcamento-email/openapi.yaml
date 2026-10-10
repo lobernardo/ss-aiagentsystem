@@ -1,0 +1,146 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Solicitação de Orçamento por E-mail — REST contract delta (CT-05 (1), RF-21, UI-01)
+  version: "1.0.0"
+  description: >
+    Delta over `.spec/features/scansolo-operacao-centralizada/openapi.yaml` (v1.7.0). Only the
+    operations CHANGED by SPEC `scansolo-solicitacao-orcamento-email` v1.2 are listed; every
+    other path of the prior contracts (including `scansolo-proposta-aprovacao-email/openapi.yaml`
+    v1.0.0) stays valid and unchanged. Base path verified at `config/routes.rb:492`
+    (`resource :ai_agent_config`). Every endpoint keeps the `BaseController` 404 gate when
+    `Account#scansolo_enabled?` is false and the ScanSolo Pundit 403.
+
+    COMPAT: additive. The AI agent config (draft and published) gains one boolean,
+    `quote_email_validation_mode` (logical name `modo_validacao` in the SPEC, RF-21/CT-05),
+    default `true` and `true` after the migration; it is part of `AiAgentConfig::FIELDS`, so
+    `POST /ai_agent_config/publish` copies it into the published snapshot unchanged (no change
+    to the publish operation). A non-boolean value is rejected at the controller boundary with
+    the current `RecordInvalid` 422 body (`{ message, attributes }`, verified at
+    `app/controllers/concerns/request_exception_handler.rb:58-63`); no coercion of `"true"`/`1`.
+    The service-label map and the pending items per service type (CT-05 (2)) live in a
+    versioned file (`config/scan_solo/quote_request_email.yml`), are not exposed by any endpoint
+    and have no UI. The manual resend (`POST .../pipeline_opportunities/{id}/quote_request/resend`,
+    OC CT-12) keeps its HTTP contract; it now posts the CT-01 e-mail (RF-20), which is an
+    async-contract change only (see `asyncapi.yaml`).
+servers:
+  - url: /api/v1
+paths:
+  /accounts/{account_id}/scan_solo/ai_agent_config:
+    parameters:
+      - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/parameters/AccountId'
+    get:
+      operationId: showAiAgentConfig
+      summary: Config with the quote e-mail validation mode flag (RF-21, UI-01)
+      description: >
+        CHANGED. Draft and published representations gain `quote_email_validation_mode`
+        (boolean). After the migration both are `true`. The published value is the only one
+        read by the quote request e-mail (RF-12); a change only in the draft has no effect
+        until publish. COMPAT: additive.
+      responses:
+        '200':
+          description: Draft/published pair and model list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [draft, published, available_models]
+                properties:
+                  draft:
+                    $ref: '#/components/schemas/AiAgentConfigQuoteEmailSettings'
+                  published:
+                    oneOf:
+                      - $ref: '#/components/schemas/AiAgentConfigQuoteEmailSettings'
+                      - type: "null"
+                  available_models:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/draft:
+    parameters:
+      - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/parameters/AccountId'
+    put:
+      operationId: updateAiAgentConfigDraft
+      summary: Draft update accepts `quote_email_validation_mode` (administrator only; RF-21, CT-05 (1), UI-01)
+      description: >
+        CHANGED. Accepts the optional `quote_email_validation_mode` (JSON boolean). Every
+        field accepted by OC v1.7.0 `AiAgentConfigCommercialSettingsInput` (and v1.2.0
+        `AiAgentConfigInput`) is still accepted with the same rules. A present non-boolean
+        value → 422. COMPAT: additive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiAgentConfigQuoteEmailSettingsInput'
+      responses:
+        '200':
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfigQuoteEmailSettings'
+        '403':
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/responses/Forbidden'
+        '422':
+          description: >
+            Validation failed. Besides the OC v1.7.0 cases (inbox, commercial user, recipient),
+            `quote_email_validation_mode` present and not a JSON boolean.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordInvalidError'
+              examples:
+                nonBooleanValidationMode:
+                  value:
+                    message: Quote email validation mode must be a boolean
+                    attributes: [quote_email_validation_mode]
+
+components:
+  schemas:
+    AiAgentConfigQuoteEmailSettingsInput:
+      type: object
+      description: >
+        Only the field added by this delta; the request also accepts every property of OC
+        v1.7.0 `AiAgentConfigCommercialSettingsInput` and v1.2.0 `AiAgentConfigInput`
+        (unchanged). No pending-items table field exists (RF-21 (2)).
+      properties:
+        quote_email_validation_mode:
+          type: boolean
+          description: >
+            RF-21 (1) / RF-12 — when the published value is `true`, the quote request e-mail
+            (CT-01) carries the approved validation-mode paragraph right after the opening
+            paragraph. UI-01 toggle "Modo validação do e-mail de solicitação".
+
+    AiAgentConfigQuoteEmailSettings:
+      description: >
+        OC v1.7.0 `AiAgentConfigCommercialSettings` plus `quote_email_validation_mode`. All
+        prior fields are still returned with the same name, type and meaning.
+      allOf:
+        - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/AiAgentConfigCommercialSettings'
+        - type: object
+          required: [quote_email_validation_mode]
+          properties:
+            quote_email_validation_mode:
+              type: boolean
+              default: true
+              description: RF-21 (1) — default and post-migration value `true`.
+
+    RecordInvalidError:
+      type: object
+      description: Body of `ActiveRecord::RecordInvalid` rendered by `RequestExceptionHandler#render_record_invalid`.
+      required: [message, attributes]
+      properties:
+        message:
+          type: string
+          description: Full error messages joined by ", ".
+        attributes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Attribute names with errors (e.g. `quote_email_validation_mode`).

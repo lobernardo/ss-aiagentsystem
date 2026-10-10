@@ -12,7 +12,7 @@
 #   opportunity's WhatsApp conversation, in order of receipt (RF-10).
 # - `attachments`: the `image`/`audio`/`video`/`file` attachments of those
 #   messages, in order of receipt (RF-13). Nothing is downloaded.
-# Read only: no writes, no HTTP, no LLM.
+# Read only: no writes, no HTTP, no language model.
 class ScanSolo::Quote::RequestEmail::Snapshot
   OTHER_KEYS = %w[
     cargo emails_copia metragem quantidade_pontos profundidade_intervencao superficie observacoes_tecnicas data_desejada diarias
@@ -70,7 +70,7 @@ class ScanSolo::Quote::RequestEmail::Snapshot
   # [received at, id, url] candidates sorted chronologically; the lead state
   # link sorts by the time it was written.
   def location_sources
-    candidates = incoming_messages.flat_map { |message| message_locations(message).map { |url| [message.created_at, message.id, url] } }
+    candidates = incoming_messages.flat_map { |message| message_locations(message).map { |url| [message[:created_at], message.id, url] } }
     link = state_fields['link_local']
     candidates << [Time.zone.parse(link['updated_at']), 0, link['value']] if link && link['status'] != 'faltante'
 

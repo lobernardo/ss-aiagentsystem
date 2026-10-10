@@ -1,5 +1,5 @@
 # RF-08 / CT-07: the "INFORMAÇÕES AINDA NÃO CONFIRMADAS" list of the quote
-# request e-mail, by fixed rule (no LLM, no I/O). The CT-07 items configured
+# request e-mail, by fixed rule (no language model, no I/O). The CT-07 items configured
 # for the service (`Settings.pending_indexes`) whose "informed" condition fails
 # come first, in CT-07 order; then the config `missing_labels` (config order),
 # plus the catalog label `Tipo de serviço` when no service was informed

@@ -1,6 +1,6 @@
 # CT-01 / CT-03 / RF-01..RF-13 / RF-16 / RF-17: the quote request e-mail
 # (template `quote_request_email.v2`) and its update e-mail, rendered from a
-# RequestEmail::Snapshot. Pure: no writes, no HTTP, no LLM (RNF-01); the same
+# RequestEmail::Snapshot. Pure: no writes, no HTTP, no language model (RNF-01); the same
 # snapshot always renders the same subject, text and HTML.
 #
 # - Subject (RF-02): RequestEmail::Subject.

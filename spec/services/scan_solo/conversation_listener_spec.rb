@@ -263,6 +263,14 @@ RSpec.describe ScanSolo::ConversationListener do
       expect(ScanSolo::Messaging::DeliveryReconciler).to have_received(:call).with(message: notice)
     end
 
+    it 'reconciles an updated quote request e-mail and quote update e-mail (RF-18 case B)' do
+      request_email = updated('quote_request_email')
+      update_email = updated('quote_request_update')
+
+      expect(ScanSolo::Messaging::DeliveryReconciler).to have_received(:call).with(message: request_email)
+      expect(ScanSolo::Messaging::DeliveryReconciler).to have_received(:call).with(message: update_email)
+    end
+
     it 'does not reconcile a message ScanSolo did not originate as a template' do
       updated('proposal_follow_up')
 

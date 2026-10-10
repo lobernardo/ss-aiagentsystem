@@ -17,7 +17,8 @@
 # Assignment changes only create activity messages, so they never get here.
 #
 # Delivery (CT-09): a cadence/proposal/manual-lead template message, the
-# proposal e-mail or the proposal WhatsApp notice ScanSolo created is
+# proposal e-mail, the proposal WhatsApp notice or the quote request/update
+# e-mail (RF-18 case B) ScanSolo created is
 # reconciled on creation and on every native update (status, `source_id`) by
 # ScanSolo::Messaging::DeliveryReconciler (RF-27, RF-41, RF-13). This runs
 # ahead of the eligibility gate -- the evidence of a message already sent
@@ -32,7 +33,7 @@
 # The listener delegates every write to services and holds no AI logic.
 class ScanSolo::ConversationListener < BaseListener
   IMPLICIT_TAKEOVER_REASON = 'Resposta humana na conversa'.freeze
-  TEMPLATE_ORIGINS = %w[cadence proposal manual_lead proposal_email proposal_notice].freeze
+  TEMPLATE_ORIGINS = %w[cadence proposal manual_lead proposal_email proposal_notice quote_request_email quote_request_update].freeze
 
   def message_created(event)
     message = event.data[:message]

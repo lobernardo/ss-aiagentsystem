@@ -27,9 +27,16 @@
 # RF-08: a failed manual-lead initial template has no record of its own; it
 # is audited once per message as `pipeline.manual_lead_template_failed` on
 # the conversation's opportunity, for the opportunity detail (UI-04).
+#
+# RF-18 case B: a quote request or update e-mail marked `failed` after it was
+# created is never retried (no 2nd copy to the commercial); the request of
+# its e-mail thread gets, right away, 1 private note + 1
+# `quote_request.delivery_failed` through ScanSolo::Quote::DeliveryFailureService,
+# idempotent per message.
 class ScanSolo::Messaging::DeliveryReconciler
   MANUAL_LEAD_FAILED_EVENT = 'pipeline.manual_lead_template_failed'.freeze
   SOURCE_ID_CHANNELS = [Channel::Whatsapp, Channel::Email].freeze
+  QUOTE_ORIGINS = %w[quote_request_email quote_request_update].freeze
 
   def self.call(message:)
     new(message: message).call
@@ -44,7 +51,10 @@ class ScanSolo::Messaging::DeliveryReconciler
 
     ScanSolo::CadenceAttempt.dispatched.where(message_id: message.id).find_each { |attempt| reconcile_attempt(attempt) }
     reconcile_proposal_versions
-    record_manual_lead_failure if outcome == :failed && message.additional_attributes.to_h['scansolo_origin'] == 'manual_lead'
+    return unless outcome == :failed
+
+    record_manual_lead_failure if origin == 'manual_lead'
+    record_quote_failure if QUOTE_ORIGINS.include?(origin)
   end
 
   private
@@ -127,6 +137,15 @@ class ScanSolo::Messaging::DeliveryReconciler
         payload: { message_id: message.id, external_error: external_error }
       )
     end
+  end
+
+  def record_quote_failure
+    quote_request = ScanSolo::QuoteRequest.find_by!(email_conversation_id: message.conversation_id)
+    ScanSolo::Quote::DeliveryFailureService.call(opportunity: quote_request.opportunity, reason: external_error, message: message)
+  end
+
+  def origin
+    message.additional_attributes.to_h['scansolo_origin']
   end
 
   def external_error

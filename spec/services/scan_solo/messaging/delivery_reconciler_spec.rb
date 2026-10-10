@@ -216,4 +216,66 @@ RSpec.describe ScanSolo::Messaging::DeliveryReconciler do
       expect(audits.count).to eq(0)
     end
   end
+
+  describe 'quote request and update e-mails (RF-18 case B)' do
+    let(:email_conversation) { create(:conversation, account: account, inbox: create(:channel_email, account: account).inbox) }
+    let!(:quote_request) do
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, email_conversation: email_conversation,
+                                     correlation_id: SecureRandom.uuid)
+    end
+    let(:notes) { conversation.messages.where(private: true) }
+    let(:failures) { ScanSolo::AuditEvent.where(event_type: 'quote_request.delivery_failed', correlation_id: quote_request.correlation_id) }
+
+    def quote_message(origin)
+      create(:message, account: account, inbox: email_conversation.inbox, conversation: email_conversation, message_type: :outgoing,
+                       content_attributes: { 'to_emails' => ['comercial@scansolo.com.br'] },
+                       additional_attributes: { 'scansolo_origin' => origin })
+    end
+
+    def message_updated(message)
+      ScanSolo::ConversationListener.instance.message_updated(Events::Base.new('message_updated', Time.zone.now, { message: message }))
+    end
+
+    it 'posts 1 private note and records 1 delivery_failed right away, with no new message in the thread' do
+      message = quote_message('quote_request_email')
+      message.update!(status: :failed, external_error: 'SMTP 550 mailbox unavailable')
+
+      expect { message_updated(message) }.not_to change(email_conversation.messages, :count)
+
+      expect(notes.sole.content).to include('SMTP 550 mailbox unavailable')
+      expect(failures.sole.payload).to include('message_id' => message.id, 'result' => 'SMTP 550 mailbox unavailable',
+                                               'recipient' => 'comercial@scansolo.com.br')
+    end
+
+    it 'is idempotent: a 2nd identical message_updated keeps 1 note and 1 delivery_failed' do
+      message = quote_message('quote_request_email')
+      message.update!(status: :failed, external_error: 'SMTP 550 mailbox unavailable')
+
+      2.times { message_updated(message) }
+
+      expect(notes.count).to eq(1)
+      expect(failures.count).to eq(1)
+      expect(email_conversation.messages.count).to eq(1)
+    end
+
+    it 'handles a failed update e-mail the same way' do
+      message = quote_message('quote_request_update')
+      message.update!(status: :failed, external_error: 'SMTP 552 message size exceeds')
+
+      described_class.call(message: message)
+
+      expect(notes.count).to eq(1)
+      expect(failures.sole.payload).to include('message_id' => message.id, 'result' => 'SMTP 552 message size exceeds')
+    end
+
+    it 'does nothing once the e-mail is accepted (source_id)' do
+      message = quote_message('quote_request_email')
+      message.update!(source_id: '<quote@scansolo.example>')
+
+      message_updated(message)
+
+      expect(notes).to be_empty
+      expect(failures).to be_empty
+    end
+  end
 end

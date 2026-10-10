@@ -102,6 +102,68 @@ RSpec.describe ScanSolo::Quote::RequestService do
     end
   end
 
+  describe 'CT-01 e-mail, lead attachments and audit (RF-01, RF-13, RF-19)' do
+    let(:plan_blob) do
+      ActiveStorage::Blob.create_and_upload!(io: StringIO.new('a' * 2.megabytes), filename: 'planta.pdf', content_type: 'application/pdf')
+    end
+
+    before do
+      lead_message = create(:message, account: account, conversation: conversation, message_type: :incoming)
+      lead_message.attachments.create!(account_id: account.id, file_type: :file, file: plan_blob)
+      allow(ScanSolo::AiTurn::ModelInvoker).to receive(:call).and_raise('LLM must not be called (RF-01)')
+      allow(RubyLLM).to receive(:context).and_raise('LLM must not be called (RF-01)')
+    end
+
+    it 'posts 1 message with the new subject and body and the lead file attached (RF-13)' do
+      run_service
+
+      request_message = email_inbox.messages.sole
+      expect(request_message.content).to include('Olá, Luciano.', 'DADOS DO CLIENTE', '- planta.pdf (PDF) — anexado a este e-mail.')
+      expect(request_message.content).to end_with(ScanSolo::Quote::EmailComposer.empty_block)
+      expect(request_message.additional_attributes).to include('scansolo_origin' => 'quote_request_email')
+      expect(request_message.attachments.sole.file.blob.checksum).to eq(plan_blob.checksum)
+      expect(quote_request.email_conversation.additional_attributes['mail_subject'])
+        .to eq('Solicitação de orçamento | Ana Souza | Serviço não informado')
+
+      mail = ActionMailer::Base.deliveries.sole
+      expect(mail.subject).to eq('Solicitação de orçamento | Ana Souza | Serviço não informado')
+      expect(mail.attachments.sole).to have_attributes(filename: 'planta.pdf')
+    end
+
+    it 'stores the rendered snapshot and its SHA-256 digest and closes the update window (RF-14, RF-20)' do
+      run_service
+
+      snapshot = ScanSolo::Quote::RequestEmail::Snapshot.call(opportunity: opportunity, config: ScanSolo::AiAgentConfig.published_for(account))
+      expect(quote_request.rendered_snapshot).to eq(snapshot)
+      expect(quote_request).to have_attributes(rendered_digest: Digest::SHA256.hexdigest(snapshot.to_json), update_window_ends_at: nil)
+    end
+
+    it 'records 1 quote_request.sent with the CT-06 payload and no e-mail body (RF-19)' do
+      run_service
+
+      event = ScanSolo::AuditEvent.where(event_type: 'quote_request.sent').sole
+      expect(event.correlation_id).to eq(quote_request.correlation_id)
+      expect(event.payload).to eq(
+        'quote_request_id' => quote_request.id, 'opportunity_id' => opportunity.id, 'template_version' => 'quote_request_email.v2',
+        'recipient' => 'comercial@scansolo.com.br', 'message_id' => quote_request.request_message_id, 'result' => 'sent'
+      )
+    end
+
+    it 'renders with no HTTP request and no LLM call (RF-01)' do
+      run_service
+
+      expect(a_request(:any, /.*/)).not_to have_been_made
+      expect(ScanSolo::AiTurn::ModelInvoker).not_to have_received(:call)
+      expect(RubyLLM).not_to have_received(:context)
+    end
+
+    it 'refuses to post inside an open transaction (RNF-04)' do
+      expect { ActiveRecord::Base.transaction { described_class.call(opportunity: opportunity) } }
+        .to raise_error(CustomExceptions::ScanSolo::DeliveryInsideTransaction)
+      expect(email_inbox.messages).to be_empty
+    end
+  end
+
   %w[duvida avaliacao_tecnica localizar_rede].each do |other_intent|
     context "with intent #{other_intent}" do
       let(:intent) { other_intent }

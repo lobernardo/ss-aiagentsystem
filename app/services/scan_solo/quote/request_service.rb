@@ -14,14 +14,21 @@
 #    `request_message_id` (the e-mail failed after commit) is returned as is,
 #    so a job retry sends its e-mail exactly once, with no 2nd request or
 #    thread (RF-22 of scansolo-proposta-aprovacao-email).
-# 4. `deliver!` (reused by the manual resend) posts the CT-03 e-mail only
-#    after commit (RNF-01), stores the message id and records
-#    `quote_request.sent` with the request's correlation id (RF-22, RNF-09).
+# 4. `deliver!` (reused by the manual resend, RF-20) renders the CT-01 e-mail
+#    from a RequestEmail::Snapshot (no LLM, no HTTP, RF-01) and posts it only
+#    after commit (RNF-01, RNF-04) with the selected lead attachments (RF-13).
+#    It stores the message id, the rendered snapshot and its SHA-256 digest
+#    (the base of the next update e-mail, RF-14/RF-20), closes any update
+#    window and records `quote_request.sent` with the request's correlation
+#    id and the CT-06 payload (RF-19, RNF-09).
 # 5. The RF-53 notice is posted once to the customer conversation, guarded by
 #    `customer_notice_message_id`: never repeated by later turns, job retries
 #    or resends. Its `scansolo_origin` keeps it out of the implicit takeover.
 class ScanSolo::Quote::RequestService
   NOTICE_ORIGIN = 'quote_notice'.freeze
+  EMAIL_ORIGIN = 'quote_request_email'.freeze
+
+  Rendered = Struct.new(:email, :blobs, keyword_init: true)
   MISCONFIGURED_EVENT = 'quote_request.misconfigured'.freeze
 
   def self.call(opportunity:)
@@ -36,17 +43,27 @@ class ScanSolo::Quote::RequestService
     settings = resolve_settings!(opportunity)
     return if settings.nil?
 
-    email = compose(opportunity)
-    quote_request = open_request!(opportunity, settings, email.subject)
-    deliver!(quote_request: quote_request, settings: settings, email: email) if quote_request
+    snapshot = snapshot(opportunity)
+    rendered = render(snapshot)
+    quote_request = open_request!(opportunity, settings, rendered.email.subject)
+    deliver!(quote_request: quote_request, settings: settings, snapshot: snapshot, rendered: rendered) if quote_request
   end
 
-  def deliver!(quote_request:, settings:, email: compose(quote_request.opportunity))
-    message = ScanSolo::Quote::EmailThread.post!(conversation: quote_request.email_conversation, recipient: settings.recipient, email: email)
-    quote_request.update!(request_message_id: message.id, sent_at: Time.current)
+  # Rendered before the request is opened, so the post follows its commit right away.
+  def deliver!(quote_request:, settings:, snapshot: snapshot(quote_request.opportunity), rendered: render(snapshot))
+    message = ScanSolo::Quote::EmailThread.post!(
+      conversation: quote_request.email_conversation, recipient: settings.recipient, email: rendered.email,
+      attachments: rendered.blobs, additional_attributes: { 'scansolo_origin' => EMAIL_ORIGIN }
+    )
+    quote_request.update!(
+      request_message_id: message.id, sent_at: Time.current, rendered_snapshot: snapshot,
+      rendered_digest: Digest::SHA256.hexdigest(snapshot.to_json), update_window_ends_at: nil
+    )
     ScanSolo::AuditLogger.record!(
       subject: quote_request.opportunity, event_type: 'quote_request.sent', correlation_id: quote_request.correlation_id,
-      payload: { quote_request_id: quote_request.id, message_id: message.id, recipient: settings.recipient }
+      payload: { quote_request_id: quote_request.id, opportunity_id: quote_request.opportunity_id,
+                 template_version: ScanSolo::Quote::RequestEmail::TEMPLATE_VERSION, recipient: settings.recipient,
+                 message_id: message.id, result: 'sent' }
     )
     post_customer_notice!(quote_request)
   end
@@ -61,7 +78,7 @@ class ScanSolo::Quote::RequestService
 
   # The single request of the opportunity and its e-mail thread; the caller
   # holds the opportunity lock (the job and the manual resend).
-  def create_request!(opportunity, settings, subject = compose(opportunity).subject)
+  def create_request!(opportunity, settings, subject = ScanSolo::Quote::RequestEmail.new(snapshot(opportunity)).subject)
     quote_request = ScanSolo::QuoteRequest.create!(
       account: opportunity.account, opportunity: opportunity, status: :awaiting_reply, correlation_id: SecureRandom.uuid
     )
@@ -91,9 +108,15 @@ class ScanSolo::Quote::RequestService
     end
   end
 
-  def compose(opportunity)
-    config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
-    ScanSolo::Quote::EmailComposer.request(snapshot: ScanSolo::Quote::RequestEmail::Snapshot.call(opportunity: opportunity, config: config))
+  # The RequestEmail result plus the ActiveStorage blobs of its attachments (RF-13).
+  def render(snapshot)
+    rendered = ScanSolo::Quote::RequestEmail.render(snapshot: snapshot)
+    blobs = Attachment.where(id: rendered.attachment_ids).order(:id).map { |attachment| attachment.file.blob }
+    Rendered.new(email: rendered.email, blobs: blobs)
+  end
+
+  def snapshot(opportunity)
+    ScanSolo::Quote::RequestEmail::Snapshot.call(opportunity: opportunity, config: ScanSolo::AiAgentConfig.published_for(opportunity.account))
   end
 
   def post_customer_notice!(quote_request)

@@ -8,9 +8,11 @@
 #    id; with no request, only the RF-14 case (still `concluida` with next
 #    action `proposta` and a `quote_request.misconfigured` audit) creates the
 #    single request (RF-15); anything else is not eligible.
-# 3. After commit the CT-03 e-mail goes to the recipient published now; the
-#    status does not change and the RF-53 notice is never repeated. One
-#    `quote_request.resent` audit keeps the actor and recipient.
+# 3. After commit the CT-01 e-mail, rendered from the current data, goes to
+#    the recipient published now (RF-20); it becomes the base of the next
+#    update e-mail and is never an update itself. The status does not change
+#    and the RF-53 notice is never repeated. One `quote_request.resent` audit
+#    keeps the actor and recipient, next to the `quote_request.sent` one.
 class ScanSolo::Quote::ResendService
   Result = Data.define(:quote_request, :recipient, :resent_at)
 

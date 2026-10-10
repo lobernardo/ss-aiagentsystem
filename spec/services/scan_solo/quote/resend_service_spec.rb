@@ -64,6 +64,38 @@ RSpec.describe ScanSolo::Quote::ResendService do
     expect(ScanSolo::QuoteRequest.sole.email_conversation.messages.outgoing.count).to eq(3)
   end
 
+  # RF-20 (replaces the OC/RF-13 body expectations): the resend renders the CT-01 e-mail from the current data.
+  describe 'resend in the CT-01 format (RF-20)' do
+    let(:quote_request) { ScanSolo::QuoteRequest.sole }
+    let(:outgoing) { quote_request.email_conversation.messages.outgoing }
+
+    before do
+      ScanSolo::Quote::RequestService.call(opportunity: opportunity)
+      writer.apply_field!(key: 'profundidade', value: '3 m', status: 'confirmado', source_message_id: nil)
+    end
+
+    it 'posts 2 messages in the same thread, with 1 request, no new notice and no update e-mail' do
+      expect { 2.times { resend } }.to change(outgoing, :count).by(2)
+
+      expect(outgoing.order(:id).last.content).to include('DADOS DO CLIENTE', 'Profundidade de interesse: 3 m')
+      expect(outgoing.order(:id).last.additional_attributes).to include('scansolo_origin' => 'quote_request_email')
+      expect(ScanSolo::QuoteRequest.where(opportunity: opportunity).count).to eq(1)
+      expect(notices.count).to eq(1)
+      expect(ScanSolo::QuoteRequestUpdate.count).to eq(0)
+    end
+
+    it 'makes the last resend the base of the next update and audits each one as quote_request.sent' do
+      2.times { resend }
+
+      snapshot = ScanSolo::Quote::RequestEmail::Snapshot.call(opportunity: opportunity, config: ScanSolo::AiAgentConfig.published_for(account))
+      expect(quote_request).to have_attributes(
+        request_message_id: outgoing.order(:id).last.id, rendered_snapshot: snapshot, rendered_digest: Digest::SHA256.hexdigest(snapshot.to_json)
+      )
+      expect(snapshot.dig('fields', 'profundidade', 'value')).to eq('3 m')
+      expect(ScanSolo::AuditEvent.where(event_type: 'quote_request.sent', correlation_id: quote_request.correlation_id).count).to eq(3)
+    end
+  end
+
   it 'keeps a correction_requested request status' do
     ScanSolo::Quote::RequestService.call(opportunity: opportunity)
     ScanSolo::QuoteRequest.sole.update!(status: :correction_requested)

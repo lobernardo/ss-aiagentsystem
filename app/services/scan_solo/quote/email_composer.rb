@@ -1,7 +1,8 @@
 # CT-03 / RF-13 / RF-18 / RF-37: the e-mails sent through the native quote
-# inbox -- the quote request, the correction of an unreadable reply and the
-# negotiation notification -- plus, for scansolo-proposta-aprovacao-email,
-# the approval request (CT-05) and the proposal e-mail to the lead (CT-06).
+# inbox -- the quote request (rendered by ScanSolo::Quote::RequestEmail), the
+# correction of an unreadable reply and the negotiation notification -- plus,
+# for scansolo-proposta-aprovacao-email, the approval request (CT-05) and the
+# proposal e-mail to the lead (CT-06).
 # Pure: no writes, no I/O. Every text comes from `scan_solo.*` (RNF-08); the
 # HTML keeps one label/field per line with `<br>` and escapes every value.
 # Nothing secret (tokens, API URLs) is rendered (RNF-07, RNF-09): the only
@@ -13,21 +14,10 @@ class ScanSolo::Quote::EmailComposer
   BLOCK_KEYS = %i[total_value schedule scope payment_terms notes].freeze
 
   class << self
-    # RF-13, in order: identification, every non-`faltante` catalog field
-    # (`inferido` marked "(a confirmar)") and the empty CT-04 block.
-    def request(opportunity:, projection:)
-      company = projection.blocks.values.flatten.find { |field| field[:key] == 'empresa' && field[:status] != 'faltante' }&.dig(:value)
-      lines = [
-        t('quote.email.sections.identification'),
-        *identification_lines(opportunity, company),
-        '',
-        t('quote.email.sections.collected_data'),
-        *collected_lines(projection),
-        '',
-        *instruction_lines
-      ]
-
-      build(t('quote.email.subject', opportunity_id: opportunity.id, name: company.presence || opportunity.contact.name), lines)
+    # CT-01 (RF-02..RF-13 of scansolo-solicitacao-orcamento-email, replacing
+    # RF-13 here): rendered by ScanSolo::Quote::RequestEmail.
+    def request(snapshot:)
+      ScanSolo::Quote::RequestEmail.render(snapshot: snapshot).email
     end
 
     # RF-18: posted in the request thread, so the subject is the thread's
@@ -110,6 +100,11 @@ class ScanSolo::Quote::EmailComposer
       block_lines.join("\n")
     end
 
+    # The CT-04 instructions and empty block that end every quote thread e-mail.
+    def instruction_lines
+      [t('quote.email.sections.instructions'), t('quote.email.instructions'), '', *block_lines]
+    end
+
     private
 
     def build(subject, lines)
@@ -124,30 +119,9 @@ class ScanSolo::Quote::EmailComposer
       "#{label}: #{value.presence || t('quote.email.not_informed')}"
     end
 
-    def identification_lines(opportunity, company)
-      contact = opportunity.contact
-      {
-        opportunity: "##{opportunity.id}", name: contact.name, company: company, phone: contact.phone_number, email: contact.email,
-        origin: t("quote.email.origin.#{opportunity.lead_source || 'none'}"), owner: opportunity.owner&.name,
-        stage: stage_label(opportunity.stage),
-        conversation_link: conversation_url(opportunity.account_id, opportunity.conversation.display_id)
-      }.map { |key, value| line(t("quote.email.identification.#{key}"), value) }
-    end
-
     def lead_name(opportunity)
       company = opportunity.lead_state&.fields.to_h['empresa'].to_h
       [opportunity.contact.name, (company['value'] unless company['status'] == 'faltante')].compact_blank.join(' — ')
-    end
-
-    def collected_lines(projection)
-      projection.blocks.values.flatten.reject { |field| field[:status] == 'faltante' }.map do |field|
-        value = field[:status] == 'inferido' ? "#{field[:value]} #{t('quote.email.to_confirm')}" : field[:value].to_s
-        line(field[:label], value)
-      end
-    end
-
-    def instruction_lines
-      [t('quote.email.sections.instructions'), t('quote.email.instructions'), '', *block_lines]
     end
 
     def block_lines

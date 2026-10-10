@@ -6,54 +6,47 @@ RSpec.describe ScanSolo::Quote::EmailComposer do
   let(:block_labels) { ['Valor total:', 'Prazo/cronograma:', 'Escopo/atividades:', 'Condições de pagamento:', 'Observações comerciais:'] }
   let(:empty_block) { ['=== RESPOSTA DO ORÇAMENTO ===', *block_labels, '=== FIM ==='].join("\n") }
 
-  describe '.request (RF-13)' do
+  # OC/RF-13 replaced by RF-02..RF-13 of scansolo-solicitacao-orcamento-email:
+  # `.request` delegates to ScanSolo::Quote::RequestEmail (CT-01).
+  describe '.request (RF-02..RF-13)' do
     let(:account) { create(:account) }
-    let(:owner) { create(:user, account: account, name: 'Bruna Lima') }
     let(:contact) { create(:contact, account: account, name: 'Ana Souza', phone_number: '+5511987654321', email: 'ana@example.com') }
     let(:conversation) { create(:conversation, account: account, contact: contact) }
     let(:opportunity) do
-      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado,
-                                            lead_source: 'manual', owner: owner)
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
     end
     let(:writer) { ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state) }
     let(:config) { ScanSolo::AiAgentConfig.new(required_qualification_fields: ['Área']) }
-    let(:projection) { ScanSolo::LeadState::Projection.call(opportunity: opportunity.reload, config: config) }
-    let(:email) { described_class.request(opportunity: opportunity, projection: projection) }
+    let(:snapshot) { ScanSolo::Quote::RequestEmail::Snapshot.call(opportunity: opportunity.reload, config: config) }
+    let(:email) { described_class.request(snapshot: snapshot) }
 
     before do
       writer.apply_field!(key: 'empresa', value: 'Solar <Ltda>', status: 'confirmado', source_message_id: nil)
-      writer.apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil)
+      writer.apply_field!(key: 'tecnologia', value: 'GPR', status: 'confirmado', source_message_id: nil)
       writer.apply_field!(key: 'cidade_uf', value: 'Campinas/SP', status: 'inferido', source_message_id: nil)
     end
 
-    it 'composes the subject, identification, collected fields and the empty CT-04 block' do
-      with_modified_env FRONTEND_URL: 'https://app.example.com' do
-        expect(email.subject).to eq("Solicitação de orçamento ##{opportunity.id} — Solar <Ltda>")
-        expect(email.text).to include(
-          "Oportunidade: ##{opportunity.id}", 'Nome: Ana Souza', 'Empresa: Solar <Ltda>', 'Telefone: +5511987654321',
-          'E-mail: ana@example.com', 'Origem: Comercial', 'Responsável: Bruna Lima', 'Etapa: Qualificado',
-          "https://app.example.com/app/accounts/#{account.id}/conversations/#{conversation.display_id}",
-          'Empresa / razão social: Solar <Ltda>', 'Área: 800 m²', 'Cidade / UF: Campinas/SP (a confirmar)', empty_block
-        )
-      end
-    end
-
-    it 'marks only inferido fields, skips faltante fields and renders no secret' do
-      fields = projection.blocks.values.flatten.reject { |field| field[:status] == 'faltante' }
-      inferred, confirmed = fields.partition { |field| field[:status] == 'inferido' }
-
-      expect(email.text.scan('(a confirmar)').size).to eq(inferred.size)
-      inferred.each { |field| expect(email.text).to include("#{field[:label]}: #{field[:value]} (a confirmar)") }
-      confirmed.each { |field| expect(email.text).to include("#{field[:label]}: #{field[:value]}\n") }
-      expect(email.text).not_to include('Profundidade de investigação', 'api_access_token')
-      expect(email.text.index('Identificação')).to be < email.text.index('Dados coletados')
-      expect(email.text.index('Dados coletados')).to be < email.text.index('=== RESPOSTA DO ORÇAMENTO ===')
+    it 'renders the CT-01 e-mail of ScanSolo::Quote::RequestEmail' do
+      expect(email).to eq(ScanSolo::Quote::RequestEmail.render(snapshot: snapshot).email)
+      expect(email.subject).to eq('Solicitação de orçamento | Solar | GeoRadar | Campinas/SP')
+      expect(email.text).to include(
+        'Empresa: Solar <Ltda>', 'Contato: Ana Souza', 'E-mail do solicitante: ana@example.com',
+        'Telefone/WhatsApp do solicitante: +5511987654321', 'Cidade/UF: Campinas/SP (a confirmar)', 'Tecnologia: GPR', '* Área;'
+      )
+      expect(email.text).not_to include('Oportunidade:', 'Origem:', 'Responsável:', 'Etapa:', 'api_access_token')
+      expect(email.text).to end_with(empty_block)
     end
 
     it 'breaks HTML lines with <br> and escapes values' do
-      expect(email.html).to include('Nome: Ana Souza<br>Empresa: Solar &lt;Ltda&gt;<br>')
-      expect(email.html).to include(block_labels.join('<br>'))
+      expect(email.html).to include('Empresa: Solar &lt;Ltda&gt;<br>', block_labels.join('<br>'))
       expect(email.html).not_to include('<Ltda>')
+    end
+  end
+
+  describe '.instruction_lines' do
+    it 'ends with the empty CT-04 block' do
+      expect(described_class.instruction_lines.join("\n")).to end_with(empty_block)
+      expect(described_class.instruction_lines.first).to eq('Instruções de resposta')
     end
   end
 

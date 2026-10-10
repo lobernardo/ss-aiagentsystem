@@ -36,14 +36,13 @@ class ScanSolo::Quote::RequestService
     settings = resolve_settings!(opportunity)
     return if settings.nil?
 
-    quote_request = open_request!(opportunity, settings)
-    deliver!(quote_request: quote_request, settings: settings) if quote_request
+    email = compose(opportunity)
+    quote_request = open_request!(opportunity, settings, email.subject)
+    deliver!(quote_request: quote_request, settings: settings, email: email) if quote_request
   end
 
-  def deliver!(quote_request:, settings:)
-    message = ScanSolo::Quote::EmailThread.post!(
-      conversation: quote_request.email_conversation, recipient: settings.recipient, email: compose(quote_request.opportunity)
-    )
+  def deliver!(quote_request:, settings:, email: compose(quote_request.opportunity))
+    message = ScanSolo::Quote::EmailThread.post!(conversation: quote_request.email_conversation, recipient: settings.recipient, email: email)
     quote_request.update!(request_message_id: message.id, sent_at: Time.current)
     ScanSolo::AuditLogger.record!(
       subject: quote_request.opportunity, event_type: 'quote_request.sent', correlation_id: quote_request.correlation_id,
@@ -62,12 +61,12 @@ class ScanSolo::Quote::RequestService
 
   # The single request of the opportunity and its e-mail thread; the caller
   # holds the opportunity lock (the job and the manual resend).
-  def create_request!(opportunity, settings)
+  def create_request!(opportunity, settings, subject = compose(opportunity).subject)
     quote_request = ScanSolo::QuoteRequest.create!(
       account: opportunity.account, opportunity: opportunity, status: :awaiting_reply, correlation_id: SecureRandom.uuid
     )
     conversation = ScanSolo::Quote::EmailThread.open!(
-      inbox: settings.inbox, recipient: settings.recipient, subject: compose(opportunity).subject, marker: 'quote_request'
+      inbox: settings.inbox, recipient: settings.recipient, subject: subject, marker: 'quote_request'
     )
     quote_request.update!(email_conversation: conversation)
     quote_request
@@ -82,11 +81,11 @@ class ScanSolo::Quote::RequestService
     nil
   end
 
-  def open_request!(opportunity, settings)
+  def open_request!(opportunity, settings, subject)
     ActiveRecord::Base.transaction do
       opportunity.lock!
       existing = ScanSolo::QuoteRequest.find_by(opportunity_id: opportunity.id)
-      next create_request!(opportunity, settings) if existing.nil?
+      next create_request!(opportunity, settings, subject) if existing.nil?
 
       existing if existing.request_message_id.nil?
     end
@@ -94,9 +93,7 @@ class ScanSolo::Quote::RequestService
 
   def compose(opportunity)
     config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
-    ScanSolo::Quote::EmailComposer.request(
-      opportunity: opportunity, projection: ScanSolo::LeadState::Projection.call(opportunity: opportunity, config: config)
-    )
+    ScanSolo::Quote::EmailComposer.request(snapshot: ScanSolo::Quote::RequestEmail::Snapshot.call(opportunity: opportunity, config: config))
   end
 
   def post_customer_notice!(quote_request)

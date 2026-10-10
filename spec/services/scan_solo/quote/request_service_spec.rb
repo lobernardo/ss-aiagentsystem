@@ -63,7 +63,7 @@ RSpec.describe ScanSolo::Quote::RequestService do
 
       mail = ActionMailer::Base.deliveries.sole
       expect(mail).to have_attributes(from: ['atendimento.comercial@scansolo.com.br'], to: ['comercial@scansolo.com.br'],
-                                      subject: "Solicitação de orçamento ##{opportunity.id} — Ana Souza")
+                                      subject: 'Solicitação de orçamento | Ana Souza | Serviço não informado') # RF-02 (CT-01)
     end
 
     it 'records quote_request.sent with the request correlation id (RF-22, RNF-09)' do

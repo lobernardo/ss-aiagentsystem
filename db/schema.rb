@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_10_07_100003) do
+ActiveRecord::Schema[7.2].define(version: 2026_10_10_100002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1485,6 +1485,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_07_100003) do
     t.bigint "quote_inbox_id"
     t.bigint "commercial_user_id"
     t.string "quote_recipient_email", default: "comercial@scansolo.com.br", null: false
+    t.boolean "quote_email_validation_mode", default: true, null: false
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_draft", unique: true, where: "(status = 0)"
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_id"
     t.index ["published_version_id"], name: "index_scan_solo_ai_agent_configs_on_published_version_id"
@@ -1778,6 +1779,18 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_07_100003) do
     t.index ["resolved_by_id"], name: "index_scan_solo_quote_replies_on_resolved_by_id"
   end
 
+  create_table "scan_solo_quote_request_updates", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "quote_request_id", null: false
+    t.string "version_digest", null: false
+    t.bigint "message_id"
+    t.datetime "sent_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_scan_solo_quote_request_updates_on_account_id"
+    t.index ["quote_request_id", "version_digest"], name: "index_scan_solo_quote_request_updates_on_request_and_digest", unique: true
+  end
+
   create_table "scan_solo_quote_requests", force: :cascade do |t|
     t.bigint "account_id", null: false
     t.bigint "opportunity_id", null: false
@@ -1792,6 +1805,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_07_100003) do
     t.datetime "replied_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.jsonb "rendered_snapshot"
+    t.string "rendered_digest"
+    t.datetime "update_window_ends_at"
     t.index ["account_id"], name: "index_scan_solo_quote_requests_on_account_id"
     t.index ["correlation_id"], name: "index_scan_solo_quote_requests_on_correlation_id", unique: true
     t.index ["email_conversation_id"], name: "index_scan_solo_quote_requests_on_email_conversation_id", unique: true
@@ -2003,6 +2019,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_07_100003) do
   add_foreign_key "scan_solo_proposals", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_quote_replies", "scan_solo_quote_requests", column: "quote_request_id"
   add_foreign_key "scan_solo_quote_replies", "users", column: "resolved_by_id"
+  add_foreign_key "scan_solo_quote_request_updates", "scan_solo_quote_requests", column: "quote_request_id"
   add_foreign_key "scan_solo_quote_requests", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_template_mappings", "accounts"
   add_foreign_key "user_sessions", "users"

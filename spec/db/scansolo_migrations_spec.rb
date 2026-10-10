@@ -53,7 +53,9 @@ RSpec.describe 'ScanSolo migrations' do
     # scansolo-operacao-centralizada T01 (RNF-11) added 5 additive migrations.
     # scansolo-proposta-aprovacao-email T04 (RNF-07) added 3 more: approval/e-mail
     # delivery columns, N versions per quote request and unique idempotency_key.
-    expect(scansolo_migration_files.length).to eq(38)
+    # scansolo-solicitacao-orcamento-email T01 (RF-14, RF-21) added 2 more:
+    # quote_email_validation_mode flag and quote request update tracking.
+    expect(scansolo_migration_files.length).to eq(40)
   end
 
   it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do

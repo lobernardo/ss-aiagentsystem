@@ -18,6 +18,7 @@
 #  opt_out_keywords              :jsonb            not null
 #  persona                       :string
 #  qualification_playbook        :jsonb            not null
+#  quote_email_validation_mode   :boolean          default(TRUE), not null
 #  require_proposal_approval     :boolean          default(TRUE), not null
 #  required_qualification_fields :jsonb            not null
 #  response_limits               :text

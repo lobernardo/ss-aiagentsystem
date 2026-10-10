@@ -7,9 +7,12 @@
 #
 #  id                         :bigint           not null, primary key
 #  commercial                 :jsonb            not null
+#  rendered_digest            :string
+#  rendered_snapshot          :jsonb
 #  replied_at                 :datetime
 #  sent_at                    :datetime
 #  status                     :integer          default("awaiting_reply"), not null
+#  update_window_ends_at      :datetime
 #  created_at                 :datetime         not null
 #  updated_at                 :datetime         not null
 #  account_id                 :bigint           not null

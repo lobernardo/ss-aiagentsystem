@@ -49,6 +49,7 @@ const draftFixture = {
   quote_inbox_id: null,
   commercial_user_id: null,
   quote_recipient_email: 'comercial@example.com',
+  quote_email_validation_mode: true,
   updated_at: '2026-01-01T09:00:00Z',
 };
 
@@ -632,6 +633,61 @@ describe('AgentCenter', () => {
       await flushPromises();
 
       expect(ScanSoloAiAgentConfigAPI.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it('UI-01: shows the validation mode toggle checked from the draft', async () => {
+      const wrapper = mountAgentCenter();
+      await flushPromises();
+      const section = commercial(wrapper);
+
+      expect(section.text()).toContain(
+        'Modo validação do e-mail de solicitação'
+      );
+      expect(
+        section.find('[data-testid="field-quoteEmailValidationMode"]').element
+          .checked
+      ).toBe(true);
+    });
+
+    it('UI-01: loads an unchecked toggle from a false draft', async () => {
+      ScanSoloAiAgentConfigAPI.get.mockResolvedValue({
+        data: {
+          draft: { ...draftFixture, quote_email_validation_mode: false },
+          published: null,
+          available_models: AVAILABLE_MODELS,
+        },
+      });
+      const wrapper = mountAgentCenter();
+      await flushPromises();
+
+      expect(
+        commercial(wrapper).find(
+          '[data-testid="field-quoteEmailValidationMode"]'
+        ).element.checked
+      ).toBe(false);
+    });
+
+    it('UI-01: unchecking the toggle and saving sends quote_email_validation_mode false', async () => {
+      ScanSoloAiAgentConfigAPI.updateDraft.mockResolvedValue({
+        data: { ...draftFixture, quote_email_validation_mode: false },
+      });
+      const wrapper = mountAgentCenter();
+      await flushPromises();
+
+      await commercial(wrapper)
+        .find('[data-testid="field-quoteEmailValidationMode"]')
+        .setValue(false);
+      await wrapper.find('form').trigger('submit');
+      await flushPromises();
+
+      expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ quote_email_validation_mode: false })
+      );
+      expect(
+        commercial(wrapper).find(
+          '[data-testid="field-quoteEmailValidationMode"]'
+        ).element.checked
+      ).toBe(false);
     });
 
     it('leaves the ScanSolo menu items unchanged', () => {

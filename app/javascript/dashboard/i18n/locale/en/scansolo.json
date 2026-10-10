@@ -189,7 +189,8 @@
         "OPT_OUT_KEYWORDS": "Palavras-chave de opt-out",
         "QUOTE_INBOX_ID": "Inbox de e-mail de orçamento",
         "COMMERCIAL_USER_ID": "Usuário comercial responsável",
-        "QUOTE_RECIPIENT_EMAIL": "E-mail do destinatário comercial"
+        "QUOTE_RECIPIENT_EMAIL": "E-mail do destinatário comercial",
+        "QUOTE_EMAIL_VALIDATION_MODE": "Modo validação do e-mail de solicitação"
       },
       "SECTIONS": {
         "IDENTITY": "Identidade",

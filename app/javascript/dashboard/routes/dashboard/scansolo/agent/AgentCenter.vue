@@ -77,6 +77,7 @@ const emptyForm = () => ({
   quoteInboxId: null,
   commercialUserId: null,
   quoteRecipientEmail: '',
+  quoteEmailValidationMode: true,
 });
 
 const form = reactive(emptyForm());
@@ -183,6 +184,7 @@ const draftPayload = () => ({
   quote_inbox_id: form.quoteInboxId,
   commercial_user_id: form.commercialUserId,
   quote_recipient_email: form.quoteRecipientEmail.trim(),
+  quote_email_validation_mode: form.quoteEmailValidationMode,
 });
 
 const saveDraft = async () => {

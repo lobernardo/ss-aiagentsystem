@@ -5,6 +5,7 @@
 # RF-54: the quote inbox, commercial user and commercial recipient are part
 # of the publish snapshot. RF-14/RF-16: the quote inbox must be an email inbox
 # of the account kept outside the effective allowlist, rejected here (422).
+# RF-21 / CT-05 (1): `quote_email_validation_mode` only accepts a JSON boolean.
 class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts::ScanSolo::BaseController
   before_action :set_draft
 
@@ -51,6 +52,9 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
     validate_quote_inbox if params.key?(:quote_inbox_id) || params.key?(:allowed_inbox_ids)
     validate_commercial_user if params.key?(:commercial_user_id)
     validate_quote_recipient_email if params.key?(:quote_recipient_email)
+    return if !params.key?(:quote_email_validation_mode) || [true, false].include?(params[:quote_email_validation_mode])
+
+    @draft.errors.add(:quote_email_validation_mode, 'must be a boolean')
   end
 
   def validate_inbox_ids
@@ -98,6 +102,7 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
       :name, :enabled, :model_provider, :model_selection, :role, :objective, :persona, :tone,
       :instructions, :service_rules, :transfer_criteria, :response_limits, :service_hours,
       :require_proposal_approval, :quote_inbox_id, :commercial_user_id, :quote_recipient_email,
+      :quote_email_validation_mode,
       allowed_inbox_ids: [],
       opt_out_keywords: [],
       qualification_playbook: [],

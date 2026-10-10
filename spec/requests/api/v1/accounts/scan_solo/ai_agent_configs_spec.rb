@@ -230,4 +230,48 @@ RSpec.describe 'ScanSolo AI Agent Config API', type: :request do
       expect(response.parsed_body['require_proposal_approval']).to be(false)
     end
   end
+
+  describe 'quote e-mail validation mode (RF-21, CT-05 (1))' do
+    let(:headers) { agent.create_new_auth_token }
+
+    it 'defaults to true in the draft and the published snapshot' do
+      post "#{base_path}/publish", headers: headers, as: :json
+      get base_path, headers: headers, as: :json
+
+      expect(response.parsed_body['draft']['quote_email_validation_mode']).to be(true)
+      expect(response.parsed_body['published']['quote_email_validation_mode']).to be(true)
+    end
+
+    it 'saves false in the draft and publishes it' do
+      put "#{base_path}/draft", params: { quote_email_validation_mode: false }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['quote_email_validation_mode']).to be(false)
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).quote_email_validation_mode).to be(false)
+
+      post "#{base_path}/publish", headers: headers, as: :json
+      get base_path, headers: headers, as: :json
+
+      expect(response.parsed_body['published']['quote_email_validation_mode']).to be(false)
+    end
+
+    it 'rejects a non-boolean value without coercion' do
+      ['yes', 1, 'true', nil].each do |value|
+        put "#{base_path}/draft", params: { quote_email_validation_mode: value }, headers: headers, as: :json
+
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(response.parsed_body['attributes']).to include('quote_email_validation_mode')
+      end
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).quote_email_validation_mode).to be(true)
+    end
+
+    it 'rejects writes from a non-administrator agent' do
+      reader = create(:user, account: account, role: :agent)
+
+      put "#{base_path}/draft", params: { quote_email_validation_mode: false }, headers: reader.create_new_auth_token, as: :json
+
+      expect(response).to have_http_status(:forbidden)
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).quote_email_validation_mode).to be(true)
+    end
+  end
 end

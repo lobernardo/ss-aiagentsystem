@@ -17,7 +17,9 @@ RSpec.describe 'ScanSolo per-account rate limits', type: :request do
     original_enabled = Rack::Attack.enabled
     Rack::Attack.enabled = true
     Rack::Attack.reset!
-    example.run
+    # Throttle windows are epoch-aligned minutes; freezing at the start of one keeps
+    # every request in the same window (and the Redis key alive for ~60s of real time).
+    travel_to(Time.current.beginning_of_minute) { example.run }
     Rack::Attack.reset!
     Rack::Attack.enabled = original_enabled
   end

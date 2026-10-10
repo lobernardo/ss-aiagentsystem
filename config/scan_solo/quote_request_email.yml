@@ -1,0 +1,26 @@
+# Quote request e-mail (scansolo-solicitacao-orcamento-email, RF-04/RF-08/RF-21,
+# CT-05 (2), CT-07). Versioned, non-secret, no UI: changing it needs a deploy.
+# Loaded and validated by ScanSolo::Quote::RequestEmail::Settings.
+
+# RF-04: terms matched against `tipo_servico` + `tecnologia` (case and accents
+# ignored). Terms from both groups produce `combined_label`.
+service_labels:
+  - label: GeoRadar
+    terms:
+      - georadar
+      - geo radar
+      - gpr
+  - label: Pipe Locator
+    terms:
+      - pipe locator
+      - pipelocator
+      - localizador de tubulação
+combined_label: GeoRadar + Pipe Locator
+
+# RF-08 / CT-07: ordered optional pending items (indexes 1..8 of CT-07) per
+# service label. `outro` covers free-text services and "Serviço não informado".
+pending_items_by_service:
+  GeoRadar: [1, 2, 3, 4, 5, 6, 7, 8]
+  Pipe Locator: [1, 2, 3, 4, 5, 6, 7, 8]
+  GeoRadar + Pipe Locator: [1, 2, 3, 4, 5, 6, 7, 8]
+  outro: [1, 2, 3, 4, 5, 6, 7, 8]

@@ -48,6 +48,9 @@ class ScanSolo::QuoteRequest < ApplicationRecord
            inverse_of: :quote_request,
            dependent: :restrict_with_exception
 
+  # RF-14: update e-mails sent in the request thread, one per qualification version.
+  has_many :updates, class_name: 'ScanSolo::QuoteRequestUpdate', inverse_of: :quote_request, dependent: :destroy
+
   enum status: { awaiting_reply: 0, correction_requested: 1, replied: 2 }
 
   validates :correlation_id, presence: true

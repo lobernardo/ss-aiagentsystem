@@ -52,6 +52,13 @@ RSpec.describe ScanSolo::QuoteRequest do
     expect(reloaded.reply_message).to eq(reply)
   end
 
+  it 'lists its update e-mails and destroys them with the request (RF-14)' do
+    update = quote_request.updates.create!(account: account, version_digest: 'abc')
+
+    expect(quote_request.reload.updates).to eq([update])
+    expect { quote_request.destroy! }.to change(ScanSolo::QuoteRequestUpdate, :count).by(-1)
+  end
+
   describe '#generation_open? (RF-07)' do
     let(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
 

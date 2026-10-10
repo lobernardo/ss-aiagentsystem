@@ -62,4 +62,29 @@ RSpec.describe ScanSolo::AiAgent::PublishService do
     expect(published.reload.allowed_inbox_ids).to eq([inbox.id])
     expect(published.opt_out_keywords).to eq(['BASTA'])
   end
+
+  describe 'quote e-mail validation mode (RF-12, RF-21)' do
+    it 'is part of the published snapshot fields' do
+      expect(ScanSolo::AiAgentConfig::FIELDS).to include(:quote_email_validation_mode)
+    end
+
+    it 'publishes a draft that turned the flag off' do
+      draft = ScanSolo::AiAgentConfig.draft_for!(account)
+      draft.update!(quote_email_validation_mode: false)
+
+      published = described_class.new(account: account).call
+
+      expect(published.quote_email_validation_mode).to be false
+    end
+
+    it 'keeps the published flag when the draft changes without publishing' do
+      draft = ScanSolo::AiAgentConfig.draft_for!(account)
+      published = described_class.new(account: account).call
+
+      draft.update!(quote_email_validation_mode: false)
+
+      expect(published.reload.quote_email_validation_mode).to be true
+      expect(ScanSolo::AiAgentConfig.published_for(account).quote_email_validation_mode).to be true
+    end
+  end
 end

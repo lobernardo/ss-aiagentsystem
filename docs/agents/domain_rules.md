@@ -44,7 +44,8 @@
   - `quote_inbox_id` must be an account email inbox that is not in `allowed_inbox_ids`.
   - `commercial_user_id` must be an account user.
   - `quote_recipient_email` must be a valid email.
-- Defaults (`db/schema.rb`): `opt_out_keywords` `["PARAR","SAIR","STOP"]`, `require_proposal_approval` `true`, `quote_recipient_email` `comercial@scansolo.com.br`.
+  - `quote_email_validation_mode` must be a JSON boolean.
+- Defaults (`db/schema.rb`): `opt_out_keywords` `["PARAR","SAIR","STOP"]`, `require_proposal_approval` `true`, `quote_recipient_email` `comercial@scansolo.com.br`, `quote_email_validation_mode` `true`.
 
 ### Pipeline stages and transitions
 
@@ -303,6 +304,24 @@ Attempts: `MAX_ATTEMPTS = 2`. A first-attempt violation in `OutputValidator::REG
   - Inbox and recipient come from the published config (`Quote::Mailbox`). A misconfigured inbox (`quote_inbox_missing` / `quote_inbox_not_email` / `quote_inbox_allowlisted`) audits `quote_request.misconfigured` and stops.
   - The opportunity gets 1 request (unique `opportunity_id`) and 1 email thread. The email is posted after commit, with audit `quote_request.sent`. A job retry for a request without `request_message_id` posts it once.
   - The customer notice is posted once (`customer_notice_message_id`).
+- Request e-mail (CT-01, `Quote::RequestEmail`, `template_version` `quote_request_email.v2`):
+  - Rendered deterministically from a `RequestEmail::Snapshot` (published config, lead state, contact columns and `custom_attributes`, incoming attachments/locations of the WhatsApp conversation). No LLM, no HTTP, no writes.
+  - Subject `Solicitação de orçamento | {empresa_curta} | {servico_label}[ | {cidade}/{uf}]`, ≤ 120 chars, no control characters. Body sections in CT-01 order; empty optional lines and sections are omitted; lead values are quoted as is (HTML escaped); `inferido` values end with `(a confirmar)`. The phone comes only from `contact.phone_number`.
+  - Pending items: missing `required_qualification_fields` plus the CT-07 items of the service label. Service labels and the pending table live in the versioned `config/scan_solo/quote_request_email.yml` (no UI; a change needs a deploy).
+  - The validation paragraph appears only while the published `quote_email_validation_mode` is on.
+  - Lead attachments (`image`/`audio`/`video`/`file`) are attached in chronological order while the total stays ≤ 15 MiB; the rest is listed with the conversation link.
+  - Every e-mail ends with the unchanged OC/CT-04 instructions and empty block. A lead line that would read as a block label is neutralized.
+  - From = inbox `business_name` with `sender_name_type: professional`; no new Reply-To.
+  - Audit payload of `quote_request.sent` / `quote_request.update_sent` / `quote_request.delivery_failed`: `quote_request_id, opportunity_id, template_version, recipient, message_id, result`, with the request `correlation_id`. No body or personal data beyond the recipient.
+- Update e-mail (CT-03, `Quote::UpdateScheduler` → `QuoteRequestUpdateJob` → `Quote::UpdateService`):
+  - The first rendered change after the last e-mail sent (lead state field via the Writer, or a new incoming attachment/location/map URL via the listener) opens a fixed 10-minute window (`update_window_ends_at`). Later changes never extend it.
+  - At the end of the window, 1 e-mail goes out in the request thread (`Re: <mail_subject>`, body starting with `Atualização:`) only if the request is `awaiting_reply`/`correction_requested` and the snapshot differs from `rendered_snapshot`. Audit `quote_request.update_sent`.
+  - At most 1 e-mail per version: unique `(quote_request_id, version_digest)` in `scan_solo_quote_request_updates`. No new request, thread, status change or customer notice.
+  - A send or manual resend stores `rendered_snapshot`/`rendered_digest` as the next comparison base.
+- Delivery failure (RF-18):
+  - Before the message exists: `QuoteRequestJob` / `QuoteRequestUpdateJob` retry 1, 5 and 15 minutes later (4 attempts). Once exhausted, `Quote::DeliveryFailureService` posts 1 private note on the WhatsApp conversation and audits `quote_request.delivery_failed`.
+  - Message created and later `failed` (origins `quote_request_email` / `quote_request_update`): no retry; `DeliveryReconciler` calls `DeliveryFailureService` right away (idempotent per message).
+  - A failure never changes the stage, the qualification or the handoff; the manual resend stays available.
 - `QuoteRequest.status`: `awaiting_reply`, `correction_requested`, `replied`. `open?` is true for the first two.
 - `Quote::ReplyProcessor` handles each email on the quote inbox:
   - Thread with a request → parse the block. A valid block marks the request `replied` and starts generation. An invalid one marks it `correction_requested` and sends a correction email.

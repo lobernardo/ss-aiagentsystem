@@ -47,7 +47,7 @@ Rails MVC monolith (Chatwoot) with a namespaced `ScanSolo::` extension layer. Th
 |---|---|---|
 | `Api::V1::Accounts::ScanSolo::BaseController` + controllers | `scansolo_enabled` gate (404), Pundit authorize (403), request-boundary 422 validation, strong params | Business rules, state transitions |
 | `Webhooks::ScanSolo::MakeController` | Mapping verifier/applier outcome to 401/422/200 | Signature check, persistence |
-| `ScanSolo::ConversationListener` | Eligibility classification, routing to services/jobs; delivery reconciliation of the template origins `cadence`, `proposal`, `manual_lead`, `proposal_email` (lead proposal e-mail) and `proposal_notice` (WhatsApp notice) | AI logic, writes (delegates every write) |
+| `ScanSolo::ConversationListener` | Eligibility classification, routing to services/jobs; delivery reconciliation of the template origins `cadence`, `proposal`, `manual_lead`, `proposal_email` (lead proposal e-mail), `proposal_notice` (WhatsApp notice), `quote_request_email` and `quote_request_update` (quote request e-mails); an incoming attachment, location or map URL delegates to `Quote::UpdateScheduler` | AI logic, writes (delegates every write) |
 | `services/scan_solo/*` | Every write and business rule; one "sole path" service per state change | HTTP concerns |
 | `jobs/scan_solo/*` | Async boundary, locking, cron entry | Eligibility logic (`AttemptPrecheck` decides) |
 | `models/scan_solo/*` | Associations, enums, validations, unique-index invariants | Orchestration |
@@ -105,8 +105,12 @@ sidekiq-cron */5 ──> CadenceDueAttemptJob (scheduled_jobs)
 ### Macro flow: quote to proposal
 
 ```
-CompletionService (next_action proposta) ─after commit─> QuoteRequestJob
-  ─> Quote::RequestService ─> email thread to commercial recipient + customer notice
+CompletionService (next_action proposta) ─after commit─> QuoteRequestJob (retry 1/5/15 min)
+  ─> Quote::RequestService ─> RequestEmail::Snapshot ─> RequestEmail (CT-01, quote_request_email.v2)
+  ─> email thread to commercial recipient (lead attachments ≤ 15 MiB) + customer notice
+LeadState::Writer (field changed) / ConversationListener (attachment, location) ─after commit─> Quote::UpdateScheduler
+  ─ fixed 10 min window ─> QuoteRequestUpdateJob ─> Quote::UpdateService ─> CT-03 update e-mail (quote_request.update_sent)
+retries exhausted / native message failed ─> Quote::DeliveryFailureService ─> private note + quote_request.delivery_failed
 commercial reply (quote inbox) ─> ConversationListener ─> QuoteReplyJob ─> ReplyProcessor
   ─ valid block (request open, incl. after a rejection) ─> GenerateService ─> MakeProvider ─> OutboundRequestService ─> Make
   ─ invalid     ─> correction email
@@ -122,7 +126,7 @@ native SendReplyJob (source_id) ─> ConversationListener ─> DeliveryReconcile
 lead reply on the proposal thread ─> QuoteReplyJob ─> ReplyProcessor ─> LeadEmailReplyService ─> ReplyInterruptionService
 ```
 
-Contracts of this flow: `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (HTTP) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make request/callback, e-mails, notice).
+Contracts of this flow: `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (HTTP) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make request/callback, e-mails, notice). Quote request and update e-mails: `.spec/features/scansolo-solicitacao-orcamento-email/openapi.yaml` (config field) and `.spec/features/scansolo-solicitacao-orcamento-email/asyncapi.yaml` (CT-01, CT-03, CT-06, failure note).
 
 ## Related documents
 

@@ -189,8 +189,9 @@ Request: draft update (`ai_agent_configs_spec.rb`). All keys are optional:
 }
 ```
 
-- Permitted keys: `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours, require_proposal_approval, quote_inbox_id, commercial_user_id, quote_recipient_email, allowed_inbox_ids[], opt_out_keywords[], qualification_playbook[], required_qualification_fields[], restricted_information[], forbidden_subjects[]`.
-- 422 per field: `model_selection` not available, `allowed_inbox_ids` outside the account, `opt_out_keywords` not strings, `quote_inbox_id` not an email inbox or allowlisted, `commercial_user_id` outside the account, invalid `quote_recipient_email`.
+- Permitted keys: `name, enabled, model_provider, model_selection, role, objective, persona, tone, instructions, service_rules, transfer_criteria, response_limits, service_hours, require_proposal_approval, quote_inbox_id, commercial_user_id, quote_recipient_email, quote_email_validation_mode, allowed_inbox_ids[], opt_out_keywords[], qualification_playbook[], required_qualification_fields[], restricted_information[], forbidden_subjects[]`.
+- 422 per field: `model_selection` not available, `allowed_inbox_ids` outside the account, `opt_out_keywords` not strings, `quote_inbox_id` not an email inbox or allowlisted, `commercial_user_id` outside the account, invalid `quote_recipient_email`, `quote_email_validation_mode` not a JSON boolean (`{ message, attributes: ["quote_email_validation_mode"] }`).
+- Draft and published representations include `quote_email_validation_mode` (default `true`). Contracts: `.spec/features/scansolo-solicitacao-orcamento-email/openapi.yaml` (this field and its 422) and `.spec/features/scansolo-solicitacao-orcamento-email/asyncapi.yaml` (quote request/update e-mails, failure note, audits `quote_request.sent`, `quote_request.update_sent`, `quote_request.delivery_failed`).
 
 ### Knowledge
 

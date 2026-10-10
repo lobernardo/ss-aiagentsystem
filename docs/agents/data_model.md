@@ -98,6 +98,7 @@ AuditEvent ─ polymorphic subject / actor
 | require_proposal_approval | bool default true |
 | quote_inbox_id, commercial_user_id | bigint |
 | quote_recipient_email | string not null default `comercial@scansolo.com.br` |
+| quote_email_validation_mode | bool not null default true (validation paragraph of the quote request e-mail) |
 
 Published rows are immutable snapshots of `FIELDS`.
 
@@ -149,7 +150,8 @@ Published rows are immutable snapshots of `FIELDS`.
 
 | Table | Columns | Invariant |
 |---|---|---|
-| `scan_solo_quote_requests` | `account_id`, `opportunity_id` (FK), `status` (`awaiting_reply 0, correction_requested 1, replied 2`), `correlation_id`, `email_conversation_id`, `request_message_id`, `reply_message_id`, `customer_notice_message_id`, `commercial` jsonb `{total_value, schedule, scope, payment_terms, notes}`, `sent_at`, `replied_at` | UNIQUE opportunity_id, correlation_id, email_conversation_id |
+| `scan_solo_quote_requests` | `account_id`, `opportunity_id` (FK), `status` (`awaiting_reply 0, correction_requested 1, replied 2`), `correlation_id`, `email_conversation_id`, `request_message_id`, `reply_message_id`, `customer_notice_message_id`, `commercial` jsonb `{total_value, schedule, scope, payment_terms, notes}`, `sent_at`, `replied_at`, `rendered_snapshot` jsonb (snapshot of the last e-mail sent, `quote_request_email.v2`), `rendered_digest` (SHA-256), `update_window_ends_at` | UNIQUE opportunity_id, correlation_id, email_conversation_id |
+| `scan_solo_quote_request_updates` | `account_id`, `quote_request_id` (FK), `version_digest`, `message_id`, `sent_at` | UNIQUE (quote_request_id, version_digest): ≤ 1 update e-mail (`quote_request.update_sent`) per version |
 | `scan_solo_quote_replies` | `account_id`, `message_id`, `conversation_id`, `quote_request_id` (FK), `kind` (`unmatched 0, late_reply 1`), `status` (`pending 0, linked 1, discarded 2`), `resolved_by_id` (FK users), `resolved_at` | UNIQUE message_id |
 
 #### Proposal tables

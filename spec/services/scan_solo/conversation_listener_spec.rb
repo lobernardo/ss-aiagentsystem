@@ -245,6 +245,37 @@ RSpec.describe ScanSolo::ConversationListener do
     end
   end
 
+  describe 'RF-14 (b): an incoming attachment or map URL opens the quote request update window' do
+    before { dispatch(incoming) }
+
+    it 'delegates to the update scheduler for a message with a file attachment' do
+      message = incoming('segue o croqui')
+      blob = ActiveStorage::Blob.create_and_upload!(io: StringIO.new('pdf'), filename: 'croqui.pdf', content_type: 'application/pdf')
+      message.attachments.create!(account_id: account.id, file_type: :file, file: blob)
+      allow(ScanSolo::Quote::UpdateScheduler).to receive(:call)
+
+      dispatch(message)
+
+      expect(ScanSolo::Quote::UpdateScheduler).to have_received(:call).with(opportunity: ScanSolo::PipelineOpportunity.sole)
+    end
+
+    it 'delegates to the update scheduler for a map URL' do
+      allow(ScanSolo::Quote::UpdateScheduler).to receive(:call)
+
+      dispatch(incoming('o local: https://maps.app.goo.gl/abc123'))
+
+      expect(ScanSolo::Quote::UpdateScheduler).to have_received(:call).once
+    end
+
+    it 'does not call the update scheduler for a text-only message without a map URL' do
+      allow(ScanSolo::Quote::UpdateScheduler).to receive(:call)
+
+      dispatch(incoming('a área tem 800 m², veja https://example.com'))
+
+      expect(ScanSolo::Quote::UpdateScheduler).not_to have_received(:call)
+    end
+  end
+
   describe 'CT-09 / RF-13: delivery reconciliation of the proposal e-mail and notice' do
     def updated(origin)
       message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :outgoing,

@@ -10,7 +10,8 @@
 # pending cadence attempt (RF-43, ScanSolo::Cadence::ReplyInterruptionService)
 # before and independently of the AI turn; the deterministic opt-out
 # keyword check runs independently of the AI turn (RF-16 (b)); then the AI
-# turn job is enqueued.
+# turn job is enqueued, and a message with an attachment or a map URL opens
+# the quote request update window (RF-14 (b), ScanSolo::Quote::UpdateScheduler).
 #
 # Outgoing: a manual, non-private reply by a User that ScanSolo did not
 # originate (no `scansolo_origin`) is an implicit takeover (RF-18).
@@ -33,6 +34,7 @@
 # The listener delegates every write to services and holds no AI logic.
 class ScanSolo::ConversationListener < BaseListener
   IMPLICIT_TAKEOVER_REASON = 'Resposta humana na conversa'.freeze
+  LEAD_ATTACHMENT_TYPES = %i[image audio video file location].freeze
   TEMPLATE_ORIGINS = %w[cadence proposal manual_lead proposal_email proposal_notice quote_request_email quote_request_update].freeze
 
   def message_created(event)
@@ -78,6 +80,16 @@ class ScanSolo::ConversationListener < BaseListener
     end
 
     ScanSolo::AiTurnJob.perform_later(message.id)
+    schedule_quote_update(bootstrap.opportunity, message)
+  end
+
+  # RF-14 (b): a new attachment, location or map URL never goes through the
+  # lead state Writer, so it opens the update window here.
+  def schedule_quote_update(opportunity, message)
+    reader = ScanSolo::AiTurn::AttachmentReader
+    return unless message.attachments.exists?(file_type: LEAD_ATTACHMENT_TYPES) || reader.urls(message.content).grep(reader::MAP_URL_PATTERN).any?
+
+    ScanSolo::Quote::UpdateScheduler.call(opportunity: opportunity)
   end
 
   def handle_outgoing(message)

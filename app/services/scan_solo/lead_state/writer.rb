@@ -89,5 +89,8 @@ class ScanSolo::LeadState::Writer
     lead_state.events.create!(subject: 'field', key: key, previous_value: current['value'], previous_status: current['status'] || 'faltante',
                               new_value: entry['value'], new_status: entry['status'], source_message_id: entry['source_message_id'],
                               source_attachment_id: entry['source_attachment_id'])
+    # RF-14 (b): a changed field may open the update window of a sent quote request, only once committed.
+    opportunity = lead_state.opportunity
+    ActiveRecord.after_all_transactions_commit { ScanSolo::Quote::UpdateScheduler.call(opportunity: opportunity) }
   end
 end

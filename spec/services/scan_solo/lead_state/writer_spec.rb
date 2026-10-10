@@ -157,6 +157,39 @@ RSpec.describe ScanSolo::LeadState::Writer do
     end
   end
 
+  describe 'RF-14 (b): opening the quote request update window after commit' do
+    let(:request_message) { create(:message, account: account, conversation: conversation, message_type: :outgoing) }
+
+    before do
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid,
+                                     request_message_id: request_message.id)
+    end
+
+    def apply_depth(value = '3 m')
+      writer.apply_field!(key: 'profundidade', value: value, status: 'confirmado', source_message_id: first_message.id)
+    end
+
+    it 'enqueues 1 update job once a change after the request e-mail is committed' do
+      expect { ActiveRecord::Base.transaction { apply_depth } }.to have_enqueued_job(ScanSolo::QuoteRequestUpdateJob).exactly(:once)
+    end
+
+    it 'enqueues nothing when the transaction rolls back' do
+      expect do
+        ActiveRecord::Base.transaction do
+          apply_depth
+          raise ActiveRecord::Rollback
+        end
+      end.not_to have_enqueued_job(ScanSolo::QuoteRequestUpdateJob)
+    end
+
+    it 'enqueues nothing for an :unchanged field' do
+      apply_depth
+      clear_enqueued_jobs
+
+      expect { expect(apply_depth).to eq(:unchanged) }.not_to have_enqueued_job(ScanSolo::QuoteRequestUpdateJob)
+    end
+  end
+
   describe '.applicable?' do
     it 'forbids only an inferido value over a confirmado one' do
       expect(described_class.applicable?(current_status: 'confirmado', new_status: 'inferido')).to be(false)

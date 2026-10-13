@@ -278,6 +278,31 @@ describe('OpportunityDetail', () => {
       ).toContain('Tipo de serviço: Georradar');
     });
 
+    it('groups a nao_informado field under "Não informado pelo cliente" without the lead words (UI-03)', async () => {
+      const wrapper = await mountShow({
+        lead_state: {
+          blocks: {
+            escopo: [
+              field(
+                'profundidade',
+                'Profundidade de investigação',
+                'não sei',
+                'nao_informado'
+              ),
+            ],
+          },
+        },
+      });
+
+      const group = wrapper.find('[data-testid="qualification-nao_informado"]');
+      expect(group.find('h4').text()).toBe('Não informado pelo cliente');
+      expect(sectionKeys(wrapper, 'nao_informado')).toEqual(['profundidade']);
+      expect(group.find('[data-testid="qualification-field"]').text()).toBe(
+        'Profundidade de investigação: Não informado pelo cliente'
+      );
+      expect(wrapper.html()).not.toContain('não sei');
+    });
+
     it('shows origin, owner, quote request and the generated proposal with value and validity', async () => {
       const wrapper = await mountShow();
 

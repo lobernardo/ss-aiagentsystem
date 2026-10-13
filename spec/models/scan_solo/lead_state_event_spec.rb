@@ -14,11 +14,12 @@ RSpec.describe ScanSolo::LeadStateEvent do
     expect(event.attributes).not_to have_key('updated_at')
   end
 
-  it 'accepts only the three history subjects' do
-    %w[field intent next_action].each do |subject|
+  it 'accepts only the four history subjects, including collection_mode (RF-39)' do
+    %w[field intent next_action collection_mode].each do |subject|
       expect(state.events.build(subject: subject)).to be_valid
     end
     expect(state.events.build(subject: 'invalid')).not_to be_valid
+    expect(state.events.build(subject: 'foo')).not_to be_valid
     expect(state.events.build(subject: nil)).not_to be_valid
   end
 

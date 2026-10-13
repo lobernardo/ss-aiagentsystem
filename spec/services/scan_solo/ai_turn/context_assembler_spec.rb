@@ -82,6 +82,20 @@ RSpec.describe ScanSolo::AiTurn::ContextAssembler do
       expect(snapshot[:pipeline_context]).to include(collected_fields: { 'Cidade / UF' => 'Rio/RJ' }, missing_fields: %w[Nome E-mail])
     end
 
+    it 'shows a nao_informado required field as collected with the neutral text (proposta-template-local RF-33 a)' do
+      config.update!(required_qualification_fields: ['Empresa', 'Profundidade de investigação'])
+      opportunity = ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
+      writer = ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+      writer.apply_field!(key: 'empresa', value: 'ACME', status: 'confirmado', source_message_id: message.id)
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: message.id)
+
+      snapshot = described_class.call(message: message, config: config, attachment_reading: no_attachments, retrieval_service: mock_retrieval_service)
+
+      expect(snapshot[:pipeline_context]).to include(
+        collected_fields: { 'Empresa' => 'ACME', 'Profundidade de investigação' => 'não informado pelo cliente' }, missing_fields: []
+      )
+    end
+
     describe 'lead state context (RF-09, RF-17, RF-20, RF-25)' do
       let(:opportunity) do
         ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)

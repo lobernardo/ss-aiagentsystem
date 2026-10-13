@@ -109,9 +109,15 @@ const fieldsByStatus = computed(() => {
   return groups;
 });
 
-// A missing field has no value; the others read "Label: value".
+// A missing field has no value; the others read "Label: value". UI-03: a
+// `nao_informado` field never shows the lead's words, only the neutral text.
 const fieldText = field => {
   if (field.status === 'faltante') return field.label;
+  if (field.status === 'nao_informado') {
+    return t('SCANSOLO.PIPELINE_BOARD.FIELD_NOT_INFORMED', {
+      label: field.label,
+    });
+  }
   const value = Array.isArray(field.value)
     ? field.value.join(', ')
     : field.value;
@@ -413,7 +419,7 @@ defineExpose({
             <h3 class="text-n-slate-11 text-sm font-medium mb-2">
               {{ t('SCANSOLO.PIPELINE_BOARD.DETAIL.QUALIFICATION_TITLE') }}
             </h3>
-            <div class="grid gap-3 md:grid-cols-3">
+            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <div
                 v-for="status in FIELD_STATUSES"
                 :key="status"

@@ -22,9 +22,11 @@ class ScanSolo::Notifications::NegotiationPayload
     }
   end
 
+  # RF-33 (b): an `empresa` `faltante` or `nao_informado` is sent as null.
   def self.contact(opportunity)
     company = opportunity.lead_state&.fields.to_h['empresa'].to_h
-    { name: opportunity.contact.name, company: company['status'] == 'faltante' ? nil : company['value'], phone: opportunity.contact.phone_number }
+    company_value = company['value'] unless %w[faltante nao_informado].include?(company['status'])
+    { name: opportunity.contact.name, company: company_value, phone: opportunity.contact.phone_number }
   end
 
   def self.recent_messages(conversation)

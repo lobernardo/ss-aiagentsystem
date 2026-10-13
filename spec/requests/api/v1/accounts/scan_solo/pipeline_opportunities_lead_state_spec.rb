@@ -48,6 +48,18 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API lead_state (CT-01)', type: :
       expect(lead_state['history'].pluck('key')).to eq(%w[nome area])
     end
 
+    it 'shows a nao_informado empresa as a null card company and keeps status and value in lead_state (RF-33 d)' do
+      writer.apply_field!(key: 'empresa', value: 'não tenho', status: 'nao_informado', source_message_id: nil)
+      writer.apply_field!(key: 'cidade_uf', value: 'não sei', status: 'nao_informado', source_message_id: nil)
+
+      get base_path, headers: agent.create_new_auth_token, as: :json
+
+      body = response.parsed_body
+      expect(body).to include('company' => nil, 'service' => nil, 'city_uf' => nil)
+      expect(body['lead_state']['blocks']['identificacao'].find { |field| field['key'] == 'empresa' })
+        .to include('status' => 'nao_informado', 'value' => 'não tenho')
+    end
+
     it 'returns 404 when the account has scansolo disabled' do
       account.update!(scansolo_enabled: false)
 

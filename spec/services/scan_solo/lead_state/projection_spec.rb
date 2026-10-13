@@ -67,6 +67,14 @@ RSpec.describe ScanSolo::LeadState::Projection do
       field = projection.blocks['local'].find { |candidate| candidate[:key] == 'link_local' }
       expect(field).to include(value: 'https://maps.google.com/?q=1,2', status: 'confirmado')
     end
+
+    it 'never overlays a nao_informado value (RF-27)' do
+      writer.apply_field!(key: 'link_local', value: 'não tenho', status: 'nao_informado', source_message_id: message.id)
+
+      field = projection.blocks['local'].find { |candidate| candidate[:key] == 'link_local' }
+      expect(field).to include(value: 'não tenho', status: 'nao_informado')
+      expect(projection.eligible_keys).not_to include('link_local')
+    end
   end
 
   it 'keeps every classification when the intent changes (RF-15)' do

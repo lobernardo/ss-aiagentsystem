@@ -191,10 +191,12 @@ export const LEAD_SOURCE_LABELS = {
 };
 
 // RF-45: display-only mapping of the LeadState field classification.
+// UI-03: `nao_informado` = the lead said they don't know or don't have it.
 export const FIELD_STATUS_LABELS = {
   confirmado: 'SCANSOLO.LABELS.FIELD_STATUSES.CONFIRMADO',
   inferido: 'SCANSOLO.LABELS.FIELD_STATUSES.INFERIDO',
   faltante: 'SCANSOLO.LABELS.FIELD_STATUSES.FALTANTE',
+  nao_informado: 'SCANSOLO.LABELS.FIELD_STATUSES.NAO_INFORMADO',
 };
 
 // RF-33: `generated` (and the historical `approved`) is never shown as sent.

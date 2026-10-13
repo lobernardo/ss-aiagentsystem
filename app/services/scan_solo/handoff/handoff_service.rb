@@ -102,9 +102,10 @@ class ScanSolo::Handoff::HandoffService
     contact.custom_attributes['objective'].presence || 'não informado'
   end
 
-  # RF-16: the resolver's satisfied fields (satisfied = confirmado no estado
-  # do lead) as `<config label>: <value>` in config order; `nenhum` without
-  # an opportunity.
+  # RF-16: the resolver's satisfied fields (satisfied = confirmado ou
+  # nao_informado no estado do lead) as `<config label>: <value>` in config
+  # order, a `nao_informado` one as `<label>: não informado pelo cliente`
+  # (proposta-template-local RF-33 a); `nenhum` without an opportunity.
   def qualification_fields
     return 'nenhum' if opportunity.blank?
 

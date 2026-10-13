@@ -139,6 +139,34 @@ RSpec.describe 'ScanSolo qualification consumer consistency' do # rubocop:disabl
     end
   end
 
+  describe 'proposta-template-local RF-33: nao_informado words never leave the lead state' do
+    before do
+      writer = ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: nil)
+      writer.apply_field!(key: 'empresa', value: 'não tenho', status: 'nao_informado', source_message_id: nil)
+    end
+
+    it 'keeps them out of the Make payload, the negotiation payload and the EmailComposer lead' do
+      make_payload = nil
+      allow(ScanSolo::Make::OutboundRequestService).to receive(:call) { |**kwargs| make_payload = kwargs[:payload] }
+      version = ScanSolo::Proposal.create!(opportunity: opportunity).versions.create!(generate_correlation_id: SecureRandom.uuid,
+                                                                                      value: 100, currency: 'BRL')
+      ScanSolo::Proposal::MakeProvider.request_generation(proposal_version: version, correlation_id: version.generate_correlation_id)
+      negotiation = ScanSolo::Notifications::NegotiationPayload.build(opportunity: opportunity.reload, trigger_message: message,
+                                                                      correlation_id: SecureRandom.uuid)
+      approval = with_modified_env(FRONTEND_URL: 'https://app.example.com') do
+        ScanSolo::Quote::EmailComposer.approval_request(proposal_version: version.reload)
+      end
+      lead_line = approval.text.lines(chomp: true).find { |line| line.start_with?('Lead: ') }
+
+      expect(make_payload[:qualification]).not_to include('profundidade', 'empresa')
+      expect(lead_line).to eq('Lead: Leonardo')
+      [make_payload.to_json, negotiation.to_json, lead_line].each do |output|
+        expect(output).not_to include('não sei', 'não tenho')
+      end
+    end
+  end
+
   describe 'static single-reader check' do
     %w[
       ai_turn/context_assembler actions/qualification_field_action cadence/reply_completeness_detector

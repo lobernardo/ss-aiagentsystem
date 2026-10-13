@@ -51,6 +51,16 @@ RSpec.describe ScanSolo::Notifications::NegotiationPayload do
     expect(schema.valid?(JSON.parse(payload.to_json))).to be(true)
   end
 
+  it 'sends a null company when empresa is nao_informado (proposta-template-local RF-33 b)' do
+    ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+                               .apply_field!(key: 'empresa', value: 'não tenho', status: 'nao_informado', source_message_id: nil)
+
+    payload = build
+
+    expect(payload[:contact]).to eq(name: 'Ana Souza', company: nil, phone: '+5511987654321')
+    expect(payload.to_json).not_to include('não tenho')
+  end
+
   it 'keeps the last 3 chat messages in order, skipping private notes and activities' do
     create(:message, account: account, conversation: conversation, message_type: :incoming, content: 'primeira')
     create(:message, account: account, conversation: conversation, message_type: :outgoing, content: 'segunda')

@@ -24,12 +24,13 @@ json.stage_history resource.stage_events.sort_by(&:created_at) do |event|
   json.created_at event.created_at
 end
 # CT-02 / UI-02: card data. Lead-state values are display only -- a
-# `faltante` field shows as null; FieldResolver still decides satisfaction.
+# `faltante` or `nao_informado` field shows as null (RF-33 d); FieldResolver
+# still decides satisfaction.
 lead_fields = resource.lead_state&.fields.to_h
 json.lead_source resource.lead_source
 { company: 'empresa', service: 'tipo_servico', city_uf: 'cidade_uf' }.each do |attribute, key|
   field = lead_fields[key].to_h
-  json.set! attribute, field['status'] == 'faltante' ? nil : field['value']
+  json.set! attribute, %w[faltante nao_informado].include?(field['status']) ? nil : field['value']
 end
 json.ai_control_state resource.conversation_extension&.ai_control_state || 'ai_active'
 json.quote_request_status resource.quote_request&.status

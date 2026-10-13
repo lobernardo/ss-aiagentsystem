@@ -1,11 +1,15 @@
 # RF-01, RF-14, RF-15, RF-21, RF-23, RF-24: one lead state per opportunity.
+# RF-39, CT-10: `collection_offered_at` (datetime, null = never offered) and
+# `collection_mode` (null = progressive collection) hold the collection state,
+# written only by ScanSolo::LeadState::Writer.
 class ScanSolo::LeadState < ApplicationRecord
   self.table_name = 'scan_solo_lead_states'
 
   INTENTS = %w[orcamento avaliacao_tecnica convite_cotacao envio_documentos duvida verificar_capacidade localizar_rede visita acompanhar_proposta
                outro].freeze
   NEXT_ACTIONS = %w[proposta avaliacao_tecnica solicitar_documentos atendimento_humano aguardar_cliente].freeze
-  FIELD_STATUSES = %w[confirmado inferido faltante].freeze
+  FIELD_STATUSES = %w[confirmado inferido faltante nao_informado].freeze
+  COLLECTION_MODES = %w[em_bloco progressiva].freeze
   DEFAULT_NEXT_ACTION_BY_INTENT = {
     'orcamento' => 'proposta',
     'convite_cotacao' => 'proposta',
@@ -30,4 +34,5 @@ class ScanSolo::LeadState < ApplicationRecord
   # concurrent creators on the same row.
   validates :intent, inclusion: { in: INTENTS }, allow_nil: true
   validates :next_action, inclusion: { in: NEXT_ACTIONS }, allow_nil: true
+  validates :collection_mode, inclusion: { in: COLLECTION_MODES }, allow_nil: true
 end

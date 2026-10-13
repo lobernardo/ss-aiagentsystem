@@ -144,6 +144,13 @@ RSpec.describe ScanSolo::Proposal::GenerateService do
       expect { call }.to raise_error(ActiveRecord::RecordInvalid, /incompletos: Área\z/)
       expect(ScanSolo::ProposalVersion.count).to eq(0)
     end
+
+    it 'does not block em_andamento on a nao_informado field (proposta-template-local RF-28, D-02)' do
+      writer.apply_field!(key: 'area', value: 'não sei', status: 'nao_informado', source_message_id: nil)
+
+      expect { call }.to change(ScanSolo::ProposalVersion, :count).by(1)
+      expect(opportunity.lead_state.reload).to be_em_andamento
+    end
   end
 
   describe 'generation request (RF-75)' do

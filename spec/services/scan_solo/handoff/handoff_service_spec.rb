@@ -74,6 +74,24 @@ RSpec.describe ScanSolo::Handoff::HandoffService do
       end
     end
 
+    context 'with a required field nao_informado (proposta-template-local RF-33 a)' do
+      before do
+        draft = ScanSolo::AiAgentConfig.draft_for!(account)
+        draft.update!(required_qualification_fields: ['Empresa', 'Profundidade de investigação'])
+        ScanSolo::AiAgent::PublishService.new(account: account).call
+        writer.apply_field!(key: 'empresa', value: 'ACME', status: 'confirmado', source_message_id: nil)
+        writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: nil)
+      end
+
+      it 'lists it as not informed by the client, never with the lead words' do
+        described_class.call(conversation: conversation, reason: 'transferência', actor: agent)
+
+        content = conversation.messages.where(private: true).last.content
+        expect(content).to include('Campos de qualificação coletados: Empresa: ACME, Profundidade de investigação: não informado pelo cliente')
+        expect(content).not_to include('não sei')
+      end
+    end
+
     it 'shows the pt-BR label of the current proposal version status (RF-21)' do
       proposal = ScanSolo::Proposal.create!(opportunity: opportunity)
       proposal.versions.create!(status: :generated)

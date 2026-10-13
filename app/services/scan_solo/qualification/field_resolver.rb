@@ -5,11 +5,14 @@
 # (`lead_state` | `native` | `custom_attribute`), the lead state status and
 # whether it is satisfied.
 #
-# A field is satisfied if and only if its canonical key is `confirmado` in
-# the opportunity's lead state; a label outside the RF-02 catalog is never
-# satisfied (fail-closed, status `faltante`). The value comes from the lead
-# state when it is not `faltante`, then from the native contact column
-# (`nome`/`email`/`telefone`), then from `custom_attributes`.
+# A field is satisfied if and only if its canonical key is `confirmado` or
+# `nao_informado` in the opportunity's lead state (proposta-template-local
+# RF-28); a label outside the RF-02 catalog is never satisfied (fail-closed,
+# status `faltante`). The value comes from the lead state when it is not
+# `faltante`, then from the native contact column (`nome`/`email`/
+# `telefone`), then from `custom_attributes`. A `nao_informado` key has no
+# value and never falls back to the contact: the lead's own words are audit
+# only (RF-33).
 #
 # Labels and `custom_attributes` keys are compared by their normalized form
 # (trim, case, accents and `_ - space /` separators ignored) and mapped
@@ -99,6 +102,8 @@ class ScanSolo::Qualification::FieldResolver
     'condicoes_especiais' => ['Condições especiais']
   }.freeze
 
+  SATISFIED_STATUSES = %w[confirmado nao_informado].freeze
+
   NATIVE = { 'nome' => :name, 'email' => :email, 'telefone' => :phone_number }.freeze
 
   # RF-15: the fixed canonical key set of the Make `qualification` object.
@@ -170,7 +175,7 @@ class ScanSolo::Qualification::FieldResolver
       value, origin = resolve(canonical, label)
       status = status_for(canonical)
       Field.new(label: label, canonical_key: canonical, value: value, origin: origin, status: status, classification: 'obrigatorio',
-                satisfied: status == 'confirmado')
+                satisfied: SATISFIED_STATUSES.include?(status))
     end
   end
 
@@ -178,8 +183,11 @@ class ScanSolo::Qualification::FieldResolver
     fields.reject(&:satisfied?).map(&:label)
   end
 
+  # RF-33 (a): a `nao_informado` field shows the neutral text, never the lead's words.
   def collected
-    fields.select(&:satisfied?).to_h { |field| [field.label, field.value] }
+    fields.select(&:satisfied?).to_h do |field|
+      [field.label, field.status == 'nao_informado' ? I18n.t('scan_solo.qualification.not_informed_by_client') : field.value]
+    end
   end
 
   def required_canonical_keys
@@ -188,7 +196,7 @@ class ScanSolo::Qualification::FieldResolver
 
   # RF-08 proposal gate: a `concluida` qualification blocks only on required
   # fields still `faltante` (labels outside the catalog included); while
-  # `em_andamento` every required field not `confirmado` blocks.
+  # `em_andamento` every required field not satisfied blocks (D-02).
   def proposal_gate_missing_labels
     return missing_labels unless lead_state.concluida?
 
@@ -198,6 +206,7 @@ class ScanSolo::Qualification::FieldResolver
   # RF-15: all 10 canonical keys are evaluated whether or not the config
   # requires them; only present values are sent. CT-05: `projeto` carries the
   # resolved `cliente_final` (`{{PROJETO_CLIENTE_FINAL}}`), only when present.
+  # A `nao_informado` key resolves to nil and is omitted (RF-33 b).
   def make_qualification
     qualification = MAKE_KEYS.index_with { |canonical| resolved_value(canonical) }
     qualification['projeto'] = resolved_value('cliente_final')
@@ -221,6 +230,7 @@ class ScanSolo::Qualification::FieldResolver
 
   def resolve(canonical, label)
     entry = state_fields[canonical]
+    return [nil, 'lead_state'] if entry && entry['status'] == 'nao_informado'
     return [entry['value'], 'lead_state'] if entry && entry['status'] != 'faltante'
 
     self.class.contact_resolution(contact, canonical, label)

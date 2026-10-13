@@ -49,6 +49,7 @@
       "STALE_INDICATOR": "Inativo",
       "OWNER_LABEL": "Responsável",
       "UNASSIGNED_OWNER": "Sem responsável",
+      "FIELD_NOT_INFORMED": "{label}: Não informado pelo cliente",
       "LAST_INTERACTION_LABEL": "Última interação",
       "NEXT_FOLLOW_UP_LABEL": "Próximo follow-up",
       "NOT_SCHEDULED": "Não agendado",
@@ -639,7 +640,8 @@
       "FIELD_STATUSES": {
         "CONFIRMADO": "Coletado",
         "INFERIDO": "A confirmar",
-        "FALTANTE": "Faltante"
+        "FALTANTE": "Faltante",
+        "NAO_INFORMADO": "Não informado pelo cliente"
       },
       "COMMERCIAL_STATUSES": {
         "AWAITING_REPLY": "Aguardando orçamento",

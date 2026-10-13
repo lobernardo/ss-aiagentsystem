@@ -337,6 +337,41 @@ RSpec.describe ScanSolo::Qualification::FieldResolver do
     end
   end
 
+  describe 'proposta-template-local RF-28, RF-33: nao_informado' do
+    let(:labels) { ['Empresa', 'Profundidade de investigação'] }
+
+    before do
+      writer.apply_field!(key: 'empresa', value: 'ACME', status: 'confirmado', source_message_id: 1)
+    end
+
+    it 'satisfies a nao_informado field and shows it neutrally in collected' do
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: 2)
+
+      expect(resolver.missing_labels).to be_empty
+      expect(resolver.collected).to eq('Empresa' => 'ACME', 'Profundidade de investigação' => 'não informado pelo cliente')
+    end
+
+    it 'keeps an inferido field unsatisfied' do
+      writer.apply_field!(key: 'profundidade', value: '2 m', status: 'inferido', source_message_id: 2)
+
+      expect(resolver.missing_labels).to eq(['Profundidade de investigação'])
+    end
+
+    it 'resolves a nao_informado key to nil without reading the contact and omits it from make_qualification' do
+      contact.update!(custom_attributes: { 'profundidade' => 'não sei' })
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: 2)
+
+      expect(field('Profundidade de investigação')).to have_attributes(value: nil, origin: 'lead_state', status: 'nao_informado', satisfied: true)
+      expect(resolver.make_qualification).to eq('empresa' => 'ACME')
+    end
+
+    it 'does not block the em_andamento proposal gate on a nao_informado field (D-02)' do
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: 2)
+
+      expect(resolver.proposal_gate_missing_labels).to be_empty
+    end
+  end
+
   describe 'RF-06: determinism' do
     it 'resolves without LLM, HTTP or message reads, returning equal results on repeated calls' do
       contact.update!(name: 'Leonardo', custom_attributes: { 'cidade' => 'Rio' })

@@ -55,6 +55,21 @@ RSpec.describe ScanSolo::LeadState do
       'envio_documentos' => 'solicitar_documentos', 'acompanhar_proposta' => 'aguardar_cliente',
       'duvida' => 'aguardar_cliente', 'verificar_capacidade' => 'aguardar_cliente', 'outro' => 'aguardar_cliente', nil => 'aguardar_cliente'
     )
-    expect(described_class::FIELD_STATUSES).to eq(%w[confirmado inferido faltante])
+  end
+
+  it 'defines the four field statuses, including nao_informado (RF-25)' do
+    expect(described_class::FIELD_STATUSES).to eq(%w[confirmado inferido faltante nao_informado])
+  end
+
+  it 'accepts only the two collection modes, keeping an old state with nil columns valid (RF-39, CT-10)' do
+    expect(described_class::COLLECTION_MODES).to eq(%w[em_bloco progressiva])
+    expect(state.reload).to have_attributes(collection_offered_at: nil, collection_mode: nil)
+    expect(state).to be_valid
+    %w[em_bloco progressiva].each do |mode|
+      state.collection_mode = mode
+      expect(state).to be_valid
+    end
+    state.collection_mode = 'rapido'
+    expect(state).not_to be_valid
   end
 end

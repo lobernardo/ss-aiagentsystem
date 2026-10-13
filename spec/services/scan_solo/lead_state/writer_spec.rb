@@ -80,6 +80,99 @@ RSpec.describe ScanSolo::LeadState::Writer do
     end
   end
 
+  describe 'RF-27 precedence with nao_informado' do
+    def apply(status, value, message = second_message)
+      writer.apply_field!(key: 'profundidade', value: value, status: status, source_message_id: message.id)
+    end
+
+    it 'replaces nao_informado with a confirmado value and records 1 event' do
+      apply('nao_informado', 'não sei', first_message)
+
+      expect { expect(apply('confirmado', '3 m')).to eq(:applied) }.to change(ScanSolo::LeadStateEvent, :count).by(1)
+      expect(lead_state.reload.fields['profundidade']).to include('value' => '3 m', 'status' => 'confirmado')
+      expect(lead_state.events.order(:id).last).to have_attributes(previous_value: 'não sei', previous_status: 'nao_informado',
+                                                                   new_value: '3 m', new_status: 'confirmado')
+    end
+
+    it 'writes nao_informado over faltante with the lead words, its origin and 1 event' do
+      expect { expect(apply('nao_informado', ' não sei ')).to eq(:applied) }.to change(ScanSolo::LeadStateEvent, :count).by(1)
+      expect(lead_state.reload.fields['profundidade']).to include('value' => 'não sei', 'status' => 'nao_informado',
+                                                                  'source_message_id' => second_message.id)
+      expect(lead_state.events.sole).to have_attributes(previous_status: 'faltante', new_status: 'nao_informado')
+    end
+
+    it 'replaces inferido with nao_informado' do
+      apply('inferido', '2 m', first_message)
+
+      expect { expect(apply('nao_informado', 'não sei')).to eq(:applied) }.to change(ScanSolo::LeadStateEvent, :count).by(1)
+      expect(lead_state.reload.fields['profundidade']).to include('value' => 'não sei', 'status' => 'nao_informado')
+    end
+
+    it 'keeps confirmado when nao_informado arrives, with 0 events' do
+      apply('confirmado', '3 m', first_message)
+
+      expect { expect(apply('nao_informado', 'não sei')).to eq(:kept_confirmed) }.not_to change(ScanSolo::LeadStateEvent, :count)
+      expect(lead_state.reload.fields['profundidade']).to include('value' => '3 m', 'status' => 'confirmado', 'source_message_id' => first_message.id)
+    end
+
+    it 'keeps nao_informado when an inferido value arrives (action or attachment extraction), with 0 events' do
+      apply('nao_informado', 'não sei', first_message)
+
+      expect do
+        expect(apply('inferido', '2 m')).to eq(:kept_not_informed)
+        expect(writer.apply_field!(key: 'profundidade', value: '2 m', status: 'inferido', source_message_id: second_message.id,
+                                   source_attachment_id: 77)).to eq(:kept_not_informed)
+      end.not_to change(ScanSolo::LeadStateEvent, :count)
+      expect(lead_state.reload.fields['profundidade']).to include('value' => 'não sei', 'status' => 'nao_informado')
+    end
+
+    it 'keeps confirmado when inferido arrives (current rule)' do
+      apply('confirmado', '3 m', first_message)
+
+      expect { expect(apply('inferido', '2 m')).to eq(:kept_confirmed) }.not_to change(ScanSolo::LeadStateEvent, :count)
+      expect(lead_state.reload.fields['profundidade']).to include('value' => '3 m', 'status' => 'confirmado')
+    end
+  end
+
+  describe '#record_collection_offer!' do
+    it 'records the offer once, keeping the first instant and 1 event (RF-36)' do
+      first_at = Time.zone.parse('2026-10-13 10:00:00.123456')
+
+      expect(writer.record_collection_offer!(at: first_at, source_message_id: first_message.id)).to eq(:applied)
+      expect(writer.record_collection_offer!(at: first_at + 1.hour, source_message_id: second_message.id)).to eq(:unchanged)
+
+      expect(lead_state.reload.collection_offered_at).to eq(first_at)
+      expect(lead_state.events.sole).to have_attributes(subject: 'collection_mode', key: 'collection_offered_at', previous_value: nil,
+                                                        new_value: first_at.iso8601(6), source_message_id: first_message.id)
+    end
+  end
+
+  describe '#set_collection_mode!' do
+    it 'ignores a choice before the offer, with 0 events (RF-37)' do
+      expect(writer.set_collection_mode!(mode: 'em_bloco', source_message_id: first_message.id)).to eq(:ignored)
+      expect(lead_state.reload.collection_mode).to be_nil
+      expect(lead_state.events).to be_empty
+    end
+
+    it 'records the choice once after the offer and never changes it (RF-37)' do
+      writer.record_collection_offer!(at: Time.current, source_message_id: first_message.id)
+      expect do
+        expect(writer.set_collection_mode!(mode: 'em_bloco', source_message_id: second_message.id)).to eq(:applied)
+      end.to change(ScanSolo::LeadStateEvent, :count).by(1)
+      expect(lead_state.events.order(:id).last).to have_attributes(subject: 'collection_mode', key: 'collection_mode', new_value: 'em_bloco',
+                                                                   source_message_id: second_message.id)
+
+      expect do
+        expect(writer.set_collection_mode!(mode: 'progressiva', source_message_id: second_message.id)).to eq(:ignored)
+      end.not_to change(ScanSolo::LeadStateEvent, :count)
+      expect(lead_state.reload.collection_mode).to eq('em_bloco')
+    end
+
+    it 'rejects a mode outside the list' do
+      expect { writer.set_collection_mode!(mode: 'rapido', source_message_id: first_message.id) }.to raise_error(ArgumentError)
+    end
+  end
+
   describe '#set_intent!' do
     it 'records one event per intent change (RF-14)' do
       writer.set_intent!(intent: 'orcamento', source_message_id: first_message.id)
@@ -191,11 +284,13 @@ RSpec.describe ScanSolo::LeadState::Writer do
   end
 
   describe '.applicable?' do
-    it 'forbids only an inferido value over a confirmado one' do
-      expect(described_class.applicable?(current_status: 'confirmado', new_status: 'inferido')).to be(false)
-      expect(described_class.applicable?(current_status: 'confirmado', new_status: 'confirmado')).to be(true)
-      expect(described_class.applicable?(current_status: 'inferido', new_status: 'confirmado')).to be(true)
-      expect(described_class.applicable?(current_status: 'faltante', new_status: 'inferido')).to be(true)
+    it 'forbids inferido or nao_informado over confirmado and inferido over nao_informado (RF-07, RF-27)' do
+      refused = [%w[confirmado inferido], %w[confirmado nao_informado], %w[nao_informado inferido]]
+      accepted = [%w[nao_informado confirmado], %w[inferido nao_informado], %w[faltante nao_informado], %w[confirmado confirmado],
+                  %w[inferido confirmado], %w[faltante inferido]]
+      outcomes = (refused + accepted).map { |current, new| described_class.applicable?(current_status: current, new_status: new) }
+
+      expect(outcomes).to eq(([false] * refused.size) + ([true] * accepted.size))
     end
   end
 

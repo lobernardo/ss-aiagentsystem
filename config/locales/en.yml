@@ -833,6 +833,8 @@ en:
         senders:
           customer: 'Cliente'
           agent: 'Atendimento'
+    qualification:
+      not_informed_by_client: 'não informado pelo cliente'
     amount_in_words:
       units: ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove']
       teens: ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove']

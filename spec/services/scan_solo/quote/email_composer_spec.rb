@@ -156,4 +156,28 @@ RSpec.describe ScanSolo::Quote::EmailComposer do
       end
     end
   end
+
+  describe 'lead name with empresa nao_informado (proposta-template-local RF-33 c)' do
+    let(:account) { create(:account) }
+    let(:contact) { create(:contact, account: account, name: 'Ana', email: 'ana@example.com') }
+    let(:opportunity) do
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, stage: :qualificado,
+                                            conversation: create(:conversation, account: account, contact: contact))
+    end
+    let(:version) do
+      ScanSolo::Proposal.create!(opportunity: opportunity).versions.create!(
+        generate_correlation_id: SecureRandom.uuid, status: :awaiting_approval, value: 100, currency: 'BRL'
+      )
+    end
+
+    it 'falls back to the contact name only, without the lead words' do
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+                                 .apply_field!(key: 'empresa', value: 'não tenho', status: 'nao_informado', source_message_id: nil)
+
+      email = with_modified_env(FRONTEND_URL: 'https://app.example.com') { described_class.approval_request(proposal_version: version) }
+
+      expect(email.text.lines(chomp: true)).to include('Lead: Ana')
+      expect(email.text).not_to include('não tenho')
+    end
+  end
 end

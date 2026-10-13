@@ -1,21 +1,30 @@
 # Sole writer of ScanSolo::LeadState / ScanSolo::LeadStateEvent rows
-# (RF-06, RF-07, RF-14, RF-21, RF-23, RF-24, RNF-06). Every operation locks
+# (RF-06, RF-07, RF-14, RF-21, RF-23, RF-24, RNF-06; proposta-template-local
+# RF-27, RF-36, RF-37, RF-39). Every operation locks
 # the state row and saves it once, inside the caller's transaction; each
 # change of value, status, intent or next action appends exactly one
 # history event, and events are only ever created -- never updated or
 # removed.
 class ScanSolo::LeadState::Writer
-  # RF-07: an `inferido` value never replaces a `confirmado` one.
+  # RF-07, RF-27: `inferido` and `nao_informado` never replace `confirmado`,
+  # and `inferido` never replaces `nao_informado`; every other transition applies.
+  REFUSED_STATUSES = {
+    'confirmado' => %w[inferido nao_informado],
+    'nao_informado' => %w[inferido]
+  }.freeze
+  KEPT_OUTCOMES = { 'confirmado' => :kept_confirmed, 'nao_informado' => :kept_not_informed }.freeze
+
   def self.applicable?(current_status:, new_status:)
-    !(current_status == 'confirmado' && new_status == 'inferido')
+    REFUSED_STATUSES.fetch(current_status, []).exclude?(new_status)
   end
 
   def initialize(lead_state:)
     @lead_state = lead_state
   end
 
-  # `status` is `confirmado` or `inferido`, as enforced by the calling action
-  # schema; extractions are always `inferido`.
+  # `status` is `confirmado`, `inferido` or `nao_informado` (the lead's own
+  # words), as enforced by the calling action schema; extractions are always
+  # `inferido`. A refused write changes nothing and records no event.
   def apply_field!(key:, value:, status:, source_message_id:, source_attachment_id: nil)
     raise ArgumentError, "unknown lead state field: #{key}" unless ScanSolo::Qualification::FieldResolver::CATALOG_KEYS.include?(key)
 
@@ -25,7 +34,7 @@ class ScanSolo::LeadState::Writer
     lead_state.lock!
     current = lead_state.fields.fetch(key, {})
     previous_status = current['status'] || 'faltante'
-    return :kept_confirmed unless self.class.applicable?(current_status: previous_status, new_status: status)
+    return KEPT_OUTCOMES.fetch(previous_status) unless self.class.applicable?(current_status: previous_status, new_status: status)
     return :unchanged if current['value'] == value && previous_status == status
 
     write_field!(key, current, 'value' => value, 'status' => status, 'source_message_id' => source_message_id,
@@ -65,6 +74,30 @@ class ScanSolo::LeadState::Writer
         { 'action' => action, 'source_message_id' => source_message_id, 'recorded_at' => Time.current.iso8601(6) }
       ]
     )
+    :applied
+  end
+
+  # RF-36: the system records the one-time bulk collection offer when the turn
+  # that carried the instruction is sent; later calls keep the first instant.
+  def record_collection_offer!(at:, source_message_id:)
+    lead_state.lock!
+    return :unchanged if lead_state.collection_offered_at.present?
+
+    lead_state.update!(collection_offered_at: at)
+    lead_state.events.create!(subject: 'collection_mode', key: 'collection_offered_at', new_value: at.iso8601(6),
+                              source_message_id: source_message_id)
+    :applied
+  end
+
+  # RF-37: the lead's choice is recorded once, and only after the offer.
+  def set_collection_mode!(mode:, source_message_id:)
+    raise ArgumentError, "invalid collection mode: #{mode}" unless ScanSolo::LeadState::COLLECTION_MODES.include?(mode)
+
+    lead_state.lock!
+    return :ignored if lead_state.collection_offered_at.nil? || lead_state.collection_mode.present?
+
+    lead_state.update!(collection_mode: mode)
+    lead_state.events.create!(subject: 'collection_mode', key: 'collection_mode', new_value: mode, source_message_id: source_message_id)
     :applied
   end
 

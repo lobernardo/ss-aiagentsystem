@@ -119,9 +119,10 @@ class ScanSolo::Quote::EmailComposer
       "#{label}: #{value.presence || t('quote.email.not_informed')}"
     end
 
+    # RF-33 (c): an `empresa` `faltante` or `nao_informado` is absent.
     def lead_name(opportunity)
       company = opportunity.lead_state&.fields.to_h['empresa'].to_h
-      [opportunity.contact.name, (company['value'] unless company['status'] == 'faltante')].compact_blank.join(' — ')
+      [opportunity.contact.name, (company['value'] unless %w[faltante nao_informado].include?(company['status']))].compact_blank.join(' — ')
     end
 
     def block_lines

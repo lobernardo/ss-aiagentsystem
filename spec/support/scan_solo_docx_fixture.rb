@@ -4,22 +4,23 @@
 # repository never versions a real template. Reused by the template,
 # renderer, local generation and upload specs.
 #
-# `scan_solo_docx(paragraphs:, header: nil, footer: nil, split: [])` builds a
-# minimal valid document: each paragraph string becomes one `w:p` with a
-# single run; `header`/`footer` (string or array) become `word/header1.xml`
-# and `word/footer1.xml`. Every `{{NAME}}` whose NAME is in `split` is broken
-# into 2 `w:t` (2 runs) inside its paragraph.
+# `scan_solo_docx(paragraphs:, header: nil, footer: nil, split: [], bold: [])`
+# builds a minimal valid document: each paragraph string becomes one `w:p`
+# with a single run; `header`/`footer` (string or array) become
+# `word/header1.xml` and `word/footer1.xml`. Every `{{NAME}}` whose NAME is in
+# `split` is broken into 2 `w:t` (2 runs) inside its paragraph; a run holding
+# a `{{NAME}}` whose NAME is in `bold` gets `<w:rPr><w:b/></w:rPr>`.
 module ScanSoloDocxFixture
   WORD_NAMESPACE = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
   RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
   PACKAGE_RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/relationships'
   XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 
-  def scan_solo_docx(paragraphs:, header: nil, footer: nil, split: [])
+  def scan_solo_docx(paragraphs:, header: nil, footer: nil, split: [], bold: [])
     parts = { 'word/document.xml' => nil }
-    parts['word/header1.xml'] = scan_solo_docx_part('hdr', Array(header), split) if header
-    parts['word/footer1.xml'] = scan_solo_docx_part('ftr', Array(footer), split) if footer
-    parts['word/document.xml'] = scan_solo_docx_part('document', paragraphs, split, parts.keys)
+    parts['word/header1.xml'] = scan_solo_docx_part('hdr', Array(header), split, bold) if header
+    parts['word/footer1.xml'] = scan_solo_docx_part('ftr', Array(footer), split, bold) if footer
+    parts['word/document.xml'] = scan_solo_docx_part('document', paragraphs, split, bold, parts.keys)
 
     Zip::OutputStream.write_buffer(StringIO.new(+'')) do |zip|
       {
@@ -42,8 +43,8 @@ module ScanSoloDocxFixture
 
   private
 
-  def scan_solo_docx_part(root, paragraphs, split, part_names = [])
-    body = paragraphs.map { |text| "<w:p>#{scan_solo_docx_runs(text, split)}</w:p>" }.join
+  def scan_solo_docx_part(root, paragraphs, split, bold, part_names = [])
+    body = paragraphs.map { |text| "<w:p>#{scan_solo_docx_runs(text, split, bold)}</w:p>" }.join
     body = "<w:body>#{body}#{scan_solo_docx_section(part_names)}</w:body>" if root == 'document'
     "#{XML_DECLARATION}<w:#{root} xmlns:w=\"#{WORD_NAMESPACE}\" xmlns:r=\"#{RELATIONSHIPS_NAMESPACE}\">#{body}</w:#{root}>"
   end
@@ -57,13 +58,16 @@ module ScanSoloDocxFixture
     "<w:sectPr>#{references.join}</w:sectPr>"
   end
 
-  def scan_solo_docx_runs(text, split)
+  def scan_solo_docx_runs(text, split, bold)
     pieces = split.reduce([text]) do |chunks, name|
       chunks.flat_map do |chunk|
         chunk.split(/(?<=\{\{#{name[0, 2]})(?=#{name[2..]}\}\})/)
       end
     end
-    pieces.map { |piece| %(<w:r><w:t xml:space="preserve">#{CGI.escapeHTML(piece)}</w:t></w:r>) }.join
+    pieces.map do |piece|
+      properties = '<w:rPr><w:b/></w:rPr>' if bold.any? { |name| piece.include?("{{#{name}}}") }
+      %(<w:r>#{properties}<w:t xml:space="preserve">#{CGI.escapeHTML(piece)}</w:t></w:r>)
+    end.join
   end
 
   def scan_solo_docx_content_types(part_names)

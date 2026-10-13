@@ -175,6 +175,37 @@ RSpec.describe ScanSolo::Quote::RequestEmail do
       expect(lines).to include('Endereço informado: Rua A, 10, centro')
     end
 
+    it 'keeps the address line after the bairro rule extraction (proposta-template-local T20)' do
+      values.merge!('endereco_obra' => 'Rua São José, 10', 'bairro' => 'Jardim Europa')
+      inferred.push('endereco_obra', 'bairro')
+
+      expect(lines).to include('Endereço informado: Rua São José, 10 (a confirmar), Jardim Europa (a confirmar)')
+    end
+
+    it 'compares the bairro without accents' do
+      values.merge!('endereco_obra' => 'Rua A, 10, Jardim Sao Jose', 'bairro' => 'Jardim São José')
+
+      expect(lines).to include('Endereço informado: Rua A, 10, Jardim Sao Jose')
+    end
+
+    it 'shows a bairro alone when there is no address' do
+      values.delete('endereco_obra')
+      values['bairro'] = 'Jardim São José'
+
+      expect(lines).to include('Endereço informado: Jardim São José')
+    end
+  end
+
+  describe '.address_with_district (CT-02, shared with the proposal template)' do
+    it 'appends the district only when the street does not mention it, ignoring case and accents' do
+      expect(described_class.address_with_district('Rua A, 10', 'Centro')).to eq('Rua A, 10, Centro')
+      expect(described_class.address_with_district('Rua A, 10 - CENTRO', 'Centro')).to eq('Rua A, 10 - CENTRO')
+      expect(described_class.address_with_district('Rua A, Sao Jose', 'São José')).to eq('Rua A, Sao Jose')
+      expect(described_class.address_with_district('Rua A, 10', nil)).to eq('Rua A, 10')
+      expect(described_class.address_with_district(nil, 'Centro')).to eq('Centro')
+      expect(described_class.address_with_district(nil, nil)).to be_nil
+    end
+
     it 'renders the technical section with at least one value' do
       values.merge!('profundidade' => '3 m', 'prazo_desejado' => '30 dias')
 

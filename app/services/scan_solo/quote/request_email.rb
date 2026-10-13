@@ -47,6 +47,19 @@ class ScanSolo::Quote::RequestEmail
     I18n.t("scan_solo.quote.request_email.#{key}", **)
   end
 
+  # CT-02: `district` goes at the end (`, `) when the street does not already
+  # mention it, ignoring case and accents. Shared with the proposal template
+  # (proposta-template-local CT-03 `{{ENDERECO_OBRA}}`).
+  def self.address_with_district(street, district)
+    district = nil if district && street && fold(street).include?(fold(district))
+    [street, district].compact.join(', ').presence
+  end
+
+  def self.fold(text)
+    I18n.transliterate(text).downcase.squish
+  end
+  private_class_method :fold
+
   def initialize(snapshot, attachment_ids = nil)
     @snapshot = snapshot
     @attachment_ids = attachment_ids
@@ -165,11 +178,12 @@ class ScanSolo::Quote::RequestEmail
     value('tipo_intervencao') || t('not_informed')
   end
 
-  # CT-02: `bairro` goes at the end when the address does not mention it.
+  # CT-02: `bairro` goes at the end when the address does not mention it;
+  # the rule reads the raw values, the line shows the RF-06 quoted ones.
   def address
     street = field_value('endereco_obra')
     district = field_value('bairro')
-    district = nil if district && street && fold(street).include?(fold(district))
+    district = nil if street && self.class.address_with_district(street, district) == street
     [(value('endereco_obra') if street), (value('bairro') if district)].compact.join(', ').presence
   end
 
@@ -206,10 +220,6 @@ class ScanSolo::Quote::RequestEmail
     return if text.nil?
 
     fields[key]['inferred'] ? "#{text} #{I18n.t('scan_solo.quote.email.to_confirm')}" : text
-  end
-
-  def fold(text)
-    I18n.transliterate(text).downcase.squish
   end
 
   # RF-16: only the map links and the conversation link become clickable.

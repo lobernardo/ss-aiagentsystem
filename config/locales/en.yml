@@ -815,6 +815,25 @@ en:
         body: 'Segue em anexo a proposta que preparamos para você. Qualquer dúvida, é só responder este e-mail.'
         number: 'Número da proposta'
         closing: 'Atenciosamente, equipe comercial.'
+      # proposta-template-local CT-03: fixed texts of the rendered proposal template.
+      months:
+        - janeiro
+        - fevereiro
+        - março
+        - abril
+        - maio
+        - junho
+        - julho
+        - agosto
+        - setembro
+        - outubro
+        - novembro
+        - dezembro
+      long_date: '%{day} de %{month} de %{year}'
+      not_informed: 'Não informado'
+      location_not_informed: 'localidade não informada'
+      address_in_city: '%{address}, em %{city}'
+      depth_excerpt: ', com foco até %{value} de profundidade'
     negotiation:
       standard_reply: 'Vou verificar isso com nosso comercial. Só um momento.'
       email:

@@ -9,6 +9,12 @@
 # rolls back atomically with the send. The message is tagged
 # `scansolo_origin: 'ai'` so the listener never treats it as a human reply
 # (RF-18).
+#
+# proposta-template-local RF-35, RF-36: the evidence keeps the `asked_fields`
+# of the reply actually sent in `context_snapshot`, and a turn whose prompt
+# carried the bulk offer instruction records `collection_offered_at` through
+# ScanSolo::LeadState::Writer in the same transaction, whatever the model
+# output -- an unsent reply records nothing.
 class ScanSolo::AiTurn::ResponseSender
   def self.call(message:, config:, result:, turn:, action_evidence: [])
     new(message: message, config: config, result: result, turn: turn, action_evidence: action_evidence).call
@@ -56,8 +62,15 @@ class ScanSolo::AiTurn::ResponseSender
       output_tokens: result.output_tokens,
       latency_ms: result.latency_ms,
       action_evidence: action_evidence,
-      response_message_id: outbound.id
+      response_message_id: outbound.id,
+      context_snapshot: turn.context_snapshot.merge('asked_fields' => Array(result.asked_fields))
     )
+    record_collection_offer! if turn.context_snapshot['collection_offer_instructed']
+  end
+
+  def record_collection_offer!
+    opportunity = ScanSolo::PipelineOpportunity.find_by(conversation_id: message.conversation_id)
+    ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state).record_collection_offer!(at: Time.current, source_message_id: turn.message_id)
   end
 
   def agent_bot

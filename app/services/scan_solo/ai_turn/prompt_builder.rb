@@ -6,7 +6,9 @@
 # instructions only; the AI keeps answering 24/7 (D-22 interim default).
 #
 # RF-17: the fixed continuity rules come first and are code constants, not
-# config -- no agent config edit can remove or reword them.
+# config -- no agent config edit can remove or reword them. They include the
+# `nao_informado` rule (proposta-template-local RF-26) and the 2-field limit
+# names the bulk collection exception (RF-38 d).
 #
 # Lead state (RF-09, RF-13, RF-16, RF-24, CT-02): the system message carries
 # the lead state and summary sections of ScanSolo::AiTurn::LeadStatePrompt,
@@ -25,13 +27,15 @@ class ScanSolo::AiTurn::PromptBuilder
 
   CONTINUITY_RULES = [
     'Nunca pergunte novamente informação já presente no contato, nos campos coletados ou no histórico.',
-    'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos, ' \
-    'apenas entre os campos elegíveis (faltantes).',
+    'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos ' \
+    '(exceto no modo de coleta em bloco indicado no Estado do lead), apenas entre os campos elegíveis (faltantes).',
     'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.',
     'Se a mensagem do cliente contiver uma pergunta direta, responda-a antes de qualquer pergunta de qualificação.',
     'Não peça nova confirmação para ação já pedida ou autorizada.',
     'Liste em asked_fields as chaves dos campos que a resposta pergunta.',
-    'Se o cliente pedir negociação comercial, marque negotiation_requested em lead_state_update e não negocie.'
+    'Se o cliente pedir negociação comercial, marque negotiation_requested em lead_state_update e não negocie.',
+    'Se o cliente disser que não sabe, não tem, ainda não definiu ou não se aplica, registre o campo com status nao_informado ' \
+    'e não pergunte de novo.'
   ].freeze
 
   # RF-11a: the violations that trigger one regenerated attempt.
@@ -39,7 +43,9 @@ class ScanSolo::AiTurn::PromptBuilder
     'confirmed_field_question' => 'a resposta perguntou um campo já confirmado',
     'question_limit' => 'a resposta perguntou mais de 2 campos',
     'field_not_missing' => 'a resposta perguntou um campo que não está entre os elegíveis',
-    'qualification_closed' => 'a resposta fez perguntas de qualificação com a qualificação concluída'
+    'qualification_closed' => 'a resposta fez perguntas de qualificação com a qualificação concluída',
+    'bulk_out_of_scope' => 'a resposta em bloco perguntou campo fora dos campos elegíveis',
+    'bulk_incomplete' => 'a resposta em bloco não perguntou todos os campos elegíveis'
   }.freeze
 
   ATTACHMENT_TYPE_LABELS = {
@@ -195,11 +201,8 @@ class ScanSolo::AiTurn::PromptBuilder
   end
 
   def output_schema
-    action_item = {
-      type: 'object',
-      properties: { action_id: { type: 'string', enum: offered_actions }, params: { type: 'object' } },
-      required: %w[action_id params]
-    }
+    action_item = { type: 'object', properties: { action_id: { type: 'string', enum: offered_actions }, params: { type: 'object' } },
+                    required: %w[action_id params] }
 
     {
       name: 'scansolo_turn',

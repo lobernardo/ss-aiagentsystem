@@ -153,6 +153,87 @@ RSpec.describe ScanSolo::AiTurn::ContextAssembler do
       end
     end
 
+    describe 'collection rounds (proposta-template-local RF-34, RF-35, RF-36)' do
+      let(:opportunity) do
+        ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
+      end
+      let(:writer) { ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state) }
+      let(:create_turn) do
+        lambda do |status: :succeeded, snapshot: {}, sent: true|
+          trigger = create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact, created_at: 1.hour.ago)
+          reply = create(:message, account: account, conversation: conversation, message_type: :outgoing, created_at: 1.hour.ago) if sent
+          ScanSolo::AiTurn.create!(message: trigger, conversation: conversation, correlation_id: SecureRandom.uuid, invocation_status: status,
+                                   response_message_id: reply&.id, context_snapshot: snapshot)
+        end
+      end
+      let(:snapshot) do
+        described_class.call(message: message, config: config, attachment_reading: no_attachments, retrieval_service: mock_retrieval_service)
+      end
+
+      before do
+        writer.set_intent!(intent: 'orcamento', source_message_id: message.id)
+      end
+
+      it 'counts only the sent turns whose reply asked a field' do
+        create_turn.call(snapshot: { 'asked_fields' => ['area'] })
+        create_turn.call(snapshot: { 'asked_fields' => [] })
+        create_turn.call(snapshot: { 'asked_fields' => ['profundidade'] })
+
+        expect(snapshot[:lead_state_context][:collection_rounds]).to eq(2)
+      end
+
+      it 'does not count suppressed, failed or unsent turns, turns without the key or turns before the lead state' do
+        create_turn.call(status: :suppressed, snapshot: { 'asked_fields' => ['area'] })
+        create_turn.call(status: :failed, snapshot: { 'asked_fields' => ['area'] })
+        create_turn.call(sent: false, snapshot: { 'asked_fields' => ['area'] })
+        create_turn.call(snapshot: {})
+        create_turn.call(snapshot: { 'asked_fields' => ['area'] }).update!(created_at: opportunity.lead_state.created_at - 1.minute)
+
+        expect(snapshot[:lead_state_context][:collection_rounds]).to eq(0)
+      end
+
+      it 'flags the initial explanation only with 0 rounds' do
+        expect(snapshot[:lead_state_context]).to include(collection_rounds: 0, collection_intro: true, collection_offer_instructed: false)
+        expect(snapshot[:collection_offer_instructed]).to be(false)
+      end
+
+      it 'flags the bulk offer at the top level with 2 rounds and no recorded offer' do
+        2.times { create_turn.call(snapshot: { 'asked_fields' => ['area'] }) }
+
+        expect(snapshot[:lead_state_context]).to include(collection_rounds: 2, collection_intro: false, collection_offer_instructed: true)
+        expect(snapshot[:collection_offer_instructed]).to be(true)
+      end
+
+      it 'does not flag the bulk offer once it was recorded' do
+        2.times { create_turn.call(snapshot: { 'asked_fields' => ['area'] }) }
+        writer.record_collection_offer!(at: Time.current, source_message_id: message.id)
+
+        expect(snapshot[:collection_offer_instructed]).to be(false)
+      end
+
+      it 'flags neither instruction for a non-budget intent or a concluded qualification' do
+        2.times { create_turn.call(snapshot: { 'asked_fields' => ['area'] }) }
+        writer.set_intent!(intent: 'duvida', source_message_id: message.id)
+
+        expect(snapshot[:lead_state_context]).to include(collection_intro: false, collection_offer_instructed: false)
+
+        writer.set_intent!(intent: 'orcamento', source_message_id: message.id)
+        writer.complete!(at: Time.current)
+        context = described_class.call(message: message, config: config, attachment_reading: no_attachments,
+                                       retrieval_service: mock_retrieval_service)
+        expect(context[:lead_state_context]).to include(collection_intro: false, collection_offer_instructed: false)
+      end
+
+      it 'is false at the top level without an opportunity' do
+        conversation_without_opportunity = create(:conversation, account: account, contact: contact)
+        other = create(:message, account: account, conversation: conversation_without_opportunity, message_type: :incoming, sender: contact)
+
+        context = described_class.call(message: other, config: config, attachment_reading: no_attachments, retrieval_service: mock_retrieval_service)
+
+        expect(context[:collection_offer_instructed]).to be(false)
+      end
+    end
+
     describe 'history with attachments (RF-16)' do
       it 'describes a location-only message with its coordinates and link' do
         location_message = create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact, content: nil)

@@ -6,6 +6,12 @@
 # keys (none once the qualification is `concluida`), the intent with exactly
 # one script line, the authorized actions and whether a full data summary is
 # allowed this turn.
+#
+# Collection UX (proposta-template-local RF-34, RF-36, RF-38 d): code-constant
+# instructions, never config -- the initial explanation while no collection
+# round happened, the one-time bulk offer once the ContextAssembler flags it,
+# and, in `em_bloco` with the qualification `em_andamento`, asking every
+# eligible field in a single message with the "não sei" notice.
 class ScanSolo::AiTurn::LeadStatePrompt
   # RF-15: one script line per intent (and for the not yet classified one);
   # the intent never changes which fields are required.
@@ -25,6 +31,14 @@ class ScanSolo::AiTurn::LeadStatePrompt
 
   SUMMARY_EXCEPTION = 'exceto se esta resposta concluir a qualificação, registrar next_action, pedir human_handoff, ' \
                       'mudar a etapa ou declarar interpretation_risk'.freeze
+
+  COLLECTION_INTRO = 'Antes da primeira pergunta de qualificação, explique de forma natural, com suas palavras, o sentido de: ' \
+                     '"Para preparar seu orçamento corretamente, preciso coletar algumas informações rápidas sobre o serviço."'.freeze
+  COLLECTION_OFFER = 'Ofereça uma única vez, de forma natural, o sentido de: "Se preferir, posso te mandar de uma vez todas as ' \
+                     'informações que ainda preciso e você responde tudo junto. Quer assim?" Registre a resposta do cliente em ' \
+                     'lead_state_update.collection_mode (em_bloco se aceitar, progressiva se recusar).'.freeze
+  COLLECTION_BULK = 'Coleta em bloco: peça todos os próximos campos elegíveis numa única mensagem e avise que o cliente pode ' \
+                    'responder "não sei", "não tenho" ou "não se aplica".'.freeze
 
   CATALOG_LABELS = ScanSolo::Qualification::FieldResolver::CATALOG.to_h { |entry| [entry[:key], entry[:label]] }.freeze
 
@@ -47,7 +61,7 @@ class ScanSolo::AiTurn::LeadStatePrompt
   def lead_state_block
     return 'sem oportunidade associada' if state[:available] == false
 
-    [*status_lines, *field_lines, *eligible_lines].join("\n")
+    [*status_lines, *field_lines, *eligible_lines, *collection_lines].join("\n")
   end
 
   def status_lines
@@ -86,6 +100,14 @@ class ScanSolo::AiTurn::LeadStatePrompt
     end
 
     ["Próximos campos elegíveis:\n#{list(state[:eligible_keys].map { |key| field_reference(key) })}"]
+  end
+
+  def collection_lines
+    [
+      (COLLECTION_INTRO if state[:collection_intro]),
+      (COLLECTION_OFFER if state[:collection_offer_instructed]),
+      (COLLECTION_BULK if state[:collection][:mode] == 'em_bloco' && state[:qualification][:status] == 'em_andamento')
+    ].compact
   end
 
   def field_reference(key)

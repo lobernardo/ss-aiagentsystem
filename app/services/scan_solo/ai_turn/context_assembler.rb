@@ -28,10 +28,21 @@
 # describes its attachments (type, file name, coordinates, link, whether
 # something was extracted) and URLs, so an attachment-only message is never
 # an empty turn to the model.
+#
+# Collection UX (proposta-template-local RF-34..RF-36, D-05, D-06):
+# `collection_rounds` counts the conversation's sent turns created since the
+# lead state whose reply asked at least one field (`asked_fields` in their
+# context snapshot; older turns without the key do not count). With the
+# qualification `em_andamento` and a budget intent, `collection_intro` holds
+# with 0 rounds and `collection_offer_instructed` with 2+ rounds while the
+# bulk offer was never recorded. The latter is also a top-level key, so the
+# orchestrator stores it in the turn's `context_snapshot` as it is.
 class ScanSolo::AiTurn::ContextAssembler
   RECENT_MESSAGE_LIMIT = 20
 
   NOT_APPLICABLE = { available: false, reason: 'not_applicable' }.freeze
+  BUDGET_INTENTS = %w[orcamento convite_cotacao].freeze
+  OFFER_ROUNDS = 2
 
   def self.call(message:, config:, attachment_reading:, retrieval_service: ScanSolo::Knowledge::RetrievalService, memory_provider: nil)
     new(message: message, config: config, attachment_reading: attachment_reading, retrieval_service: retrieval_service,
@@ -54,6 +65,7 @@ class ScanSolo::AiTurn::ContextAssembler
       contact_context: contact_context,
       pipeline_context: pipeline_context,
       lead_state_context: lead_state_context,
+      collection_offer_instructed: opportunity.present? && collection_offer_instructed?,
       proposal_context: proposal_context,
       knowledge_context: knowledge_context,
       durable_memory: durable_memory
@@ -150,7 +162,26 @@ class ScanSolo::AiTurn::ContextAssembler
   def lead_state_context
     return NOT_APPLICABLE if opportunity.blank?
 
-    projection.to_h.merge(summary_allowed: summary_allowed?, attachment_extraction: attachment_reading.evidence)
+    projection.to_h.merge(
+      summary_allowed: summary_allowed?, attachment_extraction: attachment_reading.evidence, collection_rounds: collection_rounds,
+      collection_intro: collecting_budget? && collection_rounds.zero?, collection_offer_instructed: collection_offer_instructed?
+    )
+  end
+
+  def collection_rounds
+    @collection_rounds ||= ScanSolo::AiTurn.succeeded.where(conversation_id: conversation.id)
+                                           .where(created_at: opportunity.lead_state.created_at..)
+                                           .where.not(response_message_id: nil)
+                                           .where("jsonb_array_length(context_snapshot -> 'asked_fields') > 0")
+                                           .count
+  end
+
+  def collecting_budget?
+    projection.qualification[:status] == 'em_andamento' && BUDGET_INTENTS.include?(projection.intent)
+  end
+
+  def collection_offer_instructed?
+    collecting_budget? && projection.collection[:offered_at].nil? && collection_rounds >= OFFER_ROUNDS
   end
 
   # RF-25 (Q4): a stage change, the qualification completion or a next action

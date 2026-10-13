@@ -185,6 +185,56 @@ RSpec.describe ScanSolo::AiTurn::AttemptRunner do
     end
   end
 
+  describe 'bulk collection start (proposta-template-local RF-38 c, e)' do
+    let(:relevant) { %w[area metragem profundidade integracao_seguranca] }
+    let(:accept_bulk) { [{ 'action_id' => 'lead_state_update', 'params' => { 'collection_mode' => 'em_bloco' } }] }
+
+    before do
+      writer = ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+      turn.update!(guardrail_outcome: { 'allowed_actions' => %w[lead_state_update private_note] })
+      { 'tipo_servico' => 'GeoRadar', 'restricoes_acesso' => 'Portaria', 'prazo_desejado' => '30 dias', 'condicoes_especiais' => 'Nenhuma' }
+        .each { |key, value| writer.apply_field!(key: key, value: value, status: 'confirmado', source_message_id: nil) }
+      writer.record_collection_offer!(at: 1.minute.ago, source_message_id: nil)
+    end
+
+    it 'blocks the acceptance turn that asks only 3 of the relevant pending fields and rolls the choice back' do
+      actions.replace(accept_bulk)
+      asked_fields.replace(relevant.first(3))
+
+      expect(run_attempt).to have_attributes(status: :blocked, violation: :bulk_incomplete)
+      expect(opportunity.lead_state.reload.collection_mode).to be_nil
+      expect(ai_replies).to be_none
+    end
+
+    it 'sends the acceptance turn that asks every relevant pending field' do
+      actions.replace(accept_bulk)
+      asked_fields.replace(relevant)
+
+      expect(run_attempt).to have_attributes(status: :sent, violation: nil)
+      expect(opportunity.lead_state.reload.collection_mode).to eq('em_bloco')
+    end
+
+    it 'regenerates the attempt once after bulk_incomplete' do
+      calls = []
+      responses = [{ fixture_actions: accept_bulk, fixture_asked_fields: relevant.first(3) },
+                   { fixture_actions: accept_bulk, fixture_asked_fields: relevant }]
+      provider = lambda do |**kwargs|
+        calls << kwargs[:payload]
+        ScanSolo::TestMode::MockLlmProvider.call(**kwargs, **responses.fetch(calls.size - 1))
+      end
+
+      ScanSolo::AiTurn::TurnOrchestrator.call(message: message, llm_provider: provider)
+
+      expect(calls.size).to eq(2)
+      expect(calls.last[:system]).to include('rejeitada pela violação bulk_incomplete')
+      expect(turn.reload).to be_succeeded
+      expect(turn.context_snapshot['output_regeneration']).to eq('first_attempt_violation' => 'bulk_incomplete')
+      expect(opportunity.lead_state.reload.collection_mode).to eq('em_bloco')
+      expect(ScanSolo::LeadStateEvent.where(key: 'collection_mode').count).to eq(1)
+      expect(ai_replies.count).to eq(1)
+    end
+  end
+
   %w[awaiting_human human_active].each do |state|
     it "keeps the AI silent while the conversation is #{state} (RF-40)" do
       ScanSolo::ConversationExtension.resolve_for(conversation).update!(ai_control_state: state)

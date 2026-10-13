@@ -18,7 +18,9 @@
 # 4. ScanSolo::AiTurn::OutputValidator checks the reply against the reloaded
 #    lead state projection and the model's `asked_fields` (RF-11, RF-12,
 #    RF-22). A blocked reply rolls the savepoint back -- 0 changes of the
-#    attempt persist -- and returns the violation;
+#    attempt persist -- and returns the violation. The attempt whose actions
+#    recorded `em_bloco` for this message is the bulk start, so every relevant
+#    pending field must be asked (proposta-template-local RF-38 c);
 # 5. an approved reply is sent through ScanSolo::AiTurn::ResponseSender.
 # An exception propagates, so the caller rolls the whole turn back.
 class ScanSolo::AiTurn::AttemptRunner
@@ -117,6 +119,7 @@ class ScanSolo::AiTurn::AttemptRunner
   def validate_reply
     lead_state = ScanSolo::LeadState::Projection.call(opportunity: opportunity.reload, config: config) if opportunity
     ScanSolo::AiTurn::OutputValidator.call(content: result.content, restricted_information: config.restricted_information,
-                                           asked_fields: result.asked_fields, lead_state: lead_state)
+                                           asked_fields: result.asked_fields, lead_state: lead_state,
+                                           bulk_started: lead_state.present? && lead_state.collection[:mode_source_message_id] == message.id)
   end
 end

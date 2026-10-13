@@ -147,9 +147,81 @@ RSpec.describe ScanSolo::AiTurn::OutputValidator do
       expect(validate('O plano custa R$ 199,90. Qual a data desejada?', ['data_desejada'])).to eq(blocked: true, violation: :price)
     end
 
-    it 'lists the four regenerable violations' do
+    it 'lists the regenerable violations, including the 2 bulk ones (proposta-template-local RF-38 e)' do
       expect(described_class::REGENERABLE_VIOLATIONS).to contain_exactly(:confirmed_field_question, :question_limit, :field_not_missing,
-                                                                         :qualification_closed)
+                                                                         :qualification_closed, :bulk_out_of_scope, :bulk_incomplete)
+    end
+
+    it 'rejects asking a nao_informado field while another required one is faltante (proposta-template-local RF-29)' do
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: nil)
+
+      expect(lead_state.status[:missing_fields]).to include('area')
+      expect(validate('Qual a profundidade?', ['profundidade'])).to eq(blocked: true, violation: :field_not_missing)
+    end
+
+    describe 'bulk collection (proposta-template-local RF-38)' do
+      let(:config) do
+        draft = ScanSolo::AiAgentConfig.draft_for!(account)
+        draft.update!(required_qualification_fields: ['Área'])
+        draft
+      end
+      let(:relevant) { %w[area metragem profundidade integracao_seguranca] }
+      let(:message) { create(:message, account: account, conversation: conversation, message_type: :incoming) }
+
+      def validate_bulk(asked_fields, bulk_started:)
+        described_class.call(content: 'Pode me passar estes dados?', asked_fields: asked_fields, lead_state: lead_state, bulk_started: bulk_started)
+      end
+
+      before do
+        { 'tipo_servico' => 'GeoRadar', 'restricoes_acesso' => 'Portaria', 'prazo_desejado' => '30 dias', 'condicoes_especiais' => 'Nenhuma' }
+          .each { |key, value| writer.apply_field!(key: key, value: value, status: 'confirmado', source_message_id: message.id) }
+      end
+
+      context 'with em_bloco' do
+        before do
+          writer.record_collection_offer!(at: Time.current, source_message_id: message.id)
+          writer.set_collection_mode!(mode: 'em_bloco', source_message_id: message.id)
+        end
+
+        it 'accepts the 4 relevant pending fields on the acceptance turn, without question_limit' do
+          expect(lead_state.relevant_pending_keys).to eq(relevant)
+          expect(validate_bulk(relevant, bulk_started: true)).to eq(blocked: false, violation: nil)
+        end
+
+        it 'rejects 3 of them on the acceptance turn with bulk_incomplete' do
+          expect(validate_bulk(relevant.first(3), bulk_started: true)).to eq(blocked: true, violation: :bulk_incomplete)
+        end
+
+        it 'rejects the 4 plus cnpj with bulk_out_of_scope' do
+          expect(validate_bulk(relevant + ['cnpj'], bulk_started: true)).to eq(blocked: true, violation: :bulk_out_of_scope)
+        end
+
+        it 'accepts a single relevant field on a following turn' do
+          expect(validate_bulk(['profundidade'], bulk_started: false)).to eq(blocked: false, violation: nil)
+        end
+
+        it 'keeps rejecting a confirmed field asked by its label' do
+          expect(described_class.call(content: 'Qual o tipo de serviço?', asked_fields: [], lead_state: lead_state, bulk_started: false))
+            .to eq(blocked: true, violation: :confirmed_field_question)
+        end
+
+        it 'keeps qualification_closed once the qualification is concluida' do
+          writer.complete!(at: Time.current)
+
+          expect(validate_bulk(['profundidade'], bulk_started: false)).to eq(blocked: true, violation: :qualification_closed)
+        end
+      end
+
+      it 'rejects 3 fields with question_limit in progressiva' do
+        writer.record_collection_offer!(at: Time.current, source_message_id: message.id)
+        writer.set_collection_mode!(mode: 'progressiva', source_message_id: message.id)
+
+        expect(validate_bulk(relevant.first(3), bulk_started: false)).to eq(blocked: true, violation: :question_limit)
+      end
+
+      it 'rejects 3 fields with question_limit without a collection mode' do
+        expect(validate_bulk(relevant.first(3), bulk_started: true)).to eq(blocked: true, violation: :question_limit)
+      end
     end
   end
 end

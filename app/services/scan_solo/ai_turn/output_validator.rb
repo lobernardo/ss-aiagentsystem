@@ -22,6 +22,13 @@
 # - `field_not_missing`: an asked key is outside the catalog or not `faltante`.
 # These four are the ones the turn regenerates once (RF-11a). Pure: no
 # writes, LLM or HTTP.
+#
+# Bulk collection (proposta-template-local RF-38): with `collection_mode`
+# `em_bloco` and the qualification `em_andamento`, `question_limit` is
+# replaced by `bulk_out_of_scope` (an asked key outside the relevant pending
+# keys) and, on the turn that recorded `em_bloco` (`bulk_started`),
+# `bulk_incomplete` (a relevant pending key not asked). Both regenerate too;
+# `confirmed_field_question` and `field_not_missing` apply in every mode.
 class ScanSolo::AiTurn::OutputValidator
   PRICE_PATTERN = /r\$\s?\d|\b\d+([.,]\d{2})?\s?reais\b/i
   PROPOSAL_SENT_PATTERN = /proposta (foi )?enviada|enviei a proposta/i
@@ -33,21 +40,24 @@ class ScanSolo::AiTurn::OutputValidator
     delivery_status: DELIVERY_STATUS_PATTERN
   }.freeze
 
-  REGENERABLE_VIOLATIONS = %i[confirmed_field_question question_limit field_not_missing qualification_closed].freeze
+  REGENERABLE_VIOLATIONS = %i[confirmed_field_question question_limit field_not_missing qualification_closed bulk_out_of_scope bulk_incomplete].freeze
   QUESTION_LIMIT = 2
 
-  def self.call(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil)
+  # rubocop:disable Metrics/ParameterLists
+  def self.call(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false)
     new(content: content, validated_claims: validated_claims, restricted_information: restricted_information, asked_fields: asked_fields,
-        lead_state: lead_state).call
+        lead_state: lead_state, bulk_started: bulk_started).call
   end
 
-  def initialize(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil)
+  def initialize(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false)
     @content = content.to_s
     @validated_claims = validated_claims
     @restricted_information = Array(restricted_information).compact_blank
     @asked_fields = asked_fields
     @lead_state = lead_state
+    @bulk_started = bulk_started
   end
+  # rubocop:enable Metrics/ParameterLists
 
   def call
     violation = detect_violation
@@ -56,7 +66,7 @@ class ScanSolo::AiTurn::OutputValidator
 
   private
 
-  attr_reader :content, :validated_claims, :restricted_information, :asked_fields, :lead_state
+  attr_reader :content, :validated_claims, :restricted_information, :asked_fields, :lead_state, :bulk_started
 
   def detect_violation
     return :restricted_information if restricted_information.any? { |entry| content.downcase.include?(entry.to_s.downcase) }
@@ -70,10 +80,29 @@ class ScanSolo::AiTurn::OutputValidator
 
   def lead_state_violation
     return :qualification_closed if lead_state.qualification[:status] == 'concluida' && asked_fields.any?
-    return :question_limit if asked_fields.size > QUESTION_LIMIT
+
+    limit = limit_violation
+    return limit if limit
     return :confirmed_field_question if confirmed_field_asked?
 
     :field_not_missing if asked_fields.any? { |key| field_statuses[key] != 'faltante' }
+  end
+
+  def bulk_collection?
+    lead_state.collection[:mode] == 'em_bloco' && lead_state.qualification[:status] == 'em_andamento'
+  end
+
+  def limit_violation
+    return bulk_violation if bulk_collection?
+
+    :question_limit if asked_fields.size > QUESTION_LIMIT
+  end
+
+  def bulk_violation
+    pending = lead_state.relevant_pending_keys
+    return :bulk_out_of_scope if (asked_fields - pending).any?
+
+    :bulk_incomplete if bulk_started && (pending - asked_fields).any?
   end
 
   def field_statuses

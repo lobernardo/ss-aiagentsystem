@@ -53,4 +53,55 @@ RSpec.describe ScanSolo::AiTurn::ResponseSender do
       expect(turn.action_evidence).to eq([{ 'type' => 'stage_transition', 'target_stage' => 'em_qualificacao' }])
     end
   end
+
+  describe 'collection evidence (proposta-template-local RF-35, RF-36)' do
+    let(:opportunity) do
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :em_qualificacao)
+    end
+    let(:offer_events) { ScanSolo::LeadStateEvent.where(subject: 'collection_mode', key: 'collection_offered_at') }
+
+    before { opportunity }
+
+    it 'keeps the asked_fields of the sent reply in the context snapshot' do
+      turn.update!(context_snapshot: { 'collection_offer_instructed' => false })
+      result.asked_fields = %w[area profundidade]
+
+      described_class.call(message: message, config: config, result: result, turn: turn)
+
+      expect(turn.reload.context_snapshot).to include('asked_fields' => %w[area profundidade], 'collection_offer_instructed' => false)
+      expect(opportunity.lead_state.reload.collection_offered_at).to be_nil
+    end
+
+    it 'records the offer once the instructed turn is sent, even when the model ran no action' do
+      turn.update!(context_snapshot: { 'collection_offer_instructed' => true })
+
+      described_class.call(message: message, config: config, result: result, turn: turn, action_evidence: [])
+
+      expect(opportunity.lead_state.reload.collection_offered_at).to be_present
+      expect(offer_events.sole).to have_attributes(source_message_id: message.id)
+      expect(turn.reload.context_snapshot['asked_fields']).to eq([])
+    end
+
+    it 'records no new event for a 2nd instructed turn' do
+      turn.update!(context_snapshot: { 'collection_offer_instructed' => true })
+      described_class.call(message: message, config: config, result: result, turn: turn)
+      offered_at = opportunity.lead_state.reload.collection_offered_at
+      next_message = create(:message, account: account, conversation: conversation, message_type: :incoming, sender: contact)
+      next_turn = ScanSolo::AiTurn.create!(message: next_message, conversation: conversation, correlation_id: SecureRandom.uuid,
+                                           context_snapshot: { 'collection_offer_instructed' => true })
+
+      expect { described_class.call(message: next_message, config: config, result: result, turn: next_turn) }.not_to change(offer_events, :count)
+      expect(opportunity.lead_state.reload.collection_offered_at).to eq(offered_at)
+    end
+
+    it 'records nothing when the outbound message fails' do
+      turn.update!(context_snapshot: { 'collection_offer_instructed' => true })
+      allow(conversation.messages).to receive(:create!).and_raise(ActiveRecord::RecordInvalid)
+
+      expect { described_class.call(message: message, config: config, result: result, turn: turn) }.to raise_error(ActiveRecord::RecordInvalid)
+      expect(opportunity.lead_state.reload.collection_offered_at).to be_nil
+      expect(offer_events).to be_none
+      expect(turn.reload.context_snapshot).not_to have_key('asked_fields')
+    end
+  end
 end

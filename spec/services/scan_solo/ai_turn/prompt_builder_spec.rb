@@ -126,8 +126,8 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
       end
       expect(system).to include(
         'Nunca pergunte novamente informação já presente no contato, nos campos coletados ou no histórico.',
-        'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos, ' \
-        'apenas entre os campos elegíveis (faltantes).',
+        'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos ' \
+        '(exceto no modo de coleta em bloco indicado no Estado do lead), apenas entre os campos elegíveis (faltantes).',
         'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.',
         'Liste em asked_fields as chaves dos campos que a resposta pergunta.'
       )
@@ -204,16 +204,46 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
       expect(not_offered).not_to include(instruction)
     end
 
+    it 'proposta-template-local RF-26, RF-38 d: adds the nao_informado rule last and the bulk exception to the 2-field rule' do
+      nao_informado_rule = 'Se o cliente disser que não sabe, não tem, ainda não definiu ou não se aplica, registre o campo com status ' \
+                           'nao_informado e não pergunte de novo.'
+
+      expect(described_class::CONTINUITY_RULES.last).to eq(nao_informado_rule)
+      expect(described_class::CONTINUITY_RULES.size).to eq(8)
+      expect(described_class::CONTINUITY_RULES[1]).to eq(
+        'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos ' \
+        '(exceto no modo de coleta em bloco indicado no Estado do lead), apenas entre os campos elegíveis (faltantes).'
+      )
+      [nil, 'bulk_incomplete'].each do |previous_violation|
+        system = described_class.call(config: config, context: context, offered_actions: [], previous_violation: previous_violation)[:system]
+
+        expect(system.scan(nao_informado_rule).size).to eq(1)
+        expect(system.index(nao_informado_rule)).to be < system.index('## Regras do agente')
+      end
+    end
+
+    it 'proposta-template-local RF-38 e: instructs the correction of the 2 bulk violations' do
+      %w[bulk_out_of_scope bulk_incomplete].each do |violation|
+        system = described_class.call(config: config, context: context, offered_actions: [], previous_violation: violation)[:system]
+
+        expect(system).to include("rejeitada pela violação #{violation}: #{described_class::VIOLATION_INSTRUCTIONS.fetch(violation)}")
+      end
+      expect(described_class::VIOLATION_INSTRUCTIONS).to include(
+        'bulk_out_of_scope' => 'a resposta em bloco perguntou campo fora dos campos elegíveis',
+        'bulk_incomplete' => 'a resposta em bloco não perguntou todos os campos elegíveis'
+      )
+    end
+
     it 'RF-35: adds only the negotiation rule and the negotiation_requested description, leaving the other rules unchanged' do
       negotiation_rule = 'Se o cliente pedir negociação comercial, marque negotiation_requested em lead_state_update e não negocie.'
       system = described_class.call(config: config, context: context, offered_actions: %w[lead_state_update])[:system]
 
-      expect(described_class::CONTINUITY_RULES.last).to eq(negotiation_rule)
-      expect(described_class::CONTINUITY_RULES[0...-1]).to eq(
+      expect(described_class::CONTINUITY_RULES[-2]).to eq(negotiation_rule)
+      expect(described_class::CONTINUITY_RULES[0...-2]).to eq(
         [
           'Nunca pergunte novamente informação já presente no contato, nos campos coletados ou no histórico.',
-          'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos, ' \
-          'apenas entre os campos elegíveis (faltantes).',
+          'Responda primeiro à pergunta/intenção atual do cliente; só depois pergunte no máximo 2 campos ' \
+          '(exceto no modo de coleta em bloco indicado no Estado do lead), apenas entre os campos elegíveis (faltantes).',
           'Cumprimente apenas na primeira resposta da conversa; não repita saudação depois.',
           'Se a mensagem do cliente contiver uma pergunta direta, responda-a antes de qualquer pergunta de qualificação.',
           'Não peça nova confirmação para ação já pedida ou autorizada.',

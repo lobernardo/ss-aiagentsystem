@@ -15,9 +15,22 @@
 # - Pending updates (attachment/link extractions of the current message,
 #   always `inferido`) are overlaid in memory under the Writer's RF-07 rule,
 #   so a field they fill is no longer eligible (RF-17).
+#
+# proposta-template-local RF-38 (d), RF-29, RF-39:
+# - Collection: `collection_mode`, `collection_offered_at` and the source
+#   message of the `collection_mode` event (both `nil` on an old state).
+# - Relevant pending keys: the `faltante` required keys plus the `faltante`
+#   keys of the request e-mail pending items configured for the service
+#   (RequestEmail::ServiceLabel over `tipo_servico`/`tecnologia`) whose
+#   "informed" condition fails, in catalog order. Items 6/7 are attachments,
+#   not fields, and stay out.
+# - In `em_bloco` with the qualification `em_andamento` the eligible keys are
+#   the relevant pending keys; otherwise the rule above.
 class ScanSolo::LeadState::Projection
-  Result = Struct.new(:intent, :qualification, :next_action, :authorized_actions, :blocks, :status, :history, :eligible_keys,
+  Result = Struct.new(:intent, :qualification, :next_action, :authorized_actions, :blocks, :status, :history, :eligible_keys, :collection,
+                      :relevant_pending_keys,
                       keyword_init: true)
+  INFORMED_STATUSES = %w[confirmado inferido].freeze
 
   def self.call(opportunity:, config:, pending_updates: [])
     new(opportunity: opportunity, config: config, pending_updates: pending_updates).call
@@ -39,7 +52,9 @@ class ScanSolo::LeadState::Projection
       blocks: blocks,
       status: status,
       history: history,
-      eligible_keys: eligible_keys
+      eligible_keys: eligible_keys,
+      collection: collection,
+      relevant_pending_keys: relevant_pending_keys
     )
   end
 
@@ -103,8 +118,34 @@ class ScanSolo::LeadState::Projection
     end
   end
 
+  def collection
+    mode_event = lead_state.events.find { |event| event.subject == 'collection_mode' && event.key == 'collection_mode' }
+
+    { mode: lead_state.collection_mode, offered_at: lead_state.collection_offered_at, mode_source_message_id: mode_event&.source_message_id }
+  end
+
+  def relevant_pending_keys
+    @relevant_pending_keys ||= begin
+      item_keys = failing_item_keys
+      fields.select { |field| field[:status] == 'faltante' && (field[:classification] == 'obrigatorio' || item_keys.include?(field[:key])) }
+            .pluck(:key)
+    end
+  end
+
+  # Keys of the request e-mail pending items configured for the service whose
+  # "informed" condition (any key with a confirmado/inferido value) fails.
+  def failing_item_keys
+    informed = fields.select { |field| INFORMED_STATUSES.include?(field[:status]) }.to_h { |field| [field[:key], field[:value]] }
+    service = ScanSolo::Quote::RequestEmail::ServiceLabel.call(tipo_servico: informed['tipo_servico'], tecnologia: informed['tecnologia'])
+    ScanSolo::Quote::RequestEmail::Settings.load.pending_indexes(service.service_key).flat_map do |index|
+      keys = ScanSolo::Quote::RequestEmail::PendingItems::ITEM_FIELDS.fetch(index, [])
+      informed.values_at(*keys).any?(&:present?) ? [] : keys
+    end
+  end
+
   def eligible_keys
     return [] if lead_state.concluida?
+    return relevant_pending_keys if lead_state.collection_mode == 'em_bloco'
 
     missing = fields.select { |field| field[:status] == 'faltante' }
     missing.partition { |field| field[:classification] == 'obrigatorio' }.flatten.pluck(:key)

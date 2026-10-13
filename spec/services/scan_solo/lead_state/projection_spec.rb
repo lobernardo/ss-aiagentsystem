@@ -107,4 +107,46 @@ RSpec.describe ScanSolo::LeadState::Projection do
 
     expect(described_class.call(opportunity: opportunity.reload, config: config).to_h).to eq(projection.to_h)
   end
+
+  context 'with a GeoRadar service and the 8 configured pending items (proposta-template-local RF-38 d, RF-29)' do
+    let(:relevant) { %w[area metragem profundidade integracao_seguranca] }
+
+    before do
+      { 'tipo_servico' => 'GeoRadar', 'restricoes_acesso' => 'Portaria', 'prazo_desejado' => '30 dias', 'condicoes_especiais' => 'Nenhuma' }
+        .each { |key, value| writer.apply_field!(key: key, value: value, status: 'confirmado', source_message_id: message.id) }
+    end
+
+    it 'lists only the faltante required and failing item keys, in catalog order, never cnpj' do
+      expect(projection.relevant_pending_keys).to eq(relevant)
+      expect(projection.relevant_pending_keys).not_to include('cnpj')
+    end
+
+    it 'leaves a nao_informado key out of the relevant and eligible keys' do
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: message.id)
+
+      expect(projection.relevant_pending_keys).to eq(%w[area metragem integracao_seguranca])
+      expect(projection.eligible_keys).not_to include('profundidade')
+    end
+
+    it 'offers the relevant pending keys in em_bloco' do
+      writer.record_collection_offer!(at: Time.current, source_message_id: message.id)
+      writer.set_collection_mode!(mode: 'em_bloco', source_message_id: message.id)
+
+      expect(projection.eligible_keys).to eq(relevant)
+      expect(projection.collection).to include(mode: 'em_bloco', mode_source_message_id: message.id)
+      expect(projection.collection[:offered_at]).to be_present
+    end
+
+    it 'keeps the current eligible keys without a collection mode' do
+      expect(projection.eligible_keys).to eq(
+        projection.blocks.values.flatten.select { |field| field[:status] == 'faltante' }
+                  .partition { |field| field[:classification] == 'obrigatorio' }.flatten.pluck(:key)
+      )
+      expect(projection.eligible_keys).to include('cnpj')
+    end
+  end
+
+  it 'projects a null collection for an old state (RF-39)' do
+    expect(projection.collection).to eq(mode: nil, offered_at: nil, mode_source_message_id: nil)
+  end
 end

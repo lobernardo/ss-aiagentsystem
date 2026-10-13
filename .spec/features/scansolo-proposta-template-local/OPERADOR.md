@@ -2,6 +2,13 @@
 
 Passos manuais, fora do `scripts/ralph.sh` (o ralph executa só o `PHASES.md`, fases 1–12). Nada aqui roda sem autorização explícita do desenvolvedor. Nenhum passo envia proposta real, e-mail ou WhatsApp a lead real, nem toca o Make.
 
+## 0. Garantia de compatibilidade com o agente publicado (antes de qualquer deploy)
+
+- Esta feature não cria, edita nem publica configuração de agente. Nenhum passo deste arquivo chama `PublishService` ou altera `scan_solo_ai_agent_configs`.
+- Antes do deploy (HG-T2): leitura somente leitura em produção da config publicada — `required_qualification_fields`, `enabled`, `allowed_inbox_ids`, `model_provider`/`model_selection`, `quote_inbox_id`, `quote_recipient_email`, `quote_email_validation_mode` — e de `draft × published` (deve ser "nada"). Registrar no `REGISTRO.md`.
+- Se `required_qualification_fields` estiver vazio, a qualificação nunca conclui sozinha (regra existente): decidir com o desenvolvedor antes de ativar, como mudança de config separada.
+- Qualquer mudança de prompt/config publicada é um gate humano separado: mostrar o diff exato draft × published campo a campo e só publicar com autorização explícita do desenvolvedor.
+
 ## 1. D-01 — confirmar a data de `{{DATA_SOLICITACAO}}`
 
 - Aplicado no código (T20): `created_at` da `quote_request` da versão, por extenso, `America/Sao_Paulo`.

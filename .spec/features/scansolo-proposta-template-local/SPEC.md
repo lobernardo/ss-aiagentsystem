@@ -4,11 +4,13 @@
 - Source: developer description via /plan. Fonte de verdade: `.spec/features/scansolo-proposta-template-local/.handoff/input.md` (pedido de 2026-10-13, auditoria AS IS no HEAD `3953f9f176`, decisões do desenvolvedor, 9 decisões de desenho propostas, ACs 1–8 confirmados e ACs 9–10 em rascunho).
 - Service: ss-aiagentsystem (fork do Chatwoot, monólito Rails 7.2 + Vue 3, namespace `ScanSolo::`). Há requisitos operacionais na VPS de produção (Docker Compose) e no template `.docx`, preparado fora do repositório.
 - Tier: complete
-- Version: 1.2
+- Version: 1.4
 - Changelog:
   - 1.0 (2026-10-13): versão inicial com 3 marcadores em aberto (M-01..M-03).
   - 1.1 (2026-10-13): respostas do desenvolvedor (`.handoff/clarifier-answers.md`). Premissa corrigida: qualificação do agente ≠ validação do template. Entra a Parte A (status `nao_informado` na qualificação, RF-24..RF-31) separada da Parte B (geração local, RF-01..RF-23). M-01 e M-02 substituídos pela premissa (nenhum campo de qualificação bloqueia a geração; `{{TRECHO_PROFUNDIDADE}}`; textos neutros). M-03 resolvido (a). Q-04 (`cause`/`placeholders` na auditoria), Q-05 (blob fora da transação), Q-07 (16 placeholders do v3) e Q-08 (AC do upload depois de `template_unavailable`) aplicados. Q-06 aplicado como decisão provisória D-01. 0 marcadores.
   - 1.2 (2026-10-13): Round 2 do clarifier. D-02, D-03 e D-04 decididos. Novos RF-32 (valor `nao_informado` não é espelhado no contato), RF-33 (todo leitor trata `nao_informado` como ausente para fins de valor) e UI-03 (rótulo do status na tela). RF-31 alterado (itens fixos do `SO/CT-07` com sufixo). D-01 continua a única decisão a confirmar. 0 marcadores.
+  - 1.3 (2026-10-13): Round 3 do clarifier, UX da coleta na Parte A. Novos RF-34 (explicação inicial), RF-35 (`asked_fields` por turno e rodadas), RF-36 (oferta única em bloco), RF-37 (escolha única), RF-38 (modo `em_bloco` × `question_limit`, violações `bulk_out_of_scope`/`bulk_incomplete`), RF-39 (2 colunas anuláveis em `scan_solo_lead_states`) e CT-10. A premissa "`asked_fields` já registrado no turno" falhou na verificação: proposta D-05. Leitura de "intenção de orçamento": D-06. 0 marcadores.
+  - 1.4 (2026-10-13): Round 4 (router, regra do desenvolvedor "não oferecer novamente"). D-05 e D-06 aceitos. Oferta determinística: o sistema grava `collection_offered_at` ao enviar o turno que levou a instrução (chave `collection_offer_instructed` no `context_snapshot`); `collection_offered` sai do schema da ação. RF-36, RF-37, CT-10, quadro de requisitos alterados, TO BE e AC summary atualizados. D-01 volta a ser a única decisão a confirmar. 0 marcadores.
 - Respostas do desenvolvedor: `.spec/features/scansolo-proposta-template-local/.handoff/clarifier-answers.md`.
 - Features relacionadas (prefixos usados aqui):
   - **OC** = `.spec/features/scansolo-operacao-centralizada/SPEC.md` (bloco de resposta `OC/CT-04`, payload Make `OC/CT-05`, número da proposta `OC/RF-26`, valor por extenso `OC/RF-47`).
@@ -44,6 +46,11 @@
 | `LS/RF-08` decisão M6-b (todo valor aplicado pela ação `qualification_field` é espelhado no `Contact`, verified at `app/services/scan_solo/actions/qualification_field_action.rb:113-140`) | **Alterado.** Um valor `nao_informado` não é espelhado (nem coluna nativa nem `custom_attributes`). | RF-32 |
 | `FieldResolver#resolve`/`#collected`/`#make_qualification` (verified at `field_resolver.rb:181-183,201-205,222-226`) e seus leitores `AiTurn::ContextAssembler#pipeline_context` (verified at `app/services/scan_solo/ai_turn/context_assembler.rb:145-146`) e `Handoff::HandoffService#qualification_fields` (verified at `app/services/scan_solo/handoff/handoff_service.rb:108-116`) | **Alterados.** `nao_informado` é ausente como valor: `collected`, contexto do turno e nota de handoff mostram "<rótulo>: não informado pelo cliente"; `make_qualification` (`OC/CT-05`) omite a chave. | RF-33 |
 | `Quote::EmailComposer#lead_name` (verified at `email_composer.rb:122-125`) e `Notifications::NegotiationPayload.contact` (verified at `negotiation_payload.rb:25-28`, `OC/CT-07`) | **Alterados.** `empresa` `nao_informado` é ausente: `lead_name` fica só com o nome do contato e `company` é `null`. | RF-33 |
+| `LS/CT-03` ação `lead_state_update` (verified at `app/services/scan_solo/actions/lead_state_update_action.rb:12-25`) | **Alterado (aditivo).** Só `collection_mode` (`em_bloco` \| `progressiva`, aceito 1 vez e só com `collection_offered_at` preenchido). A oferta não é parâmetro do modelo: o sistema grava `collection_offered_at` ao enviar o turno que levou a instrução (Round 4). | RF-36, RF-37, CT-10 |
+| `LS/RF-12` `question_limit` e `LS/RF-11a` violações regeneráveis (verified at `output_validator.rb:36,71-77`) | **Alterados.** Em `em_bloco`, `question_limit` não se aplica; entram `bulk_out_of_scope` e `bulk_incomplete`, regeneráveis. Em `progressiva` ou sem escolha, nada muda. | RF-38 |
+| `LS/RF-09` bloco "Estado do lead" do `LeadStatePrompt` (verified at `lead_state_prompt.rb:47-92`) e `PromptBuilder::CONTINUITY_RULES`/`VIOLATION_INSTRUCTIONS` (verified at `prompt_builder.rb:26-43`) | **Alterados (aditivos).** Instruções condicionais de explicação inicial, oferta única e coleta em bloco (com elegíveis = conjunto relevante pendente); instruções das 2 violações novas. A regra fixa "no máximo 2 campos" passa a citar a exceção do modo em bloco. | RF-34, RF-36, RF-38 |
+| Modelo de dados do LS (`scan_solo_lead_states`, verified at `db/schema.rb:1637-1650`; `LeadStateEvent` subjects, verified at `lead_state_event.rb:7`) | **Alterado (aditivo).** 2 colunas anuláveis e o `subject` `collection_mode`. | RF-39, CT-10 |
+| Evidência do turno `scan_solo_ai_turns.context_snapshot` (verified at `response_sender.rb:49-60`, `turn_orchestrator.rb:86,106`) | **Alterado (aditivo, D-05).** Chaves `asked_fields` da resposta enviada e `collection_offer_instructed`; `record_evidence!` passa a gravar `collection_offered_at` pelo `Writer` quando o turno levou a instrução de oferta. | RF-35, RF-36, CT-10 |
 | Partial `_pipeline_opportunity.json.jbuilder` (cartão: `company`, `service`, `city_uf`, verified at `:26-33`; `lead_state` do `LS/CT-01`) e `OpportunityDetail.vue`/`FIELD_STATUS_LABELS` (verified at `OpportunityDetail.vue:112-119`, `scansoloLabels.js:195-197`) | **Alterados.** O `lead_state` expõe `status: "nao_informado"` com o `value` (auditoria); o cartão trata o campo como ausente (`null`); a tela mostra o rótulo neutro. | RF-33, UI-03 |
 | `AP/RF-25` (`artifact_sha256` e `template_version`) | **Preservado.** O modo local sempre preenche os 2 campos. | RF-10, RF-20 |
 | `AP/RNF-01` (0 e-mails, downloads e HTTP ao Make dentro de transação) | **Preservado e estendido** à chamada ao Gotenberg. | RNF-02 |
@@ -129,6 +136,14 @@ Achados verificados no código:
 - Consumidores que leem o estado do lead com a regra "status ≠ `faltante` → usa o valor": `FieldResolver#resolve` (verified at `field_resolver.rb:224`), `Quote::RequestEmail::Snapshot#field` (verified at `app/services/scan_solo/quote/request_email/snapshot.rb:58-59`), `Quote::EmailComposer#lead_name` (verified at `app/services/scan_solo/quote/email_composer.rb:124`), `Notifications::NegotiationPayload.contact` (verified at `app/services/scan_solo/notifications/negotiation_payload.rb:27`) e o partial da oportunidade (verified at `app/views/api/v1/accounts/scan_solo/pipeline_opportunities/_pipeline_opportunity.json.jbuilder:32`). O rótulo de status na tela vem de `FIELD_STATUSES` (verified at `app/javascript/dashboard/routes/dashboard/scansolo/scansoloLabels.js:195-197`).
 - Um rótulo obrigatório fora do catálogo fica sempre `faltante` (verified at `field_resolver.rb:212`) e não pode ser gravado no estado do lead. Esse comportamento atual não muda nesta feature.
 
+Achados da UX da coleta (Round 3, verificados no código):
+- `scan_solo_lead_states` tem `intent`, `qualification_status`, `qualification_completed_at`, `next_action`, `next_action_recorded_at`, `next_action_source_message_id`, `authorized_actions` (jsonb) e `fields` (jsonb), 1 por oportunidade (verified at `db/schema.rb:1637-1650`). Não há estado de modo de coleta nem de oferta.
+- O histórico `scan_solo_lead_state_events` só aceita `subject` ∈ `field | intent | next_action` (verified at `app/models/scan_solo/lead_state_event.rb:7`).
+- A ação `lead_state_update` aceita só `opportunity_id`, `intent`, `next_action`, `authorized_action`, `interpretation_risk` e `negotiation_requested`, com `additionalProperties: false` (verified at `app/services/scan_solo/actions/lead_state_update_action.rb:12-25`).
+- O `OutputValidator` aplica, nesta ordem, `qualification_closed`, `question_limit` (> 2 campos), `confirmed_field_question` e `field_not_missing` (verified at `output_validator.rb:71-77`), e as 4 regeneram 1 vez (verified at `output_validator.rb:36`).
+- O `LeadStatePrompt` monta o bloco "Estado do lead" com status, 1 roteiro por intenção, campos e elegíveis (verified at `app/services/scan_solo/ai_turn/lead_state_prompt.rb:12-24,47-92`). A regra de no máximo 2 campos está em `PromptBuilder::CONTINUITY_RULES` (verified at `prompt_builder.rb:28-29`).
+- **Premissa que falhou na verificação:** o `asked_fields` de turnos anteriores NÃO é persistido. Ele só existe no resultado do modelo em memória (verified at `app/services/scan_solo/ai_turn/model_invoker.rb:83`, `attempt_runner.rb:118-121`). O `ResponseSender#record_evidence!` grava no turno `invocation_status`, tokens, `action_evidence` (ações executadas) e `response_message_id`, sem `asked_fields` (verified at `app/services/scan_solo/ai_turn/response_sender.rb:49-60`), e o `context_snapshot` guarda só o contexto, `attachment_extraction` e `output_regeneration` (verified at `turn_orchestrator.rb:86,106`). Hoje não dá para contar rodadas de coleta. Opção mínima na estrutura existente: D-05.
+
 ## TO BE — Estado proposto
 
 ```mermaid
@@ -177,11 +192,26 @@ flowchart LR
   SOE -.->|"resposta OC/CT-04 válida"| PB["Parte B - geração local<br/>não valida qualificação"]
 ```
 
+```mermaid
+flowchart LR
+  TURN["AiTurn - modelo"] -->|"asked_fields da resposta enviada"| SNAP[("AiTurn context_snapshot<br/>asked_fields (alterado, D-05)")]
+  SNAP -->|"rodadas = turnos com asked_fields não vazio"| LSP["AiTurn::LeadStatePrompt (alterado)<br/>explicação inicial se 0 rodadas<br/>oferta se 2 ou mais rodadas e nunca ofertado"]
+  LSP --> TURN
+  TURN -->|"lead_state_update collection_mode (alterado)"| LSU["Actions::LeadStateUpdateAction (alterado)"]
+  SNAP -->|"turno enviado com a instrução de oferta"| RS["AiTurn::ResponseSender (alterado)"]
+  RS -->|"grava collection_offered_at"| WR
+  LSU --> WR["LeadState::Writer (alterado)<br/>oferta 1 vez, escolha 1 vez"]
+  WR --> LST[("scan_solo_lead_states<br/>+ collection_offered_at, collection_mode (novo)")]
+  LST --> PRJ["LeadState::Projection (alterado)<br/>modo e conjunto relevante pendente"]
+  PRJ --> OV["AiTurn::OutputValidator (alterado)<br/>em_bloco: sem question_limit, só conjunto relevante"]
+```
+
 A Parte A muda só a qualificação do agente: o lead pode responder que não sabe, não tem, ainda não definiu ou que não se aplica, e isso conta como resposta válida (RF-25 a RF-33, UI-03). As palavras do lead ficam só no estado do lead, para auditoria: nenhum leitor as usa como dado (RF-32, RF-33). A Parte B só renderiza o que a Parte A e a resposta comercial entregaram (RF-24).
 
 ## Scope
 - **In**:
-  - Parte A: status de campo `nao_informado` (ausência explícita declarada pelo lead) no estado do lead, na ação `qualification_field`, no `Writer`, na satisfação do `FieldResolver`, na regra fixa de prompt, no e-mail de solicitação de orçamento, no espelho no contato (não espelha), nos leitores do estado do lead (contexto do turno, handoff, payloads Make e de negociação, cartão da oportunidade) e no rótulo da tela. Sem migração (`fields` é jsonb).
+  - Parte A: status de campo `nao_informado` (ausência explícita declarada pelo lead) no estado do lead, na ação `qualification_field`, no `Writer`, na satisfação do `FieldResolver`, na regra fixa de prompt, no e-mail de solicitação de orçamento, no espelho no contato (não espelha), nos leitores do estado do lead (contexto do turno, handoff, payloads Make e de negociação, cartão da oportunidade) e no rótulo da tela. Sem migração para o status (`fields` é jsonb).
+  - Parte A, UX da coleta (Round 3): explicação inicial, coleta progressiva (≤ 2 campos), 1 oferta única de coleta em bloco depois de 2 rodadas, modo `em_bloco` restrito ao conjunto relevante pendente, com o estado em 2 colunas anuláveis novas em `scan_solo_lead_states` (1 migração aditiva, sem backfill) e `asked_fields` de cada turno guardado no `context_snapshot` existente de `scan_solo_ai_turns` (D-05).
   - Parte B: modo local de geração selecionado por `SCANSOLO_GOTENBERG_URL`, com precedência sobre o Make.
   - Provider local que segue o contrato `request_generation` e só enfileira um job assíncrono.
   - Job de geração: revalidação idempotente, leitura do template ativo da conta, render determinístico do `.docx`, conversão no Gotenberg, validação do PDF, anexo em `ProposalVersion#document` e aplicação do resultado pelo `CallbackHandler`.
@@ -209,7 +239,7 @@ A Parte A muda só a qualificação do agente: o lead pode responder que não sa
 
 ### Functional Requirements
 
-Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-01..RF-23 e a Parte A usa RF-25..RF-33 e UI-03. O RF-24 é a regra de separação entre as duas.
+Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-01..RF-23 e a Parte A usa RF-25..RF-39 e UI-03. O RF-24 é a regra de separação entre as duas.
 
 #### Regra de separação (premissa do desenvolvedor)
 
@@ -253,6 +283,36 @@ Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-0
   (d) no partial da oportunidade, o `lead_state` (`LS/CT-01`) DEVE expor `status: "nao_informado"` com o `value` gravado (auditoria na tela), e os campos de cartão `company`, `service` e `city_uf` DEVEM ser `null`;
   (e) o template da Parte B segue o CT-03.
   - AC: spec. Config exige `Empresa` e `Profundidade de investigação`; `empresa` `confirmado` "ACME" e `profundidade` `nao_informado` "não sei" → `collected` = `{"Empresa" => "ACME", "Profundidade de investigação" => "não informado pelo cliente"}`; nota de handoff com `Profundidade de investigação: não informado pelo cliente`; `make_qualification` sem a chave `profundidade`. `empresa` `nao_informado` "não tenho" e contato "Ana" → `lead_name` = `Ana`, `NegotiationPayload` com `company: null`, cartão com `company: null` e o `lead_state` com `status: "nao_informado"` e `value: "não tenho"`. 0 ocorrências de `não sei`/`não tenho` no payload do Make, no payload de negociação e no campo `lead` montado pelo `EmailComposer` (verified at `email_composer.rb:57`).
+
+#### Parte A — UX da coleta (Round 3)
+
+Definições usadas nos RF-34..RF-39:
+- **Intenção de orçamento** = `intent` ∈ {`orcamento`, `convite_cotacao`}, as intenções cuja próxima ação padrão é `proposta` (verified at `app/models/scan_solo/lead_state.rb:9-11`) (D-06).
+- **Rodada de coleta** = turno da IA da conversa da oportunidade, criado depois do estado do lead, com `invocation_status` `succeeded`, `response_message_id` presente e `asked_fields` não vazio na resposta enviada (RF-35).
+- **Conjunto relevante pendente** = (obrigatórios publicados com status `faltante`) ∪ (campos do catálogo dos itens opcionais do `SO/CT-07` configurados para o serviço da oportunidade em `config/scan_solo/quote_request_email.yml` (`pending_items_by_service`), só os itens cuja condição de "informado" falha, e só os campos ainda `faltante`). Mapa item → campos, o mesmo das condições do `RequestEmail::PendingItems` (verified at `app/services/scan_solo/quote/request_email/pending_items.rb:11-20`): 1 → `area`, `metragem`; 2 → `profundidade`; 3 → `integracao_seguranca`; 4 → `restricoes_acesso`, `documentacoes_necessarias`; 5 → `prazo_desejado`, `data_desejada`; 8 → `condicoes_especiais`. Os itens 6 (fotos) e 7 (KMZ/KML) são anexos, não campos, e ficam fora. O serviço é o do `RequestEmail::ServiceLabel` sobre `tipo_servico`/`tecnologia`. O conjunto nunca é o catálogo inteiro.
+
+- RF-34 [Estado] (Round 3, item 1; altera `LS/RF-09`): ENQUANTO a qualificação estiver `em_andamento`, a intenção for de orçamento e a oportunidade tiver 0 rodadas de coleta, o bloco "Estado do lead" do prompt DEVE trazer a instrução de explicar, de forma natural e antes da primeira pergunta de qualificação, o sentido de: "Para preparar seu orçamento corretamente, preciso coletar algumas informações rápidas sobre o serviço." Com 1 rodada ou mais, a instrução DEVE sumir e não volta. O texto vem de constante de código (não editável pela config).
+  - AC: spec do `LeadStatePrompt`/`PromptBuilder`. Intenção `orcamento`, `em_andamento`, 0 rodadas → o payload tem a instrução. Mesmo estado com 1 rodada → 0 ocorrências. Intenção `duvida` com 0 rodadas → 0 ocorrências. Qualificação `concluida` → 0 ocorrências. Em 1 conversa simulada de 4 turnos (modelo stubado), a instrução aparece só no payload do 1º turno que pergunta campos.
+
+- RF-35 [Ubíquo] (Round 3, rodadas; D-05): Ao gravar a evidência de um turno que enviou resposta, O SISTEMA DEVE guardar o `asked_fields` da resposta efetivamente enviada no `context_snapshot` existente do `ScanSolo::AiTurn`, na chave `asked_fields` (lista, vazia quando nada foi perguntado; a resposta padrão de negociação grava `[]`). O número de rodadas de coleta de uma oportunidade DEVE ser calculado só a partir desses registros. Turnos anteriores ao deploy não têm a chave e não contam. Sem migração.
+  - AC: spec. Turno com `asked_fields: ["area", "profundidade"]` enviado → `turn.context_snapshot['asked_fields']` = `["area", "profundidade"]`. Turno regenerado → guarda o `asked_fields` da tentativa enviada. 3 turnos enviados com `asked_fields` `["area"]`, `[]` e `["profundidade"]` → 2 rodadas. Turno `suppressed`/falho → não conta.
+
+- RF-36 [Estado] (Round 3, itens 3 e 6; altera `LS/RF-09` e `LS/CT-03`): ENQUANTO a qualificação estiver `em_andamento`, a intenção for de orçamento, `collection_offered_at` for nulo e a oportunidade tiver 2 rodadas de coleta ou mais, o bloco "Estado do lead" DEVE trazer a instrução de oferecer 1 vez, de forma natural, o sentido de: "Se preferir, posso te mandar de uma vez todas as informações que ainda preciso e você responde tudo junto. Quer assim?". O turno DEVE registrar no seu `context_snapshot` que o prompt levou a instrução de oferta (chave `collection_offer_instructed: true`). QUANDO um turno cujo prompt levou a instrução for enviado com sucesso (`response_message_id` presente), O SISTEMA (não o modelo) DEVE gravar `collection_offered_at` pelo `Writer`, com lock e 1 evento de histórico, só se ainda for nulo (idempotente), na mesma gravação da evidência do turno (`ResponseSender#record_evidence!`). Isso vale qualquer que seja a saída do modelo, inclusive quando ele não fez a oferta no texto ("não oferecer novamente", regra do desenvolvedor). Um turno cuja resposta não foi enviada (suprimido, falho, bloqueado) não grava nada, e a instrução volta no próximo turno elegível. Com `collection_offered_at` preenchido, a instrução de oferta DEVE sumir e nunca volta. O modelo não tem parâmetro para registrar a oferta (decisão do router, Round 4).
+  - AC: spec. 1 rodada → 0 instruções de oferta. 2 rodadas e nunca ofertado → 1 instrução e `context_snapshot['collection_offer_instructed']` = `true`. Esse turno enviado com o modelo stubado devolvendo 0 ações → `collection_offered_at` preenchido e 1 evento `subject: 'collection_mode'`, `key: 'collection_offered_at'`. Esse turno com resposta não enviada (falha simulada no envio) → `collection_offered_at` nulo e a instrução aparece no turno seguinte. Conversa simulada de 8 turnos enviados com ≥ 2 rodadas, com o modelo stubado sem nenhuma ação → exatamente 1 turno enviado com a instrução de oferta e exatamente 1 evento `key: 'collection_offered_at'`. A ação `lead_state_update` com `collection_offered` → recusada pelo schema (`additionalProperties: false`).
+
+- RF-37 [Evento] (Round 3, itens 4–6; Round 4): QUANDO o lead responder à oferta, O SISTEMA DEVE permitir que o modelo registre a escolha pela ação `lead_state_update` com `collection_mode` ∈ {`em_bloco`, `progressiva`} (aceitou → `em_bloco`; recusou → `progressiva`). O `Writer` DEVE gravar `collection_mode` com lock e 1 evento só quando `collection_offered_at` estiver preenchido e `collection_mode` ainda for nulo. Fora disso, a escolha é ignorada (sem escrita, sem evento) e informada no resultado da ação. A escolha nunca muda depois de gravada. Sem escolha gravada, vale a coleta progressiva.
+  - AC: spec. `collection_mode: "em_bloco"` antes da oferta → `collection_mode` continua nulo, 0 eventos, resultado com `collection_mode_ignored`. Depois da oferta → `em_bloco` e 1 evento `key: 'collection_mode'`. Depois `collection_mode: "progressiva"` → continua `em_bloco`, 0 eventos. `collection_mode: "rapido"` → recusado pelo schema.
+
+- RF-38 [Estado] (Round 3, itens 2, 4 e 5; altera `LS/RF-12` e `LS/RF-11a`): ENQUANTO `collection_mode` for nulo ou `progressiva`, a regra atual vale sem mudança: no máximo 2 campos por resposta (`question_limit`). ENQUANTO `collection_mode` for `em_bloco` e a qualificação estiver `em_andamento`:
+  (a) o `question_limit` NÃO DEVE se aplicar;
+  (b) o `OutputValidator` DEVE rejeitar, com a violação nova `bulk_out_of_scope`, uma resposta cujo `asked_fields` tenha chave fora do conjunto relevante pendente;
+  (c) no turno que grava `collection_mode` = `em_bloco`, o `OutputValidator` DEVE rejeitar, com a violação nova `bulk_incomplete`, uma resposta cujo `asked_fields` não contenha todas as chaves do conjunto relevante pendente;
+  (d) o bloco "Estado do lead" DEVE listar o conjunto relevante pendente como os campos elegíveis e instruir o modelo a pedir todos numa única mensagem, avisando que o lead pode responder "não sei", "não tenho" ou "não se aplica" (que viram `nao_informado`, RF-26). A regra fixa de continuidade "no máximo 2 campos" (verified at `prompt_builder.rb:28-29`) DEVE ressalvar o modo em bloco indicado no bloco "Estado do lead", para o prompt não se contradizer;
+  (e) `bulk_out_of_scope` e `bulk_incomplete` DEVEM entrar nas violações que regeneram a tentativa 1 vez (`REGENERABLE_VIOLATIONS`, com instrução em `PromptBuilder::VIOLATION_INSTRUCTIONS`). `qualification_closed`, `confirmed_field_question` e `field_not_missing` continuam valendo em todos os modos.
+  - AC: spec. Conjunto relevante pendente = `{area, metragem, profundidade, integracao_seguranca}`; turno que grava `em_bloco` com `asked_fields` = os 4 → aceito (sem `question_limit`); com 3 deles → `bulk_incomplete` e regeneração; com os 4 + `cnpj` (não está no conjunto) → `bulk_out_of_scope`. Turno seguinte em `em_bloco` com `asked_fields: ["profundidade"]` → aceito. Modo `progressiva` com 3 campos → `question_limit`. Modo nulo com 3 campos → `question_limit`. O payload do turno `em_bloco` tem o aviso "não sei / não tenho / não se aplica". Resposta do lead em bloco "área 800 m², profundidade não sei" com as ações do modelo → `area` `confirmado` e `profundidade` `nao_informado` (RF-26), sem nova pergunta sobre `profundidade` (RF-29).
+
+- RF-39 [Ubíquo] (Round 3, item 7; altera o modelo de dados do LS): O estado da coleta DEVE ficar na estrutura existente, sem tabela nem subsistema paralelo: 2 colunas novas e anuláveis em `scan_solo_lead_states` (CT-10), escritas só pelo `ScanSolo::LeadState::Writer`, com histórico em `scan_solo_lead_state_events` com o `subject` novo `collection_mode`. `authorized_actions` não é reutilizado. 1 migração aditiva, sem backfill: estado antigo com as 2 colunas `NULL` = nunca ofertado e coleta progressiva.
+  - AC: spec. Estado antigo (colunas `NULL`) com 2 rodadas → recebe a instrução de oferta (RF-36). `LeadStateEvent` com `subject: 'collection_mode'` é válido. 0 tabelas novas por estes RFs. Nenhum outro serviço escreve as 2 colunas (busca no código: só `Writer`).
 
 ### Parte B — Geração local da proposta (template)
 
@@ -403,6 +463,13 @@ Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-0
 
 - CT-09 (novo, configuração): `SCANSOLO_GOTENBERG_URL` (string URL, não secreta). Definida e não vazia → modo local ativo (RF-01). Valor de produção: `http://gotenberg:3000`. Serviço Compose `gotenberg` conforme RF-22.
 
+- CT-10 (alterado, Parte A, estado da coleta; RF-35..RF-39):
+  - Dados: `scan_solo_lead_states` ganha `collection_offered_at` (datetime, null permitido, sem default) e `collection_mode` (string, null permitido, valores `em_bloco` | `progressiva`, validados no model). `ScanSolo::LeadStateEvent` aceita `subject` ∈ `field | intent | next_action | collection_mode`; os eventos de coleta usam `key` = `collection_offered_at` ou `collection_mode` e `new_value` = instante ISO-8601 ou o modo. 1 migração aditiva, sem backfill e sem índice novo.
+  - Ação `lead_state_update` (`LS/CT-03`, aditivo): 1 propriedade nova, `collection_mode` (string, enum `em_bloco` | `progressiva`). Não existe `collection_offered`: `collection_offered_at` é gravado só pelo sistema no envio do turno (RF-36). O resultado da ação repete o que foi aplicado e traz `collection_mode_ignored: true` quando a escolha foi ignorada (RF-37).
+  - Saída do modelo (`LS/CT-02`): sem mudança.
+  - `scan_solo_ai_turns.context_snapshot` (jsonb existente): chaves novas `asked_fields` (array de strings) no turno com resposta enviada (D-05) e `collection_offer_instructed` (boolean, `true` quando o prompt do turno levou a instrução de oferta, RF-36).
+  - Violações novas do `OutputValidator`: `bulk_out_of_scope`, `bulk_incomplete` (regeneráveis).
+
 ### Non-Functional Requirements
 - RNF-01: Determinismo. O render faz 0 chamadas a LLM e 0 requisições HTTP. Com o mesmo estado de entrada e a mesma data, as partes XML do `.docx` renderizado são idênticas byte a byte.
 - RNF-02 (`AP/RNF-01` estendido): 0 requisições ao Gotenberg dentro de transação de banco aberta, e 0 dentro do `QuoteReplyJob` ou de um request HTTP. Spec: um guard que falha ao detectar transação aberta no ponto da chamada (padrão `CustomExceptions::ScanSolo::DeliveryInsideTransaction`).
@@ -411,8 +478,8 @@ Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-0
 - RNF-05: As specs rodam com 0 HTTP externo real (WebMock, Gotenberg sempre stubado), 0 Make, 0 LLM, 0 SMTP real (ActionMailer `:test`) e 0 credenciais de produção. A variável do modo local é ligada nas specs com `with_modified_env`.
 - RNF-06: Upload ≤ 15 × 1024 × 1024 bytes, conferido antes de abrir o ZIP.
 - RNF-07: 100% dos textos novos de UI vêm do `en.json`, e os de backend (meses, mensagens) do `en.yml`. 0 strings soltas em template Vue. Componentes com `<script setup>`, Tailwind e `components-next/`, sem CSS próprio.
-- RNF-08: Compatibilidade. 0 mudanças de comportamento em `MakeProvider`, `OutboundRequestService`, webhook do Make, `CallbackVerifier`, `CallbackApplicationService`, `ApproveService`, `RejectService`, `DeliveryService`, `SuccessHandler`. 0 colunas novas em `scan_solo_proposal_versions`. 0 entradas novas em `config/schedule.yml`. As specs existentes só mudam de expectativa por requisito deste SPEC, citado no diff. 0 `skip`/`pending`/`xit` novos.
-- RNF-09: Cobertura mínima, com ≥ 1 exemplo RSpec ou Vitest para cada item: Parte A (schema com `nao_informado`; as 6 transições do RF-27; satisfação do RF-28; `field_not_missing` do RF-29; o cenário de 4 turnos do RF-30; e-mail de solicitação do RF-31; sem espelho no contato do RF-32; os 5 leitores do RF-33; rótulo da UI-03); Parte B sem bloqueio por qualificação (RF-24, RF-07 com todos os textos neutros e `{{TRECHO_PROFUNDIDADE}}`); `cause`/`placeholders` na auditoria; blob órfão apagado (RF-10); Reprocessar de `template_render_failed` e `provider_rejected`; seleção do provider (3 casos do RF-01); enfileiramento sem HTTP; job repetido e correlation antigo; template ausente; render com escape e quebra de linha; placeholder residual; PDF inválido; 5xx com retry e esgotamento; 4xx; exceção inesperada; sucesso com anexo, SHA-256 e fluxo de aprovação sem download; concorrência de 2 jobs; Reprocessar após `template_unavailable`; 0 `MakeRequest`/0 HTTP ao Make; os 6 códigos 422 do upload; template ativo preservado em upload inválido; isolamento por conta; smoke e status no modo local; cartão de template (agente e admin).
+- RNF-08: Compatibilidade. 0 mudanças de comportamento em `MakeProvider`, `OutboundRequestService`, webhook do Make, `CallbackVerifier`, `CallbackApplicationService`, `ApproveService`, `RejectService`, `DeliveryService`, `SuccessHandler`. 0 colunas novas em `scan_solo_proposal_versions`. As únicas mudanças de schema são a tabela do CT-06 e as 2 colunas anuláveis do CT-10 (migrações aditivas). 0 entradas novas em `config/schedule.yml`. As specs existentes só mudam de expectativa por requisito deste SPEC, citado no diff. 0 `skip`/`pending`/`xit` novos.
+- RNF-09: Cobertura mínima, com ≥ 1 exemplo RSpec ou Vitest para cada item: Parte A, UX da coleta (instrução inicial só com 0 rodadas; `asked_fields` no `context_snapshot` e contagem de rodadas; oferta ≤ 1 por oportunidade; escolha só depois da oferta e imutável; `em_bloco` sem `question_limit`, `bulk_incomplete`, `bulk_out_of_scope`; `progressiva` com `question_limit`; "não sei" em bloco → `nao_informado`; estado antigo `NULL`); Parte A (schema com `nao_informado`; as 6 transições do RF-27; satisfação do RF-28; `field_not_missing` do RF-29; o cenário de 4 turnos do RF-30; e-mail de solicitação do RF-31; sem espelho no contato do RF-32; os 5 leitores do RF-33; rótulo da UI-03); Parte B sem bloqueio por qualificação (RF-24, RF-07 com todos os textos neutros e `{{TRECHO_PROFUNDIDADE}}`); `cause`/`placeholders` na auditoria; blob órfão apagado (RF-10); Reprocessar de `template_render_failed` e `provider_rejected`; seleção do provider (3 casos do RF-01); enfileiramento sem HTTP; job repetido e correlation antigo; template ausente; render com escape e quebra de linha; placeholder residual; PDF inválido; 5xx com retry e esgotamento; 4xx; exceção inesperada; sucesso com anexo, SHA-256 e fluxo de aprovação sem download; concorrência de 2 jobs; Reprocessar após `template_unavailable`; 0 `MakeRequest`/0 HTTP ao Make; os 6 códigos 422 do upload; template ativo preservado em upload inválido; isolamento por conta; smoke e status no modo local; cartão de template (agente e admin).
 - RNF-10: Prova local ponta a ponta, sem envio real: na stack Docker local com Gotenberg real e um template sintético, 1 resposta válida gera 1 versão `awaiting_approval` com 1 PDF legível (`pdf-reader` extrai o número da proposta e o valor `12.500,00`), e o e-mail de aprovação sai só para o ActionMailer local. Nenhum e-mail ou mensagem sai para lead real.
 
 ### Gates humanos e dependências externas
@@ -445,6 +512,12 @@ Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-0
 | RF-30 | "Não sei" conclui a qualificação e dispara 1 solicitação; valor real depois substitui | Sim |
 | RF-31 | E-mail de solicitação: "Não informado pelo cliente"; "(cliente não soube informar)" no item fixo ou no rótulo | Sim |
 | RF-32 | Valor `nao_informado` não espelhado no contato | Sim |
+| RF-34 | Instrução de explicação inicial só com intenção de orçamento, `em_andamento` e 0 rodadas | Sim (prompt); o texto do modelo não é verificável de forma determinística |
+| RF-35 | `asked_fields` da resposta enviada no `context_snapshot`; rodadas contáveis | Sim |
+| RF-36 | Instrução de oferta em no máximo 1 turno enviado por oportunidade, depois de ≥ 2 rodadas; `collection_offered_at` gravado pelo sistema no envio, qualquer que seja a saída do modelo | Sim |
+| RF-37 | Escolha `em_bloco`/`progressiva` só depois da oferta, 1 vez, imutável | Sim |
+| RF-38 | `em_bloco`: todos os pendentes relevantes no turno do aceite e nada fora do conjunto; `progressiva`/sem escolha: ≤ 2 campos | Sim |
+| RF-39 | 2 colunas anuláveis + `subject` `collection_mode`; só o `Writer` escreve; sem tabela nova | Sim |
 | RF-33 | Leitores tratam `nao_informado` como ausente; contexto/handoff "não informado pelo cliente"; Make/negociação omitem | Sim |
 | RF-01 | Modo local com precedência sobre o Make; sem a variável, seleção atual | Sim |
 | RF-02 | Provider local só enfileira 1 job `medium`, 0 HTTP, após o commit | Sim |
@@ -477,7 +550,7 @@ Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-0
 ## Distribution by Repo (if multi-repo)
 | Repo | RFs | Contracts |
 |------|-----|-----------|
-| ss-aiagentsystem (Rails + Vue + Compose overlay + docs) | RF-01–RF-33, UI-01–UI-03 | CT-01–CT-09 |
+| ss-aiagentsystem (Rails + Vue + Compose overlay + docs) | RF-01–RF-39, UI-01–UI-03 | CT-01–CT-10 |
 | VPS de produção (operacional, só pelo desenvolvedor) | HG-T2, HG-T3 | CT-04 (serviço), CT-09 (`.env`) |
 | Template `.docx` fora do repositório | HG-T1 | CT-03 |
 
@@ -494,6 +567,14 @@ Os ids foram preservados da versão 1.0 para rastreabilidade: a Parte B usa RF-0
 | Id | Decisão aplicada | Alternativa | Onde |
 |---|---|---|---|
 | D-01 (Q-06 b, provisória) | `{{DATA_SOLICITACAO}}` = `created_at` da `quote_request` da versão, por extenso, `America/Sao_Paulo`. | `created_at` da oportunidade (versão 1.0). A troca é 1 linha. | CT-03 |
+
+## Decisões tomadas (Round 4, 2026-10-13, router sob a regra do desenvolvedor "não oferecer novamente")
+
+| Id | Decisão | Onde |
+|---|---|---|
+| D-05 | Aceito como proposto: `asked_fields` da resposta enviada no `context_snapshot` de `scan_solo_ai_turns`, sem migração. Rodadas = turnos da conversa da oportunidade, criados depois do estado do lead, `succeeded`, com `response_message_id` e `asked_fields` não vazio. Turnos anteriores ao deploy não contam. | RF-35, CT-10 |
+| D-06 | Aceito: intenção de orçamento = `orcamento` ou `convite_cotacao`. | RF-34, RF-36 |
+| Oferta determinística | O sistema grava `collection_offered_at` pelo `Writer` ao enviar o turno cujo prompt levou a instrução de oferta; o parâmetro `collection_offered` do modelo foi removido; `collection_mode` continua aceito 1 vez e só com `collection_offered_at` preenchido. | RF-36, RF-37, CT-10 |
 
 ## Decisões tomadas (Round 2, 2026-10-13)
 

@@ -1,0 +1,373 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Proposta por Template Local — REST contract delta (CT-05, CT-08, RF-13, RF-19, RF-25, RF-39)
+  version: "1.0.0"
+  description: >
+    Delta over `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (v1.0.0, proposals)
+    and `.spec/features/scansolo-agent-lead-state/openapi.yaml` (v1.5.0, `lead_state` of the
+    opportunity, LS/CT-01). Only operations and schemas NEW or CHANGED by SPEC
+    `scansolo-proposta-template-local` v1.4 are listed; every other path of the prior contracts
+    stays valid and unchanged. Base path verified at `config/routes.rb` (`namespace :scan_solo`,
+    line 462). Every endpoint keeps the `BaseController` 404 gate when
+    `Account#scansolo_enabled?` is false and the ScanSolo Pundit 403 `{ "error": "forbidden" }`.
+
+    CHANGES (all additive or semantic, flagged, never silent):
+    (1) NEW `GET` / `POST /accounts/{account_id}/scan_solo/proposal_template` (CT-05; RF-17,
+    RF-18, RF-21, UI-01). The file content is never returned and has no download link.
+    (2) `Proposal.integration_state` (and the admin `GET .../scan_solo/status` field
+    `proposal_integration`, production-complete contract) keep the enum `configured | blocked`,
+    but while the local mode is active (`SCANSOLO_GOTENBERG_URL` set, CT-09) the value is
+    computed per account: `configured` iff the account has an active proposal template (CT-08,
+    RF-19). Without the local mode the computation is unchanged (Make credentials).
+    (3) `POST .../proposals/{proposal_id}/retry` cause (b) accepts the failure reasons
+    `provider_rejected`, `template_unavailable` and `template_render_failed` in addition to
+    `timeout`, `network_error`, `provider_unavailable` (RF-13, CT-07); it regenerates through the
+    active provider (local mode: enqueues the local generation job, no Make request).
+    `provider_rejected` also becomes retryable in Make mode (AP/RF-15 changed by SPEC).
+    (4) `ProposalVersion.failure_reason` may be `template_unavailable` or
+    `template_render_failed` (RF-04, RF-07, RF-08, RF-09, RF-12). The type stays `string | null`.
+    (5) `FieldStatus` gains `nao_informado` (RF-25, LS/CT-01 additive); the lead state history
+    `subject` gains `collection_mode` (RF-39, CT-10). The only client is the in-house dashboard,
+    updated in the same delivery (UI-03).
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: app.scansolo.local
+
+security:
+  - userApiKey: []
+
+paths:
+  /accounts/{account_id}/scan_solo/proposal_template:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: showProposalTemplate
+      summary: Read the account's active proposal template metadata (RF-18, RF-21)
+      description: >
+        NEW (CT-05). Any user of the account. Returns the metadata of the active template of the
+        route's account, or `{ "template": null }` when the account has none. Never returns the
+        file content nor a blob URL (RF-18). A template of another account is never read (RF-21).
+      responses:
+        '200':
+          description: Active template metadata or null.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalTemplateEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: uploadProposalTemplate
+      summary: Upload and activate a new proposal template (RF-17, RF-21)
+      description: >
+        NEW (CT-05). Administrator only. Validates the file at the request boundary before any
+        write, in this order: (a) `file` present → else `file_required`; (b) byte size ≤
+        15728640 (15 × 1024 × 1024), checked before opening the ZIP (RNF-06) → else
+        `file_too_large`; (c) valid ZIP with `word/document.xml` well formed → else
+        `invalid_docx`; (d) every one of the 16 CT-03 placeholders appears at least once in the
+        text parts (body, headers, footers) → else `missing_placeholders`; (e) every placeholder
+        occurrence lies inside a single `<w:t>` → else `split_placeholders`; (f) no `{{NAME}}`
+        outside the CT-03 list → else `unknown_placeholders`. An invalid file creates no record
+        and leaves the active template unchanged. A valid file becomes the account's active
+        template (stored in ActiveStorage with SHA-256, filename, uploader and date); the
+        previous active one becomes inactive and is preserved; 1 `AuditEvent`
+        `proposal_template.uploaded` is recorded (CT-07).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProposalTemplateUploadRequest'
+      responses:
+        '200':
+          description: New template is active. Same body as `GET`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalTemplateEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid file; nothing written and the active template is unchanged (RF-17).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalTemplateUploadError'
+
+  /accounts/{account_id}/scan_solo/proposals/{proposal_id}/retry:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      operationId: retryProposal
+      summary: Retry a failed current version on the same version, by cause (RF-13 changes cause b)
+      description: >
+        CHANGED (RF-13; AP/RF-15(b) changed). Request, policy, causes (a) and (c), 200 body and
+        error shapes are exactly those of the v1.0.0 aprovacao contract. Cause (b) now covers the
+        failure reasons `timeout`, `network_error`, `provider_unavailable`, `provider_rejected`,
+        `template_unavailable` and `template_render_failed` (`RetryPolicy::SAFE_RETRYABLE_REASONS`)
+        and regenerates on the same version (new `generate_correlation_id`, status `generating`,
+        audit `proposal.retry_requested`) through the active provider. In local mode no
+        `MakeRequest` exists, so the retry count is 0 and the dead letter never applies; the
+        pending jobs of the previous generation become no-ops (RF-03).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../scansolo-proposta-aprovacao-email/openapi.yaml#/components/schemas/ProposalRetryRequest'
+      responses:
+        '200':
+          description: Retry requested; cause (b) returns the same version in `generating`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Not retryable, dead letter without confirmation, or integration not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanSoloError'
+
+components:
+  securitySchemes:
+    userApiKey:
+      type: apiKey
+      in: header
+      name: api_access_token
+      description: Existing Chatwoot session/API-token auth, unchanged.
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    Forbidden:
+      description: >
+        Denied by the ScanSolo Pundit policy: `{ "error": "forbidden" }`. For `POST
+        proposal_template`: the user is not an account administrator. For `retry`: neither an
+        administrator nor the published `commercial_user_id`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    NotFound:
+      description: Resource not found in the account, or account not ScanSolo-enabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+
+  schemas:
+    ScanSoloError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    ProposalTemplatePlaceholder:
+      type: string
+      description: The 16 CT-03 placeholder names, without braces (Q-07 a). `PROFUNDIDADE` does not exist.
+      enum:
+        - NUMERO_PROPOSTA
+        - DATA_PROPOSTA
+        - DATA_SOLICITACAO
+        - NOME_EMPRESA
+        - NOME_CONTATO
+        - PROJETO_CLIENTE_FINAL
+        - ENDERECO_OBRA
+        - CIDADE_ESTADO
+        - RUA_CIDADE_ESTADO
+        - DESCRICAO_ESCOPO
+        - PRAZO_CRONOGRAMA
+        - CONDICOES_PAGAMENTO
+        - OBSERVACOES_COMERCIAIS
+        - TRECHO_PROFUNDIDADE
+        - VALOR_NUMERICO
+        - VALOR_EXTENSO
+
+    ProposalTemplateUploader:
+      type: object
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+
+    ProposalTemplate:
+      type: object
+      description: CT-05 / CT-06 metadata of the active template (RF-18). No content, no URL.
+      required: [id, filename, byte_size, sha256, uploaded_by, uploaded_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        filename:
+          type: string
+          description: Original file name of the uploaded `.docx`.
+        byte_size:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 15728640
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: SHA-256 hex of the uploaded file; also the second half of `template_version` (RF-10).
+        uploaded_by:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalTemplateUploader'
+            - type: "null"
+          description: Uploader user; null when the user was deleted (`uploaded_by_id` nullable, CT-06).
+        uploaded_at:
+          type: string
+          format: date-time
+          description: ISO-8601 creation time of the template record.
+
+    ProposalTemplateEnvelope:
+      type: object
+      required: [template]
+      additionalProperties: false
+      properties:
+        template:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalTemplate'
+            - type: "null"
+
+    ProposalTemplateUploadRequest:
+      type: object
+      required: [file]
+      additionalProperties: false
+      properties:
+        file:
+          type: string
+          format: binary
+          description: The `.docx` template (≤ 15728640 bytes, RNF-06).
+
+    ProposalTemplateUploadError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          enum: [file_required, file_too_large, invalid_docx, missing_placeholders, split_placeholders, unknown_placeholders]
+        placeholders:
+          type: array
+          description: >
+            Only for `missing_placeholders`, `split_placeholders` and `unknown_placeholders`:
+            placeholder names without braces, sorted, without duplicates. For
+            `unknown_placeholders` the names are outside the CT-03 list.
+          minItems: 1
+          items:
+            type: string
+            pattern: '^[A-Z_]+$'
+
+    ProposalVersion:
+      description: >
+        v1.0.0 aprovacao `ProposalVersion`, unchanged in shape. `failure_reason` may now also be
+        `template_unavailable` (no active template, RF-04) or `template_render_failed` (version
+        without commercial reply, residual placeholder or invalid `.docx`, invalid PDF, unexpected
+        exception; RF-07, RF-08, RF-09, RF-12). `provider_unavailable` (Gotenberg timeout,
+        connection error or 5xx after 3 attempts) and `provider_rejected` (Gotenberg 4xx) keep
+        their names (RF-11). In local mode `artifact_url` is null and the PDF is served by
+        `document_url` (RF-10).
+      allOf:
+        - $ref: '../scansolo-proposta-aprovacao-email/openapi.yaml#/components/schemas/ProposalVersion'
+
+    Proposal:
+      description: >
+        v1.0.0 aprovacao `Proposal`, unchanged in shape. `integration_state` keeps
+        `configured | blocked`; in local mode it is per account: `configured` iff the account has
+        an active template (CT-08, RF-19).
+      allOf:
+        - $ref: '../scansolo-proposta-aprovacao-email/openapi.yaml#/components/schemas/Proposal'
+
+    FieldStatus:
+      type: string
+      enum: [confirmado, inferido, faltante, nao_informado]
+      description: >
+        CHANGED (RF-25, additive over LS v1.5.0). `nao_informado` = the lead explicitly said they
+        do not know, do not have, have not defined or that it does not apply; `value` holds the
+        lead's own words for audit only (RF-33 d) and the dashboard shows the neutral label
+        (UI-03). Readers treat it as absent for value purposes (RF-33).
+
+    LeadStateHistoryEntry:
+      type: object
+      additionalProperties: false
+      description: >
+        CHANGED (RF-39, CT-10, additive over LS v1.5.0). `subject` gains `collection_mode`; its
+        events use `key` = `collection_offered_at` (new_value = ISO-8601 instant) or
+        `collection_mode` (new_value = `em_bloco` | `progressiva`). Field statuses gain
+        `nao_informado`.
+      required: [subject, key, previous_value, previous_status, new_value, new_status, source_message_id, source_attachment_id, changed_at]
+      properties:
+        subject:
+          type: string
+          enum: [field, intent, next_action, collection_mode]
+        key:
+          type: [string, "null"]
+          description: RF-02 key when `subject = field`; `collection_offered_at` or `collection_mode` when `subject = collection_mode`; else null.
+        previous_value:
+          type: [string, "null"]
+        previous_status:
+          type: [string, "null"]
+          enum: [confirmado, inferido, faltante, nao_informado, null]
+        new_value:
+          type: [string, "null"]
+        new_status:
+          type: [string, "null"]
+          enum: [confirmado, inferido, faltante, nao_informado, null]
+        source_message_id:
+          type: [integer, "null"]
+          format: int64
+        source_attachment_id:
+          type: [integer, "null"]
+          format: int64
+        changed_at:
+          type: string
+          format: date-time

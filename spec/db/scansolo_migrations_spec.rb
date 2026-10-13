@@ -55,7 +55,9 @@ RSpec.describe 'ScanSolo migrations' do
     # delivery columns, N versions per quote request and unique idempotency_key.
     # scansolo-solicitacao-orcamento-email T01 (RF-14, RF-21) added 2 more:
     # quote_email_validation_mode flag and quote request update tracking.
-    expect(scansolo_migration_files.length).to eq(40)
+    # scansolo-proposta-template-local T01 (CT-06, CT-10) added 2 more:
+    # scan_solo_proposal_templates and the lead state collection columns.
+    expect(scansolo_migration_files.length).to eq(42)
   end
 
   it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_10_10_100002) do
+ActiveRecord::Schema[7.2].define(version: 2026_10_13_100002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1646,6 +1646,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_10_100002) do
     t.jsonb "fields", default: {}, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "collection_offered_at"
+    t.string "collection_mode"
     t.index ["opportunity_id"], name: "index_scan_solo_lead_states_on_opportunity_id", unique: true
   end
 
@@ -1701,6 +1703,19 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_10_100002) do
     t.datetime "created_at", null: false
     t.index ["actor_type", "actor_id"], name: "idx_on_actor_type_actor_id_2f58bcdc3c"
     t.index ["opportunity_id"], name: "index_scan_solo_pipeline_stage_events_on_opportunity_id"
+  end
+
+  create_table "scan_solo_proposal_templates", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "uploaded_by_id"
+    t.string "filename", null: false
+    t.bigint "byte_size", null: false
+    t.string "sha256", null: false
+    t.boolean "active", default: false, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "created_at"], name: "index_scan_solo_proposal_templates_on_account_and_created_at"
+    t.index ["account_id"], name: "index_scan_solo_proposal_templates_one_active_per_account", unique: true, where: "active"
   end
 
   create_table "scan_solo_proposal_versions", force: :cascade do |t|
@@ -2014,6 +2029,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_10_100002) do
   add_foreign_key "scan_solo_lead_state_events", "scan_solo_lead_states", column: "lead_state_id"
   add_foreign_key "scan_solo_lead_states", "scan_solo_pipeline_opportunities", column: "opportunity_id"
   add_foreign_key "scan_solo_make_requests", "accounts"
+  add_foreign_key "scan_solo_proposal_templates", "accounts"
+  add_foreign_key "scan_solo_proposal_templates", "users", column: "uploaded_by_id", on_delete: :nullify
   add_foreign_key "scan_solo_proposal_versions", "scan_solo_proposals", column: "proposal_id"
   add_foreign_key "scan_solo_proposal_versions", "scan_solo_quote_requests", column: "quote_request_id"
   add_foreign_key "scan_solo_proposals", "scan_solo_pipeline_opportunities", column: "opportunity_id"

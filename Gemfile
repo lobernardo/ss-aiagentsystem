@@ -37,6 +37,8 @@ gem 'liquid'
 gem 'commonmarker'
 # Extract text from lead documents (RF-19)
 gem 'pdf-reader'
+# ScanSolo: leitura/escrita do template .docx (RF-05, RF-17)
+gem 'rubyzip', '~> 2.4', require: 'zip'
 # Validate Data against JSON Schema
 gem 'json_schemer'
 # used in swagger build

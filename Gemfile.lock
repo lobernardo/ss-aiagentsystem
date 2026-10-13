@@ -868,6 +868,7 @@ GEM
     ruby_parser (3.22.0)
       racc (~> 1.5)
       sexp_processor (~> 4.16)
+    rubyzip (2.4.1)
     sass (3.7.4)
       sass-listen (~> 4.0.0)
     sass-listen (4.0.0)
@@ -1178,6 +1179,7 @@ DEPENDENCIES
   ruby-openai
   ruby_llm (>= 1.14.1)
   ruby_llm-schema
+  rubyzip (~> 2.4)
   scout_apm
   scss_lint
   searchkick

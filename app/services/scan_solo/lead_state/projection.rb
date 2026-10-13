@@ -145,7 +145,7 @@ class ScanSolo::LeadState::Projection
 
   def eligible_keys
     return [] if lead_state.concluida?
-    return relevant_pending_keys if lead_state.collection_mode == 'em_bloco'
+    return relevant_pending_keys if collection[:mode] == 'em_bloco'
 
     missing = fields.select { |field| field[:status] == 'faltante' }
     missing.partition { |field| field[:classification] == 'obrigatorio' }.flatten.pluck(:key)

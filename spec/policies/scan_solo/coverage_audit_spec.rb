@@ -44,6 +44,7 @@ RSpec.describe 'ScanSolo Pundit fail-closed coverage audit' do
     'Api::V1::Accounts::ScanSolo::CadenceEnrollmentsController' => ScanSolo::CadenceEnrollmentPolicy,
     'Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController' => ScanSolo::PipelineOpportunityPolicy,
     'Api::V1::Accounts::ScanSolo::ProposalsController' => ScanSolo::ProposalPolicy,
+    'Api::V1::Accounts::ScanSolo::ProposalTemplatesController' => ScanSolo::ProposalTemplatePolicy,
     'Api::V1::Accounts::ScanSolo::QuoteRepliesController' => ScanSolo::QuoteReplyPolicy,
     'Api::V1::Accounts::ScanSolo::QuoteRequestsController' => ScanSolo::QuoteRequestPolicy,
     'Api::V1::Accounts::ScanSolo::Conversations::HandoffController' => ScanSolo::HandoffPolicy,

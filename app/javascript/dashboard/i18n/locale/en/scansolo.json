@@ -356,7 +356,7 @@
         "REJECTED": "Rejeitada"
       },
       "REPROCESS": "Reprocessar",
-      "INTEGRATION_BLOCKED": "A integração de propostas com o Make ainda não está configurada. Gerar, enviar e tentar novamente ficam indisponíveis até um administrador concluir a configuração.",
+      "INTEGRATION_BLOCKED": "A geração de propostas ainda não está configurada. Gerar e tentar novamente ficam indisponíveis até um administrador concluir a configuração (por exemplo, enviar o template da proposta).",
       "FAILURE_REASON_LABEL": "Motivo da falha",
       "VALUE_LABEL": "Valor",
       "DEAD_LETTER": "Dead-letter",
@@ -366,6 +366,25 @@
       "RETRY_SUCCESS": "Nova tentativa solicitada.",
       "RESEND": "Reenviar",
       "QUOTE_REQUEST_STATUS_LABEL": "Status do orçamento",
+      "TEMPLATE": {
+        "TITLE": "Template da proposta",
+        "NONE": "Nenhum template ativo",
+        "UPLOADED_AT": "Enviado em",
+        "UPLOADED_BY": "Enviado por",
+        "SHA256": "SHA-256",
+        "SELECT_FILE": "Arquivo .docx do template",
+        "UPLOAD": "Enviar",
+        "UPLOAD_SUCCESS": "Template da proposta atualizado.",
+        "LOAD_ERROR": "Não foi possível carregar o template da proposta.",
+        "ERRORS": {
+          "FILE_REQUIRED": "Selecione um arquivo .docx.",
+          "FILE_TOO_LARGE": "O arquivo passa de 15 MB.",
+          "INVALID_DOCX": "O arquivo não é um .docx válido.",
+          "MISSING_PLACEHOLDERS": "Faltam campos obrigatórios no template",
+          "SPLIT_PLACEHOLDERS": "Há campos quebrados em mais de um trecho de formatação; digite-os de novo de uma vez",
+          "UNKNOWN_PLACEHOLDERS": "Há campos desconhecidos no template"
+        }
+      },
       "PENDING_REPLIES": {
         "TITLE": "Respostas pendentes de vínculo",
         "EMPTY_STATE": "Nenhuma resposta pendente de vínculo.",
@@ -567,13 +586,15 @@
         "CONVERSATION_RESOLVED": "Conversa resolvida",
         "TIMEOUT": "Tempo de resposta do Make esgotado",
         "NETWORK_ERROR": "Falha de rede ao chamar o Make",
-        "PROVIDER_UNAVAILABLE": "Make indisponível",
-        "PROVIDER_REJECTED": "Make recusou a requisição",
+        "PROVIDER_UNAVAILABLE": "Serviço de geração indisponível",
+        "PROVIDER_REJECTED": "Serviço de geração recusou a requisição",
         "STALE_PENDING": "Turno expirou sem resposta",
         "LEAD_EMAIL_MISSING": "Falta o e-mail do lead",
         "EMAIL_DELIVERY_FAILED": "Falha no envio do e-mail ao lead",
         "ARTIFACT_DOWNLOAD_FAILED": "Falha ao baixar o PDF da proposta",
-        "ARTIFACT_CHECKSUM_MISMATCH": "PDF da proposta diferente do esperado"
+        "ARTIFACT_CHECKSUM_MISMATCH": "PDF da proposta diferente do esperado",
+        "TEMPLATE_UNAVAILABLE": "Template de proposta indisponível",
+        "TEMPLATE_RENDER_FAILED": "Falha ao montar o documento da proposta"
       },
       "META_STATUSES": {
         "APPROVED": "Aprovado",

@@ -381,6 +381,86 @@ RSpec.describe 'ScanSolo Proposals API (CT-07)', type: :request do
     end
   end
 
+  describe 'local mode (RF-01, RF-16, RF-19, RF-21)' do
+    let(:scenario_url) { 'https://hook.make.example/scenario-webhook' }
+    let(:other_account) { create(:account, scansolo_enabled: true) }
+    let(:other_admin) { create(:user, account: other_account, role: :administrator) }
+    let(:quote_request) do
+      ScanSolo::QuoteRequest.create!(
+        account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, status: :replied, replied_at: Time.current,
+        commercial: { 'total_value' => '12500.0', 'schedule' => '30 dias', 'scope' => 'Sondagem SPT', 'payment_terms' => 'À vista' }
+      )
+    end
+
+    around do |example|
+      with_modified_env(SCANSOLO_GOTENBERG_URL: 'http://gotenberg.test:3000') { example.run }
+    end
+
+    before do
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :scenario_url).and_return(scenario_url)
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :secret).and_return('make-secret')
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :inbound_signing_secret).and_return('make-inbound')
+      ScanSolo::ProposalTemplate.new(account: account, filename: 'proposta.docx', byte_size: 7, sha256: 'a' * 64, active: true).tap do |record|
+        record.file.attach(io: StringIO.new('PK-docx'), filename: 'proposta.docx')
+        record.save!
+      end
+    end
+
+    it 'generates through the local job without calling Gotenberg or Make' do
+      path = "/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities/#{opportunity.id}/proposals/generate"
+
+      quote_request
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(required_qualification_fields: ['Área'])
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
+                                 .apply_field!(key: 'area', value: '800 m²', status: 'confirmado', source_message_id: nil)
+      expect do
+        post path, params: { correlation_id: SecureRandom.uuid }, headers: agent.create_new_auth_token, as: :json
+      end.not_to change(ScanSolo::MakeRequest, :count)
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['status']).to eq('generating')
+      expect(ScanSolo::ProposalLocalGenerationJob).to have_been_enqueued.once
+      expect(a_request(:any, /gotenberg/)).not_to have_been_made
+      expect(a_request(:any, scenario_url)).not_to have_been_made
+    end
+
+    it 'retries a failed version locally without a MakeRequest' do
+      version = ScanSolo::Proposal.create!(opportunity: opportunity)
+                                  .versions.create!(status: :failed, failure_reason: 'template_unavailable', quote_request: quote_request,
+                                                    generate_correlation_id: SecureRandom.uuid)
+
+      expect do
+        post "/api/v1/accounts/#{account.id}/scan_solo/proposals/#{version.proposal_id}/retry",
+             params: { proposal_version_id: version.id, confirm_reprocess: false }, headers: admin.create_new_auth_token, as: :json
+      end.not_to change(ScanSolo::MakeRequest, :count)
+
+      expect(response).to have_http_status(:success)
+      expect(version.reload).to be_generating
+      expect(ScanSolo::ProposalLocalGenerationJob).to have_been_enqueued.once
+      expect(a_request(:any, scenario_url)).not_to have_been_made
+    end
+
+    it 'exposes integration_state per account from its active template' do
+      ScanSolo::Proposal.create!(opportunity: opportunity)
+      other_contact = create(:contact, account: other_account)
+      other_opportunity = ScanSolo::PipelineOpportunity.create!(
+        account: other_account, contact: other_contact, conversation: create(:conversation, account: other_account, contact: other_contact)
+      )
+      other_proposal = ScanSolo::Proposal.create!(opportunity: other_opportunity)
+
+      get "/api/v1/accounts/#{account.id}/scan_solo/proposals", headers: agent.create_new_auth_token, as: :json
+      expect(response.parsed_body.pluck('integration_state')).to eq(['configured'])
+
+      get "/api/v1/accounts/#{other_account.id}/scan_solo/proposals", headers: other_admin.create_new_auth_token, as: :json
+      expect(response.parsed_body.pluck('integration_state')).to eq(['blocked'])
+
+      get "/api/v1/accounts/#{other_account.id}/scan_solo/proposals/#{other_proposal.id}",
+          headers: other_admin.create_new_auth_token, as: :json
+      expect(response.parsed_body['integration_state']).to eq('blocked')
+    end
+  end
+
   describe 'authorization and production integration gates' do
     let!(:proposal) { ScanSolo::Proposal.create!(opportunity: opportunity) }
     let!(:version) { proposal.versions.create!(status: :failed, failure_reason: 'timeout') }

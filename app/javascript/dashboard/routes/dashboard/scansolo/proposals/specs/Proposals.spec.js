@@ -11,6 +11,8 @@ import { withFullI18n } from 'test-i18n';
 import { useAlert } from 'dashboard/composables';
 import ScanSoloProposalsAPI from 'dashboard/api/scansoloProposals';
 import ScanSoloAiAgentConfigAPI from 'dashboard/api/scansoloAiAgentConfig';
+import ScanSoloProposalTemplateAPI from 'dashboard/api/scansoloProposalTemplate';
+import enMessages from 'dashboard/i18n/locale/en';
 import Proposals from '../Proposals.vue';
 
 vi.mock('dashboard/api/scansoloProposals', () => ({
@@ -26,6 +28,10 @@ vi.mock('dashboard/api/scansoloProposals', () => ({
 
 vi.mock('dashboard/api/scansoloAiAgentConfig', () => ({
   default: { get: vi.fn() },
+}));
+
+vi.mock('dashboard/api/scansoloProposalTemplate', () => ({
+  default: { show: vi.fn(), upload: vi.fn() },
 }));
 
 vi.mock('dashboard/composables', () => ({ useAlert: vi.fn() }));
@@ -116,6 +122,9 @@ describe('Proposals', () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     ScanSoloProposalsAPI.get.mockResolvedValue({ data: [proposal] });
+    ScanSoloProposalTemplateAPI.show.mockResolvedValue({
+      data: { template: null },
+    });
     ScanSoloAiAgentConfigAPI.get.mockResolvedValue({
       data: {
         draft: { id: 1 },
@@ -308,9 +317,7 @@ describe('Proposals', () => {
 
     expect(
       wrapper.find('[data-testid="integration-blocked-notice"]').text()
-    ).toContain(
-      'integração de propostas com o Make ainda não está configurada'
-    );
+    ).toContain('A geração de propostas ainda não está configurada');
     const row = versionRow(wrapper, currentVersion.id);
     expect(
       proposalRow(wrapper, proposal.id)
@@ -338,7 +345,62 @@ describe('Proposals', () => {
       versionRow(wrapper, currentVersion.id)
         .find('[data-testid="version-failure-reason"]')
         .text()
-    ).toBe('Motivo da falha: Make indisponível');
+    ).toBe('Motivo da falha: Serviço de geração indisponível');
+  });
+
+  // UI-01: the template card sits above the list, even without proposals.
+  it('shows the template card with no proposals', async () => {
+    ScanSoloProposalsAPI.get.mockResolvedValue({ data: [] });
+
+    const wrapper = mountProposals();
+    await flushPromises();
+
+    expect(
+      wrapper.find('[data-testid="proposal-template-card"]').text()
+    ).toContain('Nenhum template ativo');
+    expect(wrapper.find('[data-testid="list-state-empty"]').exists()).toBe(
+      true
+    );
+  });
+
+  it('reloads the proposals after a template upload (RF-19)', async () => {
+    const wrapper = mountProposals();
+    await flushPromises();
+    ScanSoloProposalsAPI.get.mockClear();
+
+    wrapper
+      .findComponent({ name: 'ProposalTemplateCard' })
+      .vm.$emit('uploaded');
+    await flushPromises();
+
+    expect(ScanSoloProposalsAPI.get).toHaveBeenCalledTimes(1);
+  });
+
+  // UI-02: local-mode failure reasons get their own label and keep retry.
+  it.each([
+    ['template_unavailable', 'Template de proposta indisponível'],
+    ['template_render_failed', 'Falha ao montar o documento da proposta'],
+  ])('labels a failed %s version and offers retry', async (reason, label) => {
+    ScanSoloProposalsAPI.get.mockResolvedValue({
+      data: [withCurrentVersion({ status: 'failed', failure_reason: reason })],
+    });
+    const wrapper = mountProposals();
+    await flushPromises();
+
+    const row = versionRow(wrapper, currentVersion.id);
+    expect(row.find('[data-testid="version-failure-reason"]').text()).toBe(
+      `Motivo da falha: ${label}`
+    );
+    expect(row.find('[data-testid="retry-button"]').exists()).toBe(true);
+  });
+
+  it('keeps the provider-neutral texts free of Make (UI-02)', () => {
+    expect(enMessages.SCANSOLO.PROPOSALS.INTEGRATION_BLOCKED).not.toContain(
+      'Make'
+    );
+    expect(
+      enMessages.SCANSOLO.LABELS.REASONS.PROVIDER_UNAVAILABLE
+    ).not.toContain('Make');
   });
 
   // RF-55 (Etapa 1) / UI-06, expectation changed per RNF-11: the screen

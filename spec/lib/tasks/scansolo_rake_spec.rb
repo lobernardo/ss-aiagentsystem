@@ -168,6 +168,24 @@ RSpec.describe Rake::Task do # rubocop:disable RSpec/SpecFilePathFormat
       end
     end
 
+    # RF-19: in local mode the check follows the account's active template.
+    it 'passes proposal_integration in local mode only with an active template' do
+      with_modified_env EXPECTED_GIT_SHA: GIT_HASH, SCANSOLO_GOTENBERG_URL: 'http://gotenberg.test:3000' do
+        expect { task.invoke(account.id) }
+          .to raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
+          .and output(/FAIL proposal_integration/).to_stdout
+          .and output(/ScanSolo smoke failed: proposal_integration\n/).to_stderr
+
+        ScanSolo::ProposalTemplate.new(account: account, filename: 'proposta.docx', byte_size: 7, sha256: 'a' * 64, active: true).tap do |record|
+          record.file.attach(io: StringIO.new('PK-docx'), filename: 'proposta.docx')
+          record.save!
+        end
+        task.reenable
+
+        expect { task.invoke(account.id) }.to output(/PASS proposal_integration.*ScanSolo smoke passed/m).to_stdout
+      end
+    end
+
     {
       'git_sha' => -> { ENV['EXPECTED_GIT_SHA'] = 'deadbeef' },
       'pending_migrations' => lambda {

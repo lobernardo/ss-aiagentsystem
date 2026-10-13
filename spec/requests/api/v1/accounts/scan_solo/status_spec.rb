@@ -36,6 +36,20 @@ RSpec.describe 'ScanSolo Status API', type: :request do
     secrets.each { |secret| expect(response.body).not_to include(secret) }
   end
 
+  it 'reports proposal_integration from the account template in local mode (RF-19)' do
+    with_modified_env(SCANSOLO_GOTENBERG_URL: 'http://gotenberg.test:3000') do
+      get path, headers: admin.create_new_auth_token, as: :json
+      expect(response.parsed_body['proposal_integration']).to eq('blocked')
+
+      ScanSolo::ProposalTemplate.new(account: account, filename: 'proposta.docx', byte_size: 7, sha256: 'a' * 64, active: true).tap do |record|
+        record.file.attach(io: StringIO.new('PK-docx'), filename: 'proposta.docx')
+        record.save!
+      end
+      get path, headers: admin.create_new_auth_token, as: :json
+      expect(response.parsed_body['proposal_integration']).to eq('configured')
+    end
+  end
+
   it 'forbids an agent' do
     get path, headers: agent.create_new_auth_token, as: :json
 

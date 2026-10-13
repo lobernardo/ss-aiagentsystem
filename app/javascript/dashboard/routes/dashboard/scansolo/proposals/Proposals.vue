@@ -5,6 +5,7 @@ import ScanSoloConfirmDialog from 'dashboard/routes/dashboard/scansolo/component
 import TechnicalDetails from 'dashboard/routes/dashboard/scansolo/components/TechnicalDetails.vue';
 import Dialog from 'dashboard/components-next/dialog/Dialog.vue';
 import QuoteRepliesPending from './QuoteRepliesPending.vue';
+import ProposalTemplateCard from './ProposalTemplateCard.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAlert } from 'dashboard/composables';
@@ -210,6 +211,8 @@ defineExpose({ generate, requestRetry, approveVersion, requestReject });
       <h1 class="text-xl font-medium text-n-slate-12 mb-4">
         {{ t('SCANSOLO.PROPOSALS.TITLE') }}
       </h1>
+
+      <ProposalTemplateCard @uploaded="loadProposals" />
 
       <p
         v-if="integrationBlocked"

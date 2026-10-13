@@ -48,4 +48,25 @@ RSpec.describe ScanSolo::StatusReport do
     expect(described_class.call(account: account, expected_git_sha: nil).failed_checks).to eq(['git_sha'])
     expect(described_class.call(account: account, expected_git_sha: 'deadbeef').failed_checks).to eq(['git_sha'])
   end
+
+  describe 'local mode (RF-19, CT-08)' do
+    around do |example|
+      with_modified_env(SCANSOLO_GOTENBERG_URL: 'http://gotenberg.test:3000') { example.run }
+    end
+
+    it 'passes proposal_integration when the account has an active template' do
+      ScanSolo::ProposalTemplate.new(account: account, filename: 'proposta.docx', byte_size: 7, sha256: 'a' * 64, active: true).tap do |record|
+        record.file.attach(io: StringIO.new('PK-docx'), filename: 'proposta.docx')
+        record.save!
+      end
+
+      expect(report.proposal_integration).to eq('configured')
+      expect(report.failed_checks).to be_empty
+    end
+
+    it 'fails proposal_integration without a template even with the Make credentials' do
+      expect(report.proposal_integration).to eq('blocked')
+      expect(report.failed_checks).to eq(['proposal_integration'])
+    end
+  end
 end

@@ -489,6 +489,8 @@ Rails.application.routes.draw do
               end
             end
 
+            resource :proposal_template, only: [:show, :create]
+
             resource :ai_agent_config, only: [:show] do
               member do
                 put :draft

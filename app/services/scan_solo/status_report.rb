@@ -50,7 +50,7 @@ class ScanSolo::StatusReport
   end
 
   def proposal_integration
-    ScanSolo::Proposal::Integration.state
+    ScanSolo::Proposal::Integration.state(account)
   end
 
   def templates_last_synced_at

@@ -25,11 +25,13 @@ class Api::V1::Accounts::ScanSolo::ProposalsController < Api::V1::Accounts::Scan
   def index
     authorize(::ScanSolo::Proposal)
     @proposals = account_proposals.includes(READ_PRELOAD)
+    @integration_state = ::ScanSolo::Proposal::Integration.state(Current.account)
   end
 
   def show
     @proposal = account_proposals.includes(READ_PRELOAD).find(params[:id])
     authorize(@proposal)
+    @integration_state = ::ScanSolo::Proposal::Integration.state(Current.account)
   end
 
   def generate

@@ -14,7 +14,8 @@ class ScanSolo::Proposal::TemplateRenderer
   PLACEHOLDER_TOKEN = /(\{\{[A-Z_]+\}\})/
   LINE_BREAK = /\r\n|\r|\n/
   CONTROL_CHARACTERS = /[[:cntrl:]&&[^\r\n]]/
-  FIXED_MTIME = Zip::DOSTime.new(2000, 1, 1)
+  # `local`, not `new`: Rails time helpers stub `Time.new`, which would return a plain Time here.
+  FIXED_MTIME = Zip::DOSTime.local(2000, 1, 1)
   NAMESPACES = ScanSolo::Proposal::TemplateDocument::NAMESPACES
   PATTERN = ScanSolo::Proposal::TemplateDocument::PATTERN
 

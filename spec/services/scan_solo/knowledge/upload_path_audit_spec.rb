@@ -68,10 +68,12 @@ RSpec.describe 'ScanSolo attachment upload path reuse audit' do
     end
 
     # scansolo-proposta-aprovacao-email RF-01: the approval request attaches
-    # the downloaded PDF through ActiveStorage.
+    # the downloaded PDF through ActiveStorage. scansolo-proposta-template-local
+    # RF-10: the local generation attaches the converted PDF's blob the same way.
     expect(attach_call_sites.keys.map { |file| relative_to_root(file) })
       .to contain_exactly('app/services/scan_solo/knowledge/source_write_service.rb',
-                          'app/services/scan_solo/proposal/approval_request_service.rb')
+                          'app/services/scan_solo/proposal/approval_request_service.rb',
+                          'app/services/scan_solo/proposal/local_generation_service.rb')
   end
 end
 # rubocop:enable RSpec/DescribeClass

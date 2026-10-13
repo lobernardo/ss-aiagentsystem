@@ -16,7 +16,8 @@ Rails MVC monolith (Chatwoot) with a namespaced `ScanSolo::` extension layer. Th
 │   ├── controllers/api/v1/accounts/scan_solo/   # ScanSolo REST API (account-scoped, BaseController gate)
 │   ├── controllers/webhooks/scan_solo/          # Make callback (only unauthenticated ScanSolo endpoint)
 │   ├── dispatchers/async_dispatcher.rb          # registers ScanSolo::ConversationListener.instance
-│   ├── jobs/scan_solo/                          # ai_turn, cadence_due_attempt, stale_turn_sweeper, knowledge_ingestion, quote_*, proposal_delivery
+│   ├── jobs/scan_solo/                          # ai_turn, cadence_due_attempt, stale_turn_sweeper, knowledge_ingestion, quote_*, proposal_delivery,
+│   │                                            #   proposal_local_generation
 │   ├── models/scan_solo/                        # 23 ScanSolo ActiveRecord models (scan_solo_* tables)
 │   ├── policies/scan_solo/                      # Pundit policies, deny-by-default ScanSolo::ApplicationPolicy
 │   ├── services/scan_solo/                      # business core: actions, ai_turn, cadence, handoff, knowledge, lead_state,
@@ -64,7 +65,8 @@ Rails MVC monolith (Chatwoot) with a namespaced `ScanSolo::` extension layer. Th
 | Embeddings | `ScanSolo::Knowledge::EmbeddingService` → `RubyLLM.embed` | `text-embedding-3-small`, vector(1536) |
 | WhatsApp (Meta) | Native `Channel::Whatsapp` + `Whatsapp::SendOnWhatsappService` | Template catalogue from `channel.message_templates` |
 | Email | Native email inbox, `ConversationReplyMailer` | Quote request / reply / negotiation threads |
-| ActiveStorage | `KnowledgeSource#file`, `ProposalVersion#document` | Proposal PDF served via `rails_blob_url` |
+| Gotenberg (local mode) | `ScanSolo::Proposal::GotenbergClient` (`rest-client` multipart `POST $SCANSOLO_GOTENBERG_URL/forms/libreoffice/convert`) | Only when `SCANSOLO_GOTENBERG_URL` is set; open 5 s / read 60 s; internal Compose network, no published port; never inside an open transaction (`DeliveryInsideTransaction`) |
+| ActiveStorage | `KnowledgeSource#file`, `ProposalVersion#document`, `ProposalTemplate#file` | Proposal PDF served via `rails_blob_url`; the `.docx` template is never exposed by URL |
 | Error tracking | `ChatwootExceptionTracker` | Tagged with `scansolo_correlation_id` |
 
 ### Macro flow: inbound message to AI reply
@@ -112,7 +114,11 @@ LeadState::Writer (field changed) / ConversationListener (attachment, location) 
   ─ fixed 10 min window ─> QuoteRequestUpdateJob ─> Quote::UpdateService ─> CT-03 update e-mail (quote_request.update_sent)
 retries exhausted / native message failed ─> Quote::DeliveryFailureService ─> private note + quote_request.delivery_failed
 commercial reply (quote inbox) ─> ConversationListener ─> QuoteReplyJob ─> ReplyProcessor
-  ─ valid block (request open, incl. after a rejection) ─> GenerateService ─> MakeProvider ─> OutboundRequestService ─> Make
+  ─ valid block (request open, incl. after a rejection) ─> GenerateService ─> Integration.provider!
+      local mode (SCANSOLO_GOTENBERG_URL set, precedence) ─> LocalProvider ─after commit─> ProposalLocalGenerationJob (medium,
+        retry 30 s / 2 min) ─> LocalGenerationService: recheck ─> account ProposalTemplate ─> TemplateValues + TemplateRenderer
+        ─> GotenbergClient ─> Gotenberg ─> PDF blob attached to ProposalVersion#document ─> CallbackHandler (same path as Make)
+      otherwise ─> MakeProvider ─> OutboundRequestService ─> Make
   ─ invalid     ─> correction email
   ─ request already replied ─> QuoteReply late_reply (never an approval)
 Make ─> POST /webhooks/scan_solo/make ─> CallbackVerifier ─> CallbackApplicationService (total_value check)
@@ -126,7 +132,9 @@ native SendReplyJob (source_id) ─> ConversationListener ─> DeliveryReconcile
 lead reply on the proposal thread ─> QuoteReplyJob ─> ReplyProcessor ─> LeadEmailReplyService ─> ReplyInterruptionService
 ```
 
-Contracts of this flow: `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (HTTP) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make request/callback, e-mails, notice). Quote request and update e-mails: `.spec/features/scansolo-solicitacao-orcamento-email/openapi.yaml` (config field) and `.spec/features/scansolo-solicitacao-orcamento-email/asyncapi.yaml` (CT-01, CT-03, CT-06, failure note).
+In local mode no `MakeRequest` is created and Make is never called; `ApprovalRequestService` finds the PDF already attached and downloads nothing. The template is uploaded per account through `POST .../scan_solo/proposal_template` (`TemplateUploadService`, admin only).
+
+Contracts of this flow: `.spec/features/scansolo-proposta-template-local/openapi.yaml` (local mode: template API, retry, `integration_state`), `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (HTTP) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make request/callback, e-mails, notice). Quote request and update e-mails: `.spec/features/scansolo-solicitacao-orcamento-email/openapi.yaml` (config field) and `.spec/features/scansolo-solicitacao-orcamento-email/asyncapi.yaml` (CT-01, CT-03, CT-06, failure note).
 
 ## Related documents
 

@@ -202,8 +202,8 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
           expect(provider).to have_received(:request_generation)
             .with(proposal_version: version, correlation_id: version.generate_correlation_id, actor: agent, retry_count: 1).once
           expect(ScanSolo::AuditEvent.where(event_type: 'proposal.retry_requested').sole)
-            .to have_attributes(actor: agent, correlation_id: version.generate_correlation_id,
-                                payload: include('failure_reason' => reason, 'operation' => 'generate'))
+            .to have_attributes(actor: agent, payload: include('failure_reason' => reason, 'operation' => 'generate',
+                                                               'generate_correlation_id' => version.generate_correlation_id))
         end
       end
     end

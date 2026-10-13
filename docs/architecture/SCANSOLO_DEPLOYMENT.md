@@ -29,9 +29,16 @@ Related documents:
 | Database | `postgres` | `pgvector/pgvector:0.8.1-pg16` | PostgreSQL with `pgvector` (knowledge/RAG tables). |
 | Cache / queue | `redis` | `redis:8.2.1-alpine` | Sidekiq backend and Rails cache, password from `REDIS_PASSWORD`. |
 | Backup | `backup` (profile `backup`) | `postgres:16.10-alpine` | One-off `pg_dump`; never started by `up`. |
+| Proposal PDF (local mode) | `gotenberg` | `gotenberg/gotenberg:8.37.0` | Converts the rendered `.docx` proposal to PDF. Internal network only, **no published port**; Rails/Sidekiq reach it at `SCANSOLO_GOTENBERG_URL=http://gotenberg:3000`. |
 
 Image tags must equal what the VPS runs; step 1 checks it (HG-08). Every port
-is published on `127.0.0.1` only. Health checks, `restart: always` and
+is published on `127.0.0.1` only (`gotenberg` publishes none).
+
+Local proposal mode: `SCANSOLO_GOTENBERG_URL` set in `.env` turns it on, with
+precedence over the Make credentials — the proposal PDF is rendered from the
+account's `.docx` template and converted by `gotenberg`, and Make is never
+called. Empty or absent keeps the Make flow. Removing the variable and
+restarting Rails and Sidekiq is the rollback of the mode, with no redeploy. Health checks, `restart: always` and
 `json-file` log rotation (`10m` × 5) come from `docker-compose.scansolo.yaml`.
 
 Persistent volumes: `postgres_data` (database), `redis_data` (Redis),
@@ -62,7 +69,8 @@ echo "$PREVIOUS_SCANSOLO_IMAGE_TAG"
 ```
 
 Passes when there is no local edit to the compose files, every name missing
-from `.env` is understood (and filled if required), the running `postgres` and
+from `.env` is understood (and filled if required; for the local proposal mode
+`SCANSOLO_GOTENBERG_URL=http://gotenberg:3000`), the running `postgres` and
 `redis` images equal the tags in `docker-compose.production.yaml`, and the
 previous image tag is recorded for rollback.
 
@@ -107,9 +115,16 @@ Passes when the 4 active definitions are printed. The task is idempotent.
 
 ### Step 6 — Restart Rails
 
+Start (or update) `gotenberg` first, so the local proposal mode has its
+converter before Rails and Sidekiq read `SCANSOLO_GOTENBERG_URL`:
+
 ```sh
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml up -d --no-deps gotenberg
+docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml ps gotenberg
 docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml up -d --no-deps rails
 ```
+
+`gotenberg` must report `healthy` before Rails is restarted.
 
 ### Step 7 — Restart Sidekiq
 
@@ -119,13 +134,21 @@ docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml
 
 ### Step 8 — Run the smoke check
 
+In local mode, first upload the proposal template v3 (`.docx`, approved
+beforehand, never versioned in Git) as an administrator in the dashboard:
+ScanSolo → Propostas → template card → select the file → Enviar. The card must
+show the new file name and hash. Without an active template the smoke reports
+`FAIL proposal_integration` and every generation fails with
+`template_unavailable` (reprocessable after the upload).
+
 ```sh
 docker compose -f docker-compose.production.yaml -f docker-compose.scansolo.yaml \
   exec rails bundle exec rails "scansolo:smoke[<account_id>]"
 ```
 
-Passes when every line is `PASS` and the task prints `ScanSolo smoke passed`
-(non-zero exit on any `FAIL`).
+Passes when every line is `PASS` (in local mode `PASS proposal_integration`
+only with the uploaded template) and the task prints `ScanSolo smoke passed`
+(non-zero exit on any `FAIL`). Only then process a real commercial reply.
 
 ### Step 9 — Rollback
 

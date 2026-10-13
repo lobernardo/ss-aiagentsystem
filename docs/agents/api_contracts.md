@@ -8,7 +8,7 @@
 
 - ScanSolo endpoints: `config/routes.rb` `namespace :scan_solo` (line 462) under `/api/v1/accounts/:account_id/scan_solo`, plus `POST /webhooks/scan_solo/make` (line 756).
 - Native Chatwoot API v1/v2, public, platform and webhooks stay unchanged. They are documented in `swagger/swagger.json` and `swagger/paths/`.
-- Frontend clients: `app/javascript/dashboard/api/scansolo*.js` (12 `ApiClient` subclasses, `accountScoped: true`).
+- Frontend clients: `app/javascript/dashboard/api/scansolo*.js` (13 `ApiClient` subclasses, `accountScoped: true`).
 
 ### Common behavior
 
@@ -28,6 +28,8 @@ Paths are relative to `/api/v1/accounts/:account_id/scan_solo`. "Agent" means an
 
 The proposal approval and e-mail delivery contracts are formalized in `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (approve, reject, send, retry, reads, PATCH `email`) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make `proposal.generate` request and callback webhook, approval request and lead e-mails, WhatsApp notice, lead e-mail reply).
 
+The local proposal mode (CT-05 template API, retry reasons, per-account `integration_state`, `FieldStatus` `nao_informado`) is formalized in `.spec/features/scansolo-proposta-template-local/openapi.yaml`, an additive delta over the two contracts above and `.spec/features/scansolo-agent-lead-state/openapi.yaml`.
+
 | Method | Path | Policy | Response (jbuilder) |
 |---|---|---|---|
 | GET | `/pipeline_opportunities` | Agent | Array of opportunity cards |
@@ -43,6 +45,8 @@ The proposal approval and e-mail delivery contracts are formalized in `.spec/fea
 | POST | `/proposals/:id/reject` | Admin or Commercial | proposal version |
 | POST | `/proposals/:id/send` | Admin or opportunity owner | proposal version (legacy; never emits `proposal.send`) |
 | POST | `/proposals/:id/retry` | Admin or Commercial | proposal version |
+| GET | `/proposal_template` | Agent | `{template: {...} \| null}` (CT-05) |
+| POST | `/proposal_template` | Admin | `{template: {...}}` (multipart `file`, CT-05) |
 | GET | `/quote_replies?status=pending` | Admin or quote-inbox member | Array of pending replies |
 | POST | `/quote_replies/:id/link` | Admin or quote-inbox member | `{quote_request_id, status}` |
 | POST | `/quote_replies/:id/discard` | Admin or quote-inbox member | `{id, status}` |
@@ -101,7 +105,7 @@ Card fields (`_pipeline_opportunity.json.jbuilder`): `id, account_id, contact_id
 
 Detail adds (`_detail.json.jbuilder`):
 
-- `lead_state{intent, qualification, next_action, authorized_actions, blocks, status, history}`
+- `lead_state{intent, qualification, next_action, authorized_actions, blocks, status, history}` — field `status` (`FieldStatus`) is `confirmado | inferido | faltante | nao_informado`; a `nao_informado` value is the lead's own words for audit only and the dashboard shows "Não informado pelo cliente". `history[].subject` is `field | intent | next_action | collection_mode` (`key` `collection_offered_at` or `collection_mode`).
 - `quote_request{id, status, sent_at, replied_at, email_conversation_id}`
 - `proposal{version_number, proposal_number, status, value, currency, valid_until, document_url, failure_reason, rejection_reason}`
 - `initial_template_failure{reason, status, occurred_at}`
@@ -151,6 +155,8 @@ Request: retry (`confirm_reprocess` must be a JSON boolean):
 
 - Version fields (`_proposal_version.json.jbuilder`): `id, proposal_id, version_number, status, is_current, value, currency, artifact_url, failure_reason, correlation_id, approved_at, approval_required, sent_at, retry_count, dead_letter, proposal_number, valid_until, document_url, approved_by{id, name}|null, rejected_at, rejected_by{id, name}|null, rejection_reason, delivery{email_status: "pending"|"sent"|"failed"|null, notice_status: "pending"|"sent"|"failed"|"blocked"|null}`.
 - Proposal fields: `id, opportunity_id, owner_id, contact_name, integration_state ("configured"|"blocked"), current_version_id, versions[], quote_request_status, lead_email_present`.
+- `integration_state` is computed once per request (`Proposal::Integration.state(Current.account)`): in local mode (`SCANSOLO_GOTENBERG_URL` set) it is per account — `configured` only with an active proposal template; otherwise it reflects the Make credentials. `GET /status` `proposal_integration` uses the same rule.
+- `failure_reason` gains the local-mode values `template_unavailable` and `template_render_failed`. `retry` regenerates `provider_unavailable`, `provider_rejected`, `template_unavailable` and `template_render_failed` on the same version through the active provider (local mode: 200 with the version `generating` and a new generate correlation id; 0 Make requests).
 
 | Case | Status | Body |
 |---|---|---|
@@ -159,6 +165,24 @@ Request: retry (`confirm_reprocess` must be a JSON boolean):
 | Approve / reject / send refused | 422 | `{"error":"not_current_version"\|"not_awaiting_approval"\|"lead_email_missing"\|"reason_required"\|"already_sent"\|"approval_required"}` |
 | Unsafe retry / dead letter without confirm | 422 | `{"error":"<message>"}` |
 | `confirm_reprocess` not boolean | 422 | `{"error":"confirm_reprocess must be a boolean"}` |
+
+### Proposal template (CT-05, local mode)
+
+Contract: `.spec/features/scansolo-proposta-template-local/openapi.yaml`. `GET` returns the account's active template metadata, never the file nor a blob URL:
+
+```json
+{ "template": { "id": 3, "filename": "proposta-v3.docx", "byte_size": 48213, "sha256": "<64 hex>", "uploaded_by": { "id": 1, "name": "Admin" }, "uploaded_at": "2026-10-13T12:00:00Z" } }
+```
+
+`{ "template": null }` when the account has none. `POST` (multipart, field `file`, admin only) validates the `.docx` before any write and activates it (the previous one stays inactive); 200 returns the same envelope.
+
+| Case | Status | Body |
+|---|---|---|
+| No file | 422 | `{"error":"file_required"}` |
+| Above 15 MiB (checked before reading the ZIP) | 422 | `{"error":"file_too_large"}` |
+| Not a readable `.docx` | 422 | `{"error":"invalid_docx"}` |
+| Placeholder problems | 422 | `{"error":"missing_placeholders"\|"unknown_placeholders"\|"split_placeholders","placeholders":["VALOR_EXTENSO"]}` |
+| Agent on `POST` | 403 | `{"error":"forbidden"}` |
 
 ### Quote replies
 

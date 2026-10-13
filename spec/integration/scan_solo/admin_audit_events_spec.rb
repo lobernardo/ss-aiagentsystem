@@ -104,12 +104,13 @@ RSpec.describe 'ScanSolo administrative audit events', type: :request do
                                                      headers: headers, as: :json
     end
 
-    it 'records proposal.retry_requested with the new correlation id' do
+    # RF-20 (scansolo-proposta-template-local): on the request's correlation id, with the new one in the payload.
+    it 'records proposal.retry_requested with the new correlation id in the payload' do
       retry_proposal(confirm_reprocess: false)
 
       expect(response).to have_http_status(:success)
       event = expect_single_audit('proposal.retry_requested', subject_type: 'ScanSolo::ProposalVersion')
-      expect(event.correlation_id).to eq(version.reload.generate_correlation_id)
+      expect(event.payload['generate_correlation_id']).to eq(version.reload.generate_correlation_id)
     end
 
     it 'records proposal.reprocess_requested for a dead-lettered operation' do

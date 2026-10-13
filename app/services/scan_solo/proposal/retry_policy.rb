@@ -79,13 +79,16 @@ class ScanSolo::Proposal::RetryPolicy
     previous_retry_count >= ScanSolo::MakeRequest::DEAD_LETTER_RETRY_THRESHOLD
   end
 
-  # RF-50: one audit event per administrator retry/reprocess request.
+  # RF-50: one audit event per administrator retry/reprocess request. RF-20: on
+  # the quote request's correlation id, with the new generate correlation id in
+  # the payload, so the request's chain reads failure → retry → result.
   def audit!(new_correlation_id)
     ScanSolo::AuditLogger.record!(
       subject: proposal_version, event_type: dead_letter? ? 'proposal.reprocess_requested' : 'proposal.retry_requested',
-      actor: actor, correlation_id: new_correlation_id,
+      actor: actor, correlation_id: proposal_version.audit_correlation_id,
       payload: {
-        failure_reason: proposal_version.failure_reason, retry_count: previous_retry_count + 1, operation: 'generate'
+        failure_reason: proposal_version.failure_reason, retry_count: previous_retry_count + 1, operation: 'generate',
+        generate_correlation_id: new_correlation_id
       }
     )
   end

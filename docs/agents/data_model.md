@@ -30,6 +30,7 @@ Account 1─* PipelineOpportunity *─1 Contact
                  │        └─* CadenceAttempt ─0..1 Message
                  ├─1 QuoteRequest ─0..1 ProposalVersion
                  └─1 Proposal 1─* ProposalVersion (1 is_current)
+Account 1─* ProposalTemplate (≤ 1 active; local mode)
 Conversation 1─1 ConversationExtension      Contact 1─1 ContactExtension
 Message 1─1 AiTurn 1─* AgentActionExecution *─1 AgentAction (by action_id)
 Account 1─* AiAgentConfig (1 draft ─> published_version snapshot)
@@ -70,11 +71,13 @@ AuditEvent ─ polymorphic subject / actor
 | next_action | string | in `proposta, avaliacao_tecnica, solicitar_documentos, atendimento_humano, aguardar_cliente` |
 | next_action_recorded_at, next_action_source_message_id | datetime, bigint | |
 | authorized_actions | jsonb default `[]` | `[{action, source_message_id, recorded_at}]` |
-| fields | jsonb default `{}` | `{key => {value, status, updated_at, source_message_id, source_attachment_id}}`, status ∈ `confirmado, inferido, faltante` |
+| fields | jsonb default `{}` | `{key => {value, status, updated_at, source_message_id, source_attachment_id}}`, status ∈ `confirmado, inferido, faltante, nao_informado` (`nao_informado`: `value` = the lead's own words, audit only) |
+| collection_offered_at | datetime | When the one-time bulk collection offer was sent; null = never offered (CT-10, written once by the `Writer`) |
+| collection_mode | string | `em_bloco` \| `progressiva` (`COLLECTION_MODES`); null = progressive. Recorded once, only after the offer |
 
 #### `scan_solo_lead_state_events` — `ScanSolo::LeadStateEvent`
 
-`lead_state_id`, `subject` ∈ `field, intent, next_action`, `key`, `previous_value`/`previous_status`, `new_value`/`new_status`, `source_message_id`, `source_attachment_id`, `created_at`. Append-only (`readonly?` when persisted).
+`lead_state_id`, `subject` ∈ `field, intent, next_action, collection_mode` (`key` `collection_offered_at` or `collection_mode`), `key`, `previous_value`/`previous_status`, `new_value`/`new_status`, `source_message_id`, `source_attachment_id`, `created_at`. Append-only (`readonly?` when persisted).
 
 #### `scan_solo_conversation_extensions` / `scan_solo_contact_extensions`
 
@@ -110,7 +113,7 @@ Published rows are immutable snapshots of `FIELDS`.
 | correlation_id | string not null | UNIQUE |
 | conversation_id, response_message_id | bigint | |
 | invocation_status | int default 0 | `pending 0, suppressed 1, succeeded 2, failed 3` |
-| guardrail_outcome, context_snapshot, knowledge_evidence, action_evidence | jsonb not null | |
+| guardrail_outcome, context_snapshot, knowledge_evidence, action_evidence | jsonb not null | `context_snapshot` also keeps `asked_fields` (keys asked by the reply actually sent, stored by `ResponseSender`; counts the collection rounds) and `collection_offer_instructed` (the turn carried the bulk offer instruction) |
 | model_provider, model_reference | string | |
 | input_tokens, output_tokens, latency_ms | integer | |
 | cost_estimate | decimal(10,6) | |
@@ -161,7 +164,21 @@ Published rows are immutable snapshots of `FIELDS`.
 | `scan_solo_proposals` | `opportunity_id` (FK), `current_version_id`, `email_conversation_id` (lead proposal e-mail thread) | UNIQUE opportunity_id, email_conversation_id |
 | `scan_solo_proposal_versions` | `proposal_id` (FK), `version_number`, `is_current` default true, `status` (`generating 0, generated 1, approved 2, sent 3, failed 4, awaiting_approval 5, rejected 6`), `value` decimal(12,2), `currency`, `artifact_url`, `artifact_sha256`, `valid_until`, `proposal_number`, `failure_reason`, `generate_correlation_id`, `send_correlation_id`, `generate_requested_at`, `generate_callback_applied_at`, `send_requested_at`, `send_callback_applied_at`, polymorphic `approved_by`, `approved_at`, polymorphic `rejected_by`, `rejected_at`, `rejection_reason`, `approval_requested_at`, `approval_request_message_id`, `sent_message_id` (lead e-mail), `notice_message_id`, `notice_failure_reason`, `follow_up_message_id`, `quote_request_id` (FK); ActiveStorage `document` | UNIQUE (proposal_id, version_number); partial UNIQUE proposal_id WHERE is_current; partial UNIQUE quote_request_id WHERE status IN (0, 2, 5) (≤ 1 non-terminal version per request); UNIQUE generate_correlation_id, send_correlation_id, proposal_number; index quote_request_id (N versions per request), notice_message_id, polymorphic rejected_by |
 
-`proposal_number` = `SS-<year>-<id 6 digits>`, set by `after_create`.
+`proposal_number` = `SS-<year>-<id 6 digits>`, set by `after_create`. In local mode `document` is attached by `LocalGenerationService` before the result is applied (`artifact_url` null, `artifact_sha256` = SHA-256 of the attached PDF).
+
+#### `scan_solo_proposal_templates` — `ScanSolo::ProposalTemplate` (local mode, CT-06)
+
+| Column | Type | Notes |
+|---|---|---|
+| account_id | bigint not null | FK accounts; templates are always read per account (`active_for(account)`) |
+| uploaded_by_id | bigint | FK users, `ON DELETE SET NULL` |
+| filename | string not null | Original file name |
+| byte_size | bigint not null | |
+| sha256 | string not null | 64 hex of the `.docx`; `template_version` = `"<id>:<sha256>"` |
+| active | boolean not null default false | |
+| created_at, updated_at | datetime | `created_at` = upload instant |
+
+ActiveStorage `file` (the `.docx`, never exposed by URL). Partial UNIQUE `account_id WHERE active` (≤ 1 active per account); index `(account_id, created_at)`. Inactive rows are never deleted (history). Sole writer: `Proposal::TemplateUploadService`.
 
 #### Make tables
 

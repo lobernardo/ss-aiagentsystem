@@ -23,6 +23,16 @@ RSpec.describe 'ScanSolo deployment documentation' do
                                        ])
   end
 
+  # scansolo-proposta-template-local RF-23: the Gotenberg service and the
+  # template upload are part of the runbook, inside step 8 before the smoke.
+  it 'starts gotenberg and uploads the proposal template before the smoke task' do
+    smoke_step = content.split('### Step 8 — Run the smoke check').last.split('### Step 9').first
+
+    expect(smoke_step.index('upload the proposal template')).to be < smoke_step.index('scansolo:smoke[')
+    expect(content).to include('SCANSOLO_GOTENBERG_URL=http://gotenberg:3000', 'gotenberg/gotenberg:8.37.0')
+    expect(commands).to include('up -d --no-deps gotenberg')
+  end
+
   it 'uses the backup profile, the new tag, the cadence loader and the smoke task' do
     expect(commands).to include('--profile backup run --rm backup')
     expect(commands).to include('export GIT_SHA=', 'export SCANSOLO_IMAGE_TAG=')

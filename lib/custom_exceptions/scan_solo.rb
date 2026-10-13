@@ -82,3 +82,37 @@ class CustomExceptions::ScanSolo::LeadEmailRejected < StandardError
     super(code)
   end
 end
+
+# RF-17 / CT-05: an uploaded `.docx` proposal template refused at the request
+# boundary; `code` ∈ invalid_docx, missing_placeholders, split_placeholders,
+# unknown_placeholders and `placeholders` holds only placeholder names (sorted,
+# unique, no braces) — never template content (RNF-04).
+class CustomExceptions::ScanSolo::ProposalTemplateInvalid < StandardError
+  attr_reader :code, :placeholders
+
+  def initialize(code, placeholders: nil)
+    @code = code
+    @placeholders = placeholders
+    super(code)
+  end
+end
+
+# RF-08: the rendered `.docx` still has `{{NAME}}` placeholders (names in
+# `placeholders`) or is not a well-formed document.
+class CustomExceptions::ScanSolo::ProposalRenderFailed < StandardError
+  attr_reader :placeholders
+
+  def initialize(placeholders: [])
+    @placeholders = placeholders
+    super(['template_render_failed', *placeholders].join(' '))
+  end
+end
+
+# CT-04 / RF-09 / RF-11: Gotenberg conversion failures. Messages carry only an
+# HTTP status or error class, never the request or response body (RNF-04).
+# Timeout, connection error or 5xx (retried by the job, then provider_unavailable).
+class CustomExceptions::ScanSolo::GotenbergUnavailable < StandardError; end
+# 4xx (provider_rejected, no retry).
+class CustomExceptions::ScanSolo::GotenbergRejected < StandardError; end
+# 200 whose body is not a readable PDF with at least 1 page (template_render_failed).
+class CustomExceptions::ScanSolo::GotenbergInvalidPdf < StandardError; end

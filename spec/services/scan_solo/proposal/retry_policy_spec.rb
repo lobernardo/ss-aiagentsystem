@@ -19,6 +19,27 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
       expect(described_class.retryable?(version)).to be true
     end
 
+    # RF-13 / CT-07 (alters AP/RF-15): every local-mode failure reason is safely retryable.
+    %w[template_unavailable template_render_failed provider_rejected].each do |reason|
+      it "is true for a failed version with #{reason}" do
+        version = proposal.versions.create!(status: :failed, failure_reason: reason)
+
+        expect(described_class.retryable?(version)).to be true
+      end
+    end
+
+    it 'is true for provider_rejected in Make mode (Make credentials, no local mode)' do
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :scenario_url).and_return('https://hook.make.example/s')
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :secret).and_return('make-secret')
+      allow(Rails.application.credentials).to receive(:dig).with(:scan_solo, :make, :inbound_signing_secret).and_return('inbound-secret')
+      version = proposal.versions.create!(status: :failed, failure_reason: 'provider_rejected')
+
+      with_modified_env(SCANSOLO_GOTENBERG_URL: nil) do
+        expect(ScanSolo::Proposal::Integration.provider!).to eq(ScanSolo::Proposal::MakeProvider)
+        expect(described_class.retryable?(version)).to be true
+      end
+    end
+
     it 'is false for an unsafe failure reason' do
       version = proposal.versions.create!(status: :failed, failure_reason: 'unknown_state')
 
@@ -159,6 +180,31 @@ RSpec.describe ScanSolo::Proposal::RetryPolicy do
         version.update!(failure_reason: 'artifact_checksum_mismatch')
 
         expect(described_class.retryable?(version)).to be true
+      end
+    end
+
+    # RF-13: a local-mode failure is regenerated on the same version through the active provider.
+    describe 'local-mode generate failure (RF-13)' do
+      let(:correlation_id) { SecureRandom.uuid }
+      let(:provider) { class_double(ScanSolo::Proposal::MockProvider, request_generation: nil) }
+
+      %w[template_unavailable template_render_failed provider_rejected].each do |reason|
+        it "regenerates #{reason} on the same version with a new correlation id and 1 request_generation" do
+          version = proposal.versions.create!(status: :failed, failure_reason: reason, generate_correlation_id: correlation_id,
+                                              generate_callback_applied_at: Time.current)
+
+          expect { described_class.retry!(proposal_version: version, provider: provider, actor: agent) }
+            .to not_change(ScanSolo::ProposalVersion, :count).and not_change(ScanSolo::MakeRequest, :count)
+
+          expect(version.reload).to have_attributes(status: 'generating', failure_reason: nil, generate_callback_applied_at: nil)
+          expect(version.generate_correlation_id).to be_present
+          expect(version.generate_correlation_id).not_to eq(correlation_id)
+          expect(provider).to have_received(:request_generation)
+            .with(proposal_version: version, correlation_id: version.generate_correlation_id, actor: agent, retry_count: 1).once
+          expect(ScanSolo::AuditEvent.where(event_type: 'proposal.retry_requested').sole)
+            .to have_attributes(actor: agent, correlation_id: version.generate_correlation_id,
+                                payload: include('failure_reason' => reason, 'operation' => 'generate'))
+        end
       end
     end
 

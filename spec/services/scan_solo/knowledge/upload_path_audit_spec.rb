@@ -56,8 +56,11 @@ RSpec.describe 'ScanSolo attachment upload path reuse audit' do
 
     # scansolo-operacao-centralizada RF-29 (RNF-11): the delivered proposal PDF is
     # stored through ActiveStorage on ScanSolo::ProposalVersion#document.
+    # scansolo-proposta-template-local CT-06: the account's `.docx` proposal
+    # template is stored through ActiveStorage on ScanSolo::ProposalTemplate#file.
     expect(attaching_models.map { |file| relative_to_root(file) })
-      .to contain_exactly('app/models/scan_solo/knowledge_source.rb', 'app/models/scan_solo/proposal_version.rb')
+      .to contain_exactly('app/models/scan_solo/knowledge_source.rb', 'app/models/scan_solo/proposal_template.rb',
+                          'app/models/scan_solo/proposal_version.rb')
 
     attach_call_sites = scansolo_app_files.each_with_object({}) do |file, memo|
       count = File.read(file).scan('.attach(').size

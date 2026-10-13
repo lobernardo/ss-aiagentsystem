@@ -60,6 +60,26 @@ RSpec.describe 'ScanSolo production compose' do
     end
   end
 
+  # RF-22 / CT-09 / RNF-04: Gotenberg for local proposal generation, internal only.
+  it 'runs the gotenberg service pinned, always restarted, health-checked and without published ports' do
+    overlay = YAML.safe_load(Rails.root.join('docker-compose.scansolo.yaml').read, aliases: true)
+    gotenberg = overlay['services']['gotenberg']
+
+    expect(gotenberg).to include('image' => 'gotenberg/gotenberg:8.37.0', 'restart' => 'always',
+                                 'logging' => overlay['x-scansolo-logging'])
+    expect(gotenberg.keys).not_to include('ports', 'profiles')
+    expect(gotenberg['healthcheck']['test']).to eq(['CMD', 'curl', '--fail', '--silent', 'http://localhost:3000/health'])
+    expect(gotenberg['healthcheck'].except('test')).to eq(overlay['services']['rails']['healthcheck'].except('test'))
+  end
+
+  it 'documents SCANSOLO_GOTENBERG_URL in .env.example with one comment and one empty assignment' do
+    lines = env_example.lines.grep(/SCANSOLO_GOTENBERG_URL/).map(&:strip)
+
+    expect(lines.size).to eq(2)
+    expect(lines.first).to start_with('#').and include('SCANSOLO_GOTENBERG_URL=http://gotenberg:3000')
+    expect(lines.last).to eq('SCANSOLO_GOTENBERG_URL=')
+  end
+
   it 'drops the obsolete compose version key' do
     compose_sources.each { |source| expect(source).not_to match(/^version:/) }
   end

@@ -13,7 +13,9 @@
 # after the callback transaction commits, enqueues
 # ScanSolo::ProposalApprovalRequestJob (RNF-01). Nothing reaches the lead
 # here: no message, no stage move, no cadence enrollment. A failed result
-# also audits `proposal.generation_failed` (RF-20).
+# also audits `proposal.generation_failed` (RF-20); the local provider adds
+# `cause` (template | conversion | exception) and, for a residual placeholder,
+# the `placeholders` names -- both omitted when absent (CT-07).
 #
 # A successful send result resolves the proposal template (RF-32) and checks
 # its availability (RF-33) before creating the native message; the version
@@ -23,7 +25,8 @@
 class ScanSolo::Proposal::CallbackHandler
   # rubocop:disable Metrics/ParameterLists
   def self.apply_generate_result!(proposal_version:, correlation_id:, success:, value: nil, currency: nil, artifact_url: nil,
-                                  valid_until: nil, failure_reason: nil, artifact_sha256: nil, template_version: nil)
+                                  valid_until: nil, failure_reason: nil, artifact_sha256: nil, template_version: nil, cause: nil,
+                                  placeholders: nil)
     # rubocop:enable Metrics/ParameterLists
     proposal_version.with_lock do
       # RF-87-style guard: only a callback matching the correlation id this
@@ -41,7 +44,8 @@ class ScanSolo::Proposal::CallbackHandler
         ActiveRecord.after_all_transactions_commit { ScanSolo::ProposalApprovalRequestJob.perform_later(proposal_version.id) }
       else
         proposal_version.update!(status: :failed, failure_reason: failure_reason, generate_callback_applied_at: Time.current)
-        audit!(proposal_version, 'proposal.generation_failed', reason: failure_reason, generate_correlation_id: correlation_id)
+        audit!(proposal_version, 'proposal.generation_failed', reason: failure_reason, generate_correlation_id: correlation_id, cause: cause,
+                                                               placeholders: placeholders)
       end
     end
 

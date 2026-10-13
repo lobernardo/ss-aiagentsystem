@@ -67,6 +67,30 @@ RSpec.describe ScanSolo::Proposal::CallbackHandler do
       expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generation_failed').sole)
         .to have_attributes(subject: opportunity, payload: include('reason' => 'docs_copy_failed', 'generate_correlation_id' => correlation_id))
     end
+
+    # RF-20 / CT-07: the local provider adds cause and placeholder names to the failure audit.
+    it 'records cause and placeholders on proposal.generation_failed when given' do
+      apply_generate(success: false, failure_reason: 'template_render_failed', cause: 'template', placeholders: ['XYZ'])
+
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generation_failed').sole.payload).to eq(
+        'proposal_version_id' => version.id, 'reason' => 'template_render_failed', 'generate_correlation_id' => correlation_id,
+        'cause' => 'template', 'placeholders' => ['XYZ']
+      )
+    end
+
+    it 'keeps the failure payload unchanged without cause and placeholders' do
+      apply_generate(success: false)
+
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generation_failed').sole.payload).to eq(
+        'proposal_version_id' => version.id, 'reason' => 'docs_copy_failed', 'generate_correlation_id' => correlation_id
+      )
+    end
+
+    it 'never adds cause or placeholders to proposal.generated' do
+      apply_generate(cause: 'template', placeholders: ['XYZ'])
+
+      expect(ScanSolo::AuditEvent.where(event_type: 'proposal.generated').sole.payload.keys).not_to include('cause', 'placeholders')
+    end
   end
 
   describe '.apply_send_result!' do

@@ -66,6 +66,20 @@ services:
       timeout: 5s
       retries: 5
 
+  # RF-22 / CT-04: local proposal generation (.docx → PDF via LibreOffice).
+  # Internal network only (no published port); rails and sidekiq reach it at
+  # SCANSOLO_GOTENBERG_URL=http://gotenberg:3000 (set in .env).
+  gotenberg:
+    image: gotenberg/gotenberg:8.37.0
+    restart: always
+    logging: *scansolo_logging
+    healthcheck:
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
   # Self-hosted S3-compatible object storage (only needed when not pointing
   # ACTIVE_STORAGE_SERVICE=s3_compatible at a managed provider such as
   # DigitalOcean Spaces or AWS S3 directly; see config/storage.yml).

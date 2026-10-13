@@ -21,14 +21,15 @@
 #   (c) a PDF download/checksum failure -- the PDF is fetched again by
 #       ScanSolo::Proposal::ApprovalRequestService, which returns the version to
 #       `awaiting_approval` and requests the approval (CT-05);
-#   (b) a safely-retryable generate failure -- regenerated through Make, as
-#       below.
+#   (b) a safely-retryable generate failure -- regenerated through the active
+#       provider (local or Make), as below. RF-13: the local-mode reasons and
+#       `provider_rejected` (also in Make mode) are safely retryable.
 # (a) and (c) create no Make request, so no retry count nor dead letter applies.
 class ScanSolo::Proposal::RetryPolicy
   class UnsafeRetryError < StandardError; end
   class ReprocessConfirmationRequiredError < StandardError; end
 
-  SAFE_RETRYABLE_REASONS = %w[timeout network_error provider_unavailable].freeze
+  SAFE_RETRYABLE_REASONS = %w[timeout network_error provider_unavailable provider_rejected template_unavailable template_render_failed].freeze
   ARTIFACT_REASONS = ScanSolo::Proposal::ApprovalRequestService::REDOWNLOAD_REASONS
 
   def self.retryable?(proposal_version)

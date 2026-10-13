@@ -3,17 +3,22 @@
 # ScanSolo::Qualification::FieldResolver (normalization + canonical aliases,
 # RF-09). Each entry is a string (the customer stated it: `confirmado`) or
 # `{value, status}` with status `confirmado` | `inferido` (deduced by the
-# model).
+# model) | `nao_informado` (the lead said they do not know, have or need it;
+# proposta-template-local RF-26).
 #
 # - A key of the RF-02 catalog is written to the opportunity's lead state
 #   through ScanSolo::LeadState::Writer, with the turn's inbound message as
 #   origin: a new or corrected value becomes current and the previous one
 #   goes to history (RF-06); an `inferido` value never replaces a
-#   `confirmado` one and is reported as `confirmed_value_kept` (RF-07).
+#   `confirmado` one and is reported as `confirmed_value_kept` (RF-07); a
+#   refused write over `nao_informado` is reported as `not_informed_value_kept`
+#   (proposta-template-local RF-27).
 # - An applied value is mirrored on the Contact as before (RF-08): a native
 #   field (`nome`/`email`/`telefone`) only when the column is blank and the
 #   value valid (RF-10), anything else merged under its canonical
-#   `custom_attributes` key without touching any existing key (RF-21).
+#   `custom_attributes` key without touching any existing key (RF-21). A
+#   `nao_informado` value is the lead's own words, never real data, so it is
+#   never mirrored (proposta-template-local RF-32).
 # - A published required label outside the catalog is only mirrored; any
 #   other key is never persisted and is reported verbatim (RF-11).
 # All accepted pairs of a call land in a single contact save.
@@ -35,7 +40,7 @@ class ScanSolo::Actions::QualificationFieldAction
             { 'type' => 'string' },
             {
               'type' => 'object',
-              'properties' => { 'value' => { 'type' => 'string' }, 'status' => { 'enum' => %w[confirmado inferido] } },
+              'properties' => { 'value' => { 'type' => 'string' }, 'status' => { 'enum' => %w[confirmado inferido nao_informado] } },
               'required' => %w[value status],
               'additionalProperties' => false
             }
@@ -116,8 +121,9 @@ class ScanSolo::Actions::QualificationFieldAction
     accepted_keys << canonical unless outcome == :ignored
 
     case outcome
-    when :applied then mirror(key, canonical, value.strip)
+    when :applied then mirror(key, canonical, value.strip) unless status == 'nao_informado'
     when :kept_confirmed then not_applied_fields << { field: key, reason: 'confirmed_value_kept' }
+    when :kept_not_informed then not_applied_fields << { field: key, reason: 'not_informed_value_kept' }
     end
   end
 

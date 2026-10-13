@@ -151,4 +151,27 @@ RSpec.describe ScanSolo::Quote::RequestEmail::Snapshot do
       expect(a_request(:any, /.*/)).not_to have_been_made
     end
   end
+
+  describe 'nao_informado (proposta-template-local RF-31 d)' do
+    before { config.update!(required_qualification_fields: ['Profundidade de investigação']) }
+
+    it 'keeps the status without the lead words or the contact value and lists the label' do
+      contact.update!(custom_attributes: contact.custom_attributes.merge('profundidade' => '9 m', 'condicoes_especiais' => 'NF'))
+      writer.apply_field!(key: 'profundidade', value: 'não sei', status: 'nao_informado', source_message_id: source_message.id)
+      writer.apply_field!(key: 'condicoes_especiais', value: 'não tenho', status: 'nao_informado', source_message_id: source_message.id)
+
+      expect(snapshot['fields']['profundidade']).to eq('value' => nil, 'inferred' => false, 'not_informed' => true)
+      expect(snapshot['not_informed']).to eq(
+        [{ 'key' => 'profundidade', 'label' => 'Profundidade de investigação' }, { 'key' => 'condicoes_especiais', 'label' => 'Condições especiais' }]
+      )
+      expect(snapshot.to_json).not_to include('não sei', 'não tenho', '9 m')
+    end
+
+    it 'has no not_informed key without a nao_informado field' do
+      writer.apply_field!(key: 'profundidade', value: '3 m', status: 'confirmado', source_message_id: source_message.id)
+
+      expect(snapshot).not_to have_key('not_informed')
+      expect(snapshot['fields'].values).to all(satisfy { |field| field.keys == %w[value inferred] })
+    end
+  end
 end

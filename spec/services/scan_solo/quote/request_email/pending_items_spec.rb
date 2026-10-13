@@ -55,4 +55,31 @@ RSpec.describe ScanSolo::Quote::RequestEmail::PendingItems do
 
     expect(items).to eq(['Tipo de serviço'])
   end
+
+  describe 'nao_informado (proposta-template-local RF-31 b, c)' do
+    let(:suffix) { ' (cliente não soube informar)' }
+
+    it 'keeps a fixed item failing only by nao_informado with the suffix and does not repeat the field' do
+      items = described_class.call(missing_labels: [], service: georadar, values: all_informed.except('profundidade'), attachments: all_attachments,
+                                   not_informed: [{ 'key' => 'profundidade', 'label' => 'Profundidade de investigação' }])
+
+      expect(items).to eq(["#{fixed_labels[1]}#{suffix}"])
+    end
+
+    it 'lists a nao_informado field not covered by a fixed item by its label after the fixed items' do
+      values = all_informed.except('area', 'profundidade').merge('metragem' => '200 m')
+
+      items = described_class.call(missing_labels: ['Cidade / UF'], service: georadar, values: values, attachments: all_attachments,
+                                   not_informed: [{ 'key' => 'area', 'label' => 'Área' }, { 'key' => 'cnpj', 'label' => 'CNPJ' }])
+
+      expect(items).to eq([fixed_labels[1], 'Cidade / UF', "Área#{suffix}", "CNPJ#{suffix}"])
+    end
+
+    it 'keeps a fixed item without suffix when it would fail even counting nao_informado as present' do
+      items = described_class.call(missing_labels: [], service: georadar, values: all_informed.except('area'), attachments: [planta],
+                                   not_informed: [{ 'key' => 'condicoes_especiais', 'label' => 'Condições especiais' }])
+
+      expect(items).to eq([fixed_labels[0], fixed_labels[5], fixed_labels[6], "Condições especiais#{suffix}"])
+    end
+  end
 end

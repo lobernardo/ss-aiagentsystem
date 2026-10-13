@@ -772,6 +772,8 @@ en:
           deadline: 'Prazo desejado'
           safety: 'Integração de segurança'
         not_informed: 'não informado'
+        not_informed_by_client: 'Não informado pelo cliente'
+        not_informed_suffix: ' (cliente não soube informar)'
         service_not_informed: 'Serviço não informado'
         point: 'Ponto %{number}'
         no_documents: 'Nenhum documento recebido até o momento.'

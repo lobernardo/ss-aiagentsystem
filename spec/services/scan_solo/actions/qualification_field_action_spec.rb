@@ -117,6 +117,48 @@ RSpec.describe ScanSolo::Actions::QualificationFieldAction do
     end
   end
 
+  describe 'proposta-template-local RF-26/RF-32: nao_informado' do
+    let(:required_fields) { ['Nome', 'Profundidade de interesse'] }
+    let(:contact) { create(:contact, account: account, name: '', custom_attributes: {}) }
+
+    it 'writes the lead words as nao_informado with one event from the turn message' do
+      invoke({ profundidade: { value: 'não sei', status: 'nao_informado' } })
+
+      expect(lead_state.events.where(key: 'profundidade').count).to eq(1)
+      expect(lead_state.fields['profundidade']).to include('value' => 'não sei', 'status' => 'nao_informado')
+      expect(lead_state.events.where(key: 'profundidade').last)
+        .to have_attributes(previous_status: 'faltante', new_status: 'nao_informado', source_message_id: message.id)
+    end
+
+    it 'rejects an unknown status through the schema with no writes' do
+      expect { invoke({ profundidade: { value: 'não sei', status: 'desconhecido' } }) }
+        .to(raise_error { |error| expect(error.class.name).to eq('ScanSolo::Actions::Executor::InvalidParamsError') })
+
+      expect(lead_state.fields['profundidade']['status']).to eq('faltante')
+      expect(lead_state.events.where(key: 'profundidade')).to be_empty
+    end
+
+    it 'never mirrors a nao_informado value on the contact and mirrors a later confirmado one' do
+      invoke({ profundidade: { value: 'não sei', status: 'nao_informado' }, nome: { value: 'não sei', status: 'nao_informado' } })
+
+      expect(contact.reload.custom_attributes).not_to have_key('profundidade')
+      expect(contact.name).to be_blank
+
+      invoke({ profundidade: '3 m' })
+
+      expect(contact.reload.custom_attributes['profundidade']).to eq('3 m')
+    end
+
+    it 'reports a refused write over nao_informado as not applied' do
+      invoke({ profundidade: { value: 'não sei', status: 'nao_informado' } })
+
+      result = invoke({ profundidade: { value: '2 m', status: 'inferido' } }).side_effect_result
+
+      expect(lead_state.fields['profundidade']).to include('value' => 'não sei', 'status' => 'nao_informado')
+      expect(result[:not_applied_fields]).to eq([{ field: 'profundidade', reason: 'not_informed_value_kept' }])
+    end
+  end
+
   describe 'allowed-fields filtering (RF-48)' do
     before { opportunity.update!(stage: :em_qualificacao) }
 

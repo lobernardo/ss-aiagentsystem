@@ -85,4 +85,37 @@ RSpec.describe ScanSolo::Actions::LeadStateUpdateAction do
     expect(lead_state.next_action).to eq('atendimento_humano')
     expect(opportunity.reload.stage).to eq('em_qualificacao')
   end
+
+  describe 'proposta-template-local RF-37/CT-10: collection_mode' do
+    it 'ignores the choice before the offer with no write or event' do
+      result = invoke({ collection_mode: 'em_bloco' })
+
+      expect(lead_state.collection_mode).to be_nil
+      expect(lead_state.events.where(subject: 'collection_mode')).to be_empty
+      expect(result.side_effect_result).to include(collection_mode: 'em_bloco', collection_mode_ignored: true)
+    end
+
+    it 'records the choice once after the offer and never changes it' do
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state).record_collection_offer!(at: Time.current, source_message_id: nil)
+
+      result = invoke({ collection_mode: 'em_bloco' })
+
+      expect(lead_state.collection_mode).to eq('em_bloco')
+      expect(lead_state.events.where(key: 'collection_mode').pluck(:new_value, :source_message_id)).to eq([['em_bloco', first_message.id]])
+      expect(result.side_effect_result).to eq(opportunity_id: opportunity.id, collection_mode: 'em_bloco')
+
+      second = invoke({ collection_mode: 'progressiva' }, turn: second_turn)
+
+      expect(lead_state.collection_mode).to eq('em_bloco')
+      expect(lead_state.events.where(key: 'collection_mode').count).to eq(1)
+      expect(second.side_effect_result).to include(collection_mode_ignored: true)
+    end
+
+    it 'rejects an unknown mode and the collection_offered parameter through the schema' do
+      [{ collection_mode: 'rapido' }, { collection_offered: true }].each do |params|
+        expect { invoke(params) }.to(raise_error { |error| expect(error.class.name).to eq('ScanSolo::Actions::Executor::InvalidParamsError') })
+      end
+      expect(lead_state).to have_attributes(collection_mode: nil, collection_offered_at: nil)
+    end
+  end
 end

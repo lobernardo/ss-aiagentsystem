@@ -56,7 +56,8 @@ class ScanSolo::AiTurn::PromptBuilder
     'proposal_generate' => 'solicitar a geração da proposta comercial',
     'lead_state_update' => 'registrar a intenção do cliente, a próxima ação, uma ação que o cliente pediu ou autorizou ' \
                            'e se há risco de interpretação; negotiation_requested quando o cliente pedir preço, desconto, ' \
-                           'condição, prazo comercial, forma de pagamento ou decisão comercial humana'
+                           'condição, prazo comercial, forma de pagamento ou decisão comercial humana; collection_mode quando ' \
+                           'o cliente responder à oferta de coleta em bloco (em_bloco se aceitou, progressiva se recusou)'
   }.freeze
 
   def self.call(config:, context:, offered_actions:, previous_violation: nil)

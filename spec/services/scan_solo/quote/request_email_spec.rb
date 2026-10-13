@@ -275,6 +275,63 @@ RSpec.describe ScanSolo::Quote::RequestEmail do
     end
   end
 
+  describe 'nao_informado (proposta-template-local RF-31)' do
+    # As built by RequestEmail::Snapshot: no value, the status and the label only.
+    let(:not_informed) { { 'profundidade' => 'Profundidade de investigação' } }
+    let(:snapshot) do
+      {
+        'fields' => ScanSolo::Quote::RequestEmail::Snapshot::FIELD_KEYS.index_with do |key|
+          not_informed.key?(key) ? { 'value' => nil, 'inferred' => false, 'not_informed' => true } : { 'value' => values[key], 'inferred' => false }
+        end,
+        'contact_name' => 'Ana Souza', 'phone' => nil, 'missing_labels' => [],
+        'not_informed' => not_informed.map { |key, label| { 'key' => key, 'label' => label } },
+        'validation_mode' => true, 'conversation_url' => conversation_url, 'location_sources' => [], 'attachments' => attachments
+      }
+    end
+
+    before do
+      values.merge!('area' => '800 m²', 'integracao_seguranca' => 'Sim', 'restricoes_acesso' => 'Crachá', 'prazo_desejado' => '30 dias',
+                    'condicoes_especiais' => 'NF até dia 20')
+      attachments.push({ 'id' => 2, 'name' => 'foto.jpg', 'type' => 'JPG', 'file_type' => 'image', 'byte_size' => 1 },
+                       { 'id' => 3, 'name' => 'area.kmz', 'type' => 'KMZ', 'file_type' => 'file', 'byte_size' => 1 })
+    end
+
+    it 'renders the required field as not informed and lists its fixed item once with the suffix' do
+      expect(lines).to include('Profundidade de investigação: Não informado pelo cliente')
+      expect(lines.grep(/\A\* /)).to eq(['* Profundidade-alvo de investigação (cliente não soube informar);'])
+      expect(email.text).not_to include('não sei')
+    end
+
+    it 'keeps item 1 with the suffix when area is nao_informado and metragem is absent' do
+      values.delete('area')
+      not_informed['area'] = 'Área'
+
+      expect(lines.grep(/\A\* /)).to include("* #{pending_labels[0]} (cliente não soube informar);")
+    end
+
+    it 'lists the area label when metragem informs item 1' do
+      values.delete('area')
+      values['metragem'] = '200 m'
+      not_informed['area'] = 'Área'
+
+      expect(lines.grep(/\A\* /)).not_to include(a_string_starting_with("* #{pending_labels[0]}"))
+      expect(lines.grep(/\A\* /)).to include('* Área (cliente não soube informar);')
+    end
+
+    it 'renders an optional nao_informado line' do
+      values.delete('condicoes_especiais')
+      not_informed['condicoes_especiais'] = 'Condições especiais'
+
+      expect(lines).to include('Condições especiais: Não informado pelo cliente')
+    end
+
+    it 'renders the same text and HTML twice' do
+      second = described_class.render(snapshot: snapshot.deep_dup).email
+
+      expect([second.text, second.html]).to eq([email.text, email.html])
+    end
+  end
+
   describe 'validation mode (RF-12)' do
     it 'renders the paragraph right after the opening when on' do
       expect(lines.take(5)).to eq(['Olá, Luciano.', '', I18n.t('scan_solo.quote.request_email.intro'), validation_paragraph,

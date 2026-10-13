@@ -7,6 +7,9 @@
 # - Body (RF-05..RF-13): the CT-01 sections; optional lines without value are
 #   omitted, lead values are quoted as is (`inferido` → "(a confirmar)") and
 #   the e-mail ends with the unchanged CT-04 instructions and empty block.
+#   A `nao_informado` field (proposta-template-local RF-31 a) always shows
+#   "<label>: Não informado pelo cliente", optional lines included, with the
+#   snapshot `not_informed` label and never the lead's words.
 # - Attachments (RF-13): RequestEmail::Documents; `attachment_ids` narrows
 #   the candidates (the update e-mail only attaches new files).
 # - RF-11: every body line goes through RequestEmail::BlockGuard.
@@ -93,7 +96,7 @@ class ScanSolo::Quote::RequestEmail
 
   def rendered_values
     [client_pairs, location_pairs, service_pairs, [[CATALOG_LABELS['tipo_intervencao'], objective]], technical_pairs, other_pairs,
-     [[t('sections.pending'), pending_items.join('; ').presence]]].flatten(1).to_h
+     [[t('sections.pending'), pending_items.join('; ').presence]]].flatten(1).to_h { |label, text| [label, text] }
   end
 
   private
@@ -115,30 +118,36 @@ class ScanSolo::Quote::RequestEmail
                            .map { |attachment| t('update.new_attachment', name: attachment['name'], type: attachment['type']) }
   end
 
+  # Each pair is `[label, text, field key]`; the key only drives the RF-31 (a) label.
   def client_pairs
     [
-      [t('labels.company'), value('empresa') || t('not_informed')], [t('labels.cnpj'), value('cnpj')], [t('labels.contact'), value('nome')],
-      [t('labels.email'), value('email') || t('not_informed')], [t('labels.phone'), snapshot['phone'] || t('not_informed')]
+      [t('labels.company'), value('empresa') || t('not_informed'), 'empresa'], [t('labels.cnpj'), value('cnpj'), 'cnpj'],
+      [t('labels.contact'), value('nome'), 'nome'], [t('labels.email'), value('email') || t('not_informed'), 'email'],
+      [t('labels.phone'), snapshot['phone'] || t('not_informed')]
     ]
   end
 
   def location_pairs
     [
-      [t('labels.unit'), value('cliente_final')], [t('labels.address'), address || t('not_informed')],
-      [t('labels.city_state'), value('cidade_uf')], [t('labels.location'), location]
+      [t('labels.unit'), value('cliente_final'), 'cliente_final'], [t('labels.address'), address || value('endereco_obra') || t('not_informed')],
+      [t('labels.city_state'), value('cidade_uf'), 'cidade_uf'], [t('labels.location'), location]
     ]
   end
 
   def service_pairs
-    SERVICE_KEYS.map { |key| [CATALOG_LABELS[key], value(key)] }
+    SERVICE_KEYS.map { |key| [CATALOG_LABELS[key], value(key), key] }
   end
 
   def technical_pairs
-    TECHNICAL.map { |key, label| [t("labels.#{label}"), value(key)] }
+    TECHNICAL.map { |key, label| [t("labels.#{label}"), value(key), key] }
   end
 
   def other_pairs
-    ScanSolo::Quote::RequestEmail::Snapshot::OTHER_KEYS.map { |key| [CATALOG_LABELS[key], value(key)] }
+    ScanSolo::Quote::RequestEmail::Snapshot::OTHER_KEYS.map { |key| [CATALOG_LABELS[key], value(key), key] }
+  end
+
+  def not_informed_labels
+    @not_informed_labels ||= snapshot.fetch('not_informed', []).to_h { |entry| entry.values_at('key', 'label') }
   end
 
   def closing_lines
@@ -149,7 +158,7 @@ class ScanSolo::Quote::RequestEmail
   end
 
   def pair_lines(pairs)
-    pairs.filter_map { |label, text| "#{label}: #{text}" if text }
+    pairs.filter_map { |label, text, key| "#{not_informed_labels.fetch(key, label)}: #{text}" if text }
   end
 
   def objective
@@ -177,7 +186,7 @@ class ScanSolo::Quote::RequestEmail
   def pending_items
     @pending_items ||= ScanSolo::Quote::RequestEmail::PendingItems.call(
       missing_labels: snapshot['missing_labels'], service: service, values: fields.transform_values { |field| field['value'] },
-      attachments: snapshot['attachments']
+      attachments: snapshot['attachments'], not_informed: snapshot.fetch('not_informed', [])
     )
   end
 
@@ -189,8 +198,10 @@ class ScanSolo::Quote::RequestEmail
     fields.dig(key, 'value').presence
   end
 
-  # RF-06: quoted as is; `inferido` gets "(a confirmar)".
+  # RF-06: quoted as is; `inferido` gets "(a confirmar)". RF-31 (a): `nao_informado` gets the fixed text.
   def value(key)
+    return t('not_informed_by_client') if fields.dig(key, 'not_informed')
+
     text = field_value(key)
     return if text.nil?
 

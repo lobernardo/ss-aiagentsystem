@@ -6,7 +6,13 @@
 # - `fields`: each CT-02 catalog key as `{ value, inferred }`, by the
 #   FieldResolver precedence (lead state non-`faltante` → native contact
 #   column → `custom_attributes`). The lead state `telefone` is never read:
-#   `phone` is only `contact.phone_number` (RF-07).
+#   `phone` is only `contact.phone_number` (RF-07). A `nao_informado` key is
+#   `{ value: nil, inferred: false, not_informed: true }`, never read from the
+#   contact and never with the lead's words (proposta-template-local RF-31 d).
+# - `not_informed`: the `nao_informado` `fields` keys with their label (config
+#   label when required, catalog label otherwise), in catalog order. Like the
+#   field `not_informed` flag, it is only present when non-empty, so earlier
+#   snapshots keep the same shape (RF-14 digest).
 # - `location_sources`: the lead state `link_local`, the `location`
 #   attachments and the map URLs of the `incoming` messages of the
 #   opportunity's WhatsApp conversation, in order of receipt (RF-10).
@@ -41,7 +47,8 @@ class ScanSolo::Quote::RequestEmail::Snapshot
       'fields' => FIELD_KEYS.index_with { |key| field(key) },
       'contact_name' => contact.name.to_s.strip.presence,
       'phone' => contact.phone_number.presence,
-      'missing_labels' => ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config).missing_labels,
+      'missing_labels' => resolver.missing_labels,
+      **(not_informed.any? ? { 'not_informed' => not_informed } : {}),
       'validation_mode' => config.quote_email_validation_mode,
       'conversation_url' => ScanSolo::Quote::EmailComposer.conversation_url(conversation.account_id, conversation.display_id),
       'location_sources' => location_sources,
@@ -53,8 +60,28 @@ class ScanSolo::Quote::RequestEmail::Snapshot
 
   attr_reader :opportunity, :config, :contact, :state_fields, :conversation
 
+  def resolver
+    @resolver ||= ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config)
+  end
+
+  def not_informed
+    @not_informed ||= begin
+      required_labels = resolver.fields.to_h { |field| [field.canonical_key, field.label] }
+      ScanSolo::Qualification::FieldResolver::CATALOG.filter_map do |entry|
+        key = entry[:key]
+        { 'key' => key, 'label' => required_labels.fetch(key, entry[:label]) } if FIELD_KEYS.include?(key) && fields_not_informed?(key)
+      end
+    end
+  end
+
+  def fields_not_informed?(key)
+    state_fields.dig(key, 'status') == 'nao_informado'
+  end
+
   def field(key)
     entry = state_fields[key]
+    return { 'value' => nil, 'inferred' => false, 'not_informed' => true } if fields_not_informed?(key)
+
     if entry && entry['status'] != 'faltante'
       { 'value' => entry['value'].to_s.strip.presence, 'inferred' => entry['status'] == 'inferido' }
     else
@@ -72,7 +99,7 @@ class ScanSolo::Quote::RequestEmail::Snapshot
   def location_sources
     candidates = incoming_messages.flat_map { |message| message_locations(message).map { |url| [message[:created_at], message.id, url] } }
     link = state_fields['link_local']
-    candidates << [Time.zone.parse(link['updated_at']), 0, link['value']] if link && link['status'] != 'faltante'
+    candidates << [Time.zone.parse(link['updated_at']), 0, link['value']] if link && %w[confirmado inferido].include?(link['status'])
 
     candidates.each_with_index.sort_by { |(at, id, _url), index| [at, id, index] }.map { |(_at, _id, url), _index| url }
   end

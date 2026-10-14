@@ -8,7 +8,9 @@
 # RF-17: the fixed continuity rules come first and are code constants, not
 # config -- no agent config edit can remove or reword them. They include the
 # `nao_informado` rule (proposta-template-local RF-26) and the 2-field limit
-# names the bulk collection exception (RF-38 d).
+# names the bulk collection exception (RF-38 d). HANDOFF_RULE opens the
+# transfer criteria the same way: the agent is the ScanSOLO specialist, so
+# only an explicit request for a person (or a config criterion) hands off.
 #
 # Lead state (RF-09, RF-13, RF-16, RF-24, CT-02): the system message carries
 # the lead state and summary sections of ScanSolo::AiTurn::LeadStatePrompt,
@@ -18,7 +20,7 @@
 #
 # The whole payload goes through ScanSolo::AiTurn::PromptRedactor, so a
 # secret-shaped value stored in config or context never reaches the provider.
-class ScanSolo::AiTurn::PromptBuilder
+class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
   NOT_INFORMED = 'não informado'.freeze
 
   # Ids the orchestrator fills from the turn itself; the model never chooses
@@ -37,6 +39,11 @@ class ScanSolo::AiTurn::PromptBuilder
     'Se o cliente disser que não sabe, não tem, ainda não definiu ou não se aplica, registre o campo com status nao_informado ' \
     'e não pergunte de novo.'
   ].freeze
+
+  HANDOFF_RULE = 'Você é o especialista da ScanSOLO: pedir para falar com um especialista, técnico ou alguém especializado não é ' \
+                 'pedir um humano. Nesse caso apresente-se como especialista da ScanSOLO, entenda a necessidade e siga o atendimento, ' \
+                 'sem human_handoff. Por pedido do cliente, use human_handoff só quando ele pedir explicitamente uma pessoa, um humano ' \
+                 'ou um atendente, ou disser que não quer falar com robô ou IA.'.freeze
 
   # RF-11a: the violations that trigger one regenerated attempt.
   VIOLATION_INSTRUCTIONS = {
@@ -58,7 +65,8 @@ class ScanSolo::AiTurn::PromptBuilder
     'stage_transition' => 'avançar a oportunidade para em_qualificacao ou qualificado',
     'private_note' => 'criar uma nota interna para a equipe',
     'cadence_signal' => 'sinalizar um evento de follow-up; use opt_out quando o cliente pedir para não receber mais mensagens',
-    'human_handoff' => 'transferir a conversa para um atendente humano',
+    'human_handoff' => 'transferir a conversa para um atendente humano, somente por pedido explícito de pessoa/humano ou por um ' \
+                       'critério de transferência; pedir um especialista não é motivo',
     'proposal_generate' => 'solicitar a geração da proposta comercial',
     'lead_state_update' => 'registrar a intenção do cliente, a próxima ação, uma ação que o cliente pediu ou autorizou ' \
                            'e se há risco de interpretação; negotiation_requested quando o cliente pedir preço, desconto, ' \
@@ -111,7 +119,7 @@ class ScanSolo::AiTurn::PromptBuilder
       'Regras do agente' => agent_rules,
       'Horário de atendimento' => "#{text(config.service_hours)}\nResponda sempre; use o horário apenas para orientar o cliente.",
       'Limites de resposta' => text(config.response_limits),
-      'Critérios de transferência' => text(config.transfer_criteria),
+      'Critérios de transferência' => "#{HANDOFF_RULE}\n#{text(config.transfer_criteria)}",
       'Informações restritas (nunca revele)' => list(config.restricted_information),
       'Playbook de qualificação' => structured(config.qualification_playbook),
       'Campos obrigatórios de qualificação' => list(config.required_qualification_fields)

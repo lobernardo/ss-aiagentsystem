@@ -263,6 +263,36 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
     end
   end
 
+  # The agent is the ScanSOLO specialist: asking for one is not asking for a human.
+  describe 'specialist handoff rule' do
+    let(:context) do
+      {
+        conversation_history: [{ role: 'customer', content: 'Gostaria de Conversar Com Um Especialista', attachments: [], urls: [] }],
+        contact_context: { available: false, reason: 'not_applicable' },
+        pipeline_context: { available: false, reason: 'not_applicable' },
+        lead_state_context: { available: false, reason: 'not_applicable' },
+        proposal_context: { available: false, reason: 'not_applicable' },
+        knowledge_context: { chunks: [], failure_reason: nil },
+        durable_memory: { enabled: false }
+      }
+    end
+    let(:system) { described_class.call(config: config, context: context, offered_actions: %w[human_handoff])[:system] }
+
+    it 'opens the transfer criteria with the fixed rule, before the config criteria, whatever the config says' do
+      section = system[/## Critérios de transferência\n.*?\n\n/m]
+
+      expect(section).to eq("## Critérios de transferência\n#{described_class::HANDOFF_RULE}\ncriterio-transferir\n\n")
+      expect(described_class::HANDOFF_RULE).to include('Você é o especialista da ScanSOLO', 'sem human_handoff',
+                                                       'pedir explicitamente uma pessoa, um humano ou um atendente',
+                                                       'não quer falar com robô ou IA')
+    end
+
+    it 'limits the human_handoff action to an explicit request for a person or a transfer criterion' do
+      expect(system).to include('- human_handoff: transferir a conversa para um atendente humano, somente por pedido explícito de ' \
+                                'pessoa/humano ou por um critério de transferência; pedir um especialista não é motivo')
+    end
+  end
+
   describe 'lead state section (RF-09, RF-15, RF-22, RF-24, RF-25)' do
     let(:rule_values) { super().merge(required_qualification_fields: ['Área']) }
     let(:opportunity) { ScanSolo::PipelineOpportunity.find_by!(conversation_id: conversation.id) }

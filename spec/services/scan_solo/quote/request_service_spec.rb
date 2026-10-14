@@ -17,7 +17,7 @@ RSpec.describe ScanSolo::Quote::RequestService do
   let(:draft) { ScanSolo::AiAgentConfig.draft_for!(account) }
   let(:intent) { 'orcamento' }
   let(:notice_text) do
-    'Recebi todas as informações, obrigado! Nosso comercial já está preparando seu orçamento. Assim que estiver pronto, envio por aqui.'
+    'Pronto, já encaminhei para o nosso time técnico/comercial preparar o orçamento. A proposta será enviada para o e-mail informado.'
   end
   let(:notices) { conversation.messages.where("additional_attributes ->> 'scansolo_origin' = 'quote_notice'") }
   let(:quote_request) { ScanSolo::QuoteRequest.find_by!(opportunity: opportunity) }

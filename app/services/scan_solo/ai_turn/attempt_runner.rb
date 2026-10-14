@@ -10,7 +10,11 @@
 #    from the turn, never from the model. An action that was not offered to
 #    the model, is unregistered or fails schema validation raises;
 # 3. ScanSolo::LeadState::CompletionService concludes the qualification when
-#    every required field is now `confirmado` (RF-21);
+#    every required field is now `confirmado` (RF-21); the model wrote its
+#    reply before knowing its fields conclude it and may still ask something
+#    (blocked as `qualification_closed`, the turn ending with 0 messages), so
+#    the concluding attempt replaces it with the standard completion reply --
+#    an intent, never "sent": the quote e-mail only goes after the commit;
 #    a `lead_state_update` evidence with `negotiation_requested` on an
 #    opportunity in `proposta_enviada`/`negociacao` runs
 #    ScanSolo::Negotiation::RequestService and replaces the model's reply
@@ -50,7 +54,7 @@ class ScanSolo::AiTurn::AttemptRunner
     ActiveRecord::Base.transaction(requires_new: true) do
       apply_pending_updates! if opportunity
       evidence = execute_actions
-      ScanSolo::LeadState::CompletionService.call(opportunity: opportunity, turn: turn) if opportunity
+      reply_completion! if opportunity && ScanSolo::LeadState::CompletionService.call(opportunity: opportunity, turn: turn)
       request_negotiation! if negotiation_requested?(evidence)
 
       validation = validate_reply
@@ -105,6 +109,14 @@ class ScanSolo::AiTurn::AttemptRunner
     ScanSolo::Negotiation::RequestService.call(opportunity: opportunity, turn: turn, message: message)
     @result = result.dup.tap do |reply|
       reply.content = I18n.t('scan_solo.negotiation.standard_reply')
+      reply.asked_fields = []
+    end
+  end
+
+  def reply_completion!
+    reply_key = opportunity.lead_state.next_action == 'proposta' ? 'quote' : 'other'
+    @result = result.dup.tap do |reply|
+      reply.content = I18n.t("scan_solo.qualification.completed_reply.#{reply_key}")
       reply.asked_fields = []
     end
   end

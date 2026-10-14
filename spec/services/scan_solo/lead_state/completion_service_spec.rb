@@ -95,6 +95,15 @@ RSpec.describe ScanSolo::LeadState::CompletionService do
       expect(lead_state.events.where(subject: 'next_action').count).to eq(1)
     end
 
+    it 'replaces aguardar_cliente recorded in the same turn with the intent default' do
+      writer.set_intent!(intent: 'orcamento', source_message_id: message.id)
+      writer.record_next_action!(value: 'aguardar_cliente', source_message_id: message.id)
+
+      expect(described_class.call(opportunity: opportunity, turn: turn)).to be(true)
+      expect(lead_state).to have_attributes(next_action: 'proposta', next_action_source_message_id: message.id)
+      expect(ScanSolo::QuoteRequestJob).to have_been_enqueued.with(opportunity.id).once
+    end
+
     it 'replaces a next action recorded in an earlier turn with the intent default' do
       earlier = create(:message, account: account, conversation: conversation, message_type: :incoming)
       writer.record_next_action!(value: 'atendimento_humano', source_message_id: earlier.id)

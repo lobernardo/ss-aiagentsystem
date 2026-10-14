@@ -12,18 +12,23 @@
 #    pass through `em_qualificacao`, one stage event per transition; an
 #    opportunity already at or past `qualificado` keeps its stage;
 # 3. the next action recorded by the model in this turn stays, otherwise the
-#    default of the current intent is recorded;
+#    default of the current intent is recorded -- `aguardar_cliente` never
+#    stays: the model records it while it still collects, in the same answer
+#    that brings the last field, and nothing is awaited from the customer now;
 # 4. one `lead_state.qualification_completed` audit event carries the turn's
 #    correlation id;
 # 5. with next action `proposta`, ScanSolo::QuoteRequestJob is enqueued only
 #    after every open transaction commits, so a rolled-back attempt requests
 #    no quote (RF-12).
+# Returns true only on the call that concludes, so the attempt answers with
+# the completion reply (ScanSolo::AiTurn::AttemptRunner).
 class ScanSolo::LeadState::CompletionService
   STAGE_PATH = {
     'novo_lead' => %w[em_qualificacao qualificado],
     'em_contato' => %w[em_qualificacao qualificado],
     'em_qualificacao' => %w[qualificado]
   }.freeze
+  WAITING_NEXT_ACTION = 'aguardar_cliente'.freeze
 
   def self.call(opportunity:, turn:)
     new(opportunity: opportunity, turn: turn).call
@@ -37,16 +42,17 @@ class ScanSolo::LeadState::CompletionService
   def call
     # The turn's actions write through their own records.
     opportunity.reload
-    return if lead_state.concluida? || !all_required_confirmed?
+    return false if lead_state.concluida? || !all_required_confirmed?
 
     writer = ScanSolo::LeadState::Writer.new(lead_state: lead_state)
     writer.complete!(at: Time.current)
     advance_stage!
-    unless lead_state.next_action_source_message_id == turn.message_id
+    unless model_next_action_kept?
       writer.record_next_action!(value: ScanSolo::LeadState::DEFAULT_NEXT_ACTION_BY_INTENT[lead_state.intent], source_message_id: turn.message_id)
     end
     record_audit!
     request_quote! if lead_state.next_action == 'proposta'
+    true
   end
 
   private
@@ -61,6 +67,10 @@ class ScanSolo::LeadState::CompletionService
     config = ScanSolo::AiAgentConfig.published_for(opportunity.account)
     resolver = ScanSolo::Qualification::FieldResolver.call(opportunity: opportunity, config: config)
     resolver.fields.present? && resolver.missing_labels.empty?
+  end
+
+  def model_next_action_kept?
+    lead_state.next_action_source_message_id == turn.message_id && lead_state.next_action != WAITING_NEXT_ACTION
   end
 
   def advance_stage!

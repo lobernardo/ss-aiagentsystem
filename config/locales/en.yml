@@ -733,7 +733,7 @@ en:
         subject: 'Correção da solicitação de orçamento #%{opportunity_id}'
         intro: 'Não foi possível ler a resposta do orçamento. Corrija os campos abaixo e responda este e-mail com o bloco preenchido.'
         field_problem: '%{label}: ausente ou inválido'
-      customer_notice: 'Recebi todas as informações, obrigado! Nosso comercial já está preparando seu orçamento. Assim que estiver pronto, envio por aqui.'
+      customer_notice: 'Pronto, já encaminhei para o nosso time técnico/comercial preparar o orçamento. A proposta será enviada para o e-mail informado.'
       resend:
         notice: 'Reenvio da solicitação de orçamento.'
         errors:
@@ -856,6 +856,9 @@ en:
           agent: 'Atendimento'
     qualification:
       not_informed_by_client: 'não informado pelo cliente'
+      completed_reply:
+        quote: 'Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico/comercial preparar o orçamento.'
+        other: 'Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico dar sequência ao seu atendimento.'
     amount_in_words:
       units: ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove']
       teens: ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove']

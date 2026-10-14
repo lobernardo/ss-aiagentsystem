@@ -25,8 +25,15 @@ RSpec.describe 'ScanSolo backend locale' do
 
   it 'holds the exact RF-53 customer notice' do
     expect(I18n.t('scan_solo.quote.customer_notice')).to eq(
-      'Recebi todas as informações, obrigado! Nosso comercial já está preparando seu orçamento. Assim que estiver pronto, envio por aqui.'
+      'Pronto, já encaminhei para o nosso time técnico/comercial preparar o orçamento. A proposta será enviada para o e-mail informado.'
     )
+  end
+
+  it 'holds the completion replies, an intent that never claims the request was sent' do
+    expect(I18n.t('scan_solo.qualification.completed_reply.quote'))
+      .to eq('Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico/comercial preparar o orçamento.')
+    expect(I18n.t('scan_solo.qualification.completed_reply.other'))
+      .to eq('Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico dar sequência ao seu atendimento.')
   end
 
   it 'interpolates the CT-03 quote request subject' do

@@ -228,7 +228,7 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     expect(mail).to have_attributes(from: ['atendimento.comercial@scansolo.com.br'], to: ['comercial@scansolo.com.br'],
                                     subject: 'Solicitação de orçamento | Solar | Serviço não informado') # RF-02 (CT-01)
     expect(origin_messages(opportunity, 'quote_notice').sole.content)
-      .to eq('Recebi todas as informações, obrigado! Nosso comercial já está preparando seu orçamento. Assim que estiver pronto, envio por aqui.')
+      .to eq('Pronto, já encaminhei para o nosso time técnico/comercial preparar o orçamento. A proposta será enviada para o e-mail informado.')
     expect(ScanSolo::ConversationExtension.resolve_for(opportunity.conversation)).to be_ai_active
   end
 

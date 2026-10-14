@@ -13,7 +13,7 @@ RSpec.describe ScanSolo::Pipeline::ManualLeadOutreach do
   let(:admin) { create(:user, account: account, role: :administrator) }
   let(:params) do
     { account: account, actor: admin, name: 'Ana Souza', phone_number: '+5511987654321', email: nil, company: nil,
-      owner_id: nil, inbox: inbox }
+      owner_id: nil, inbox: inbox, initial_stage: 'novo_lead' }
   end
   let(:template_messages) { Message.where("additional_attributes->>'scansolo_origin' = 'manual_lead'") }
 

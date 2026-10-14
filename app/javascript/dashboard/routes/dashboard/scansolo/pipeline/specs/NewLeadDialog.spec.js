@@ -154,8 +154,84 @@ describe('NewLeadDialog', () => {
       email: undefined,
       company: undefined,
       owner_id: undefined,
+      initial_stage: 'novo_lead',
       inbox_id: 11,
     });
+  });
+
+  it('places the initial stage between owner and inbox, defaulting to Novo Lead', async () => {
+    const wrapper = await mountDialog();
+
+    const selects = wrapper
+      .findAll('select')
+      .map(select => select.attributes('data-testid'));
+    expect(selects).toEqual([
+      'new-lead-owner',
+      'new-lead-initial-stage',
+      'new-lead-inbox',
+    ]);
+    expect(wrapper.text()).toContain('Etapa inicial do pipeline');
+    const stageSelect = wrapper.find('[data-testid="new-lead-initial-stage"]');
+    expect(stageSelect.element.value).toBe('novo_lead');
+    expect(
+      stageSelect.findAll('option:not([disabled])').map(o => o.text())
+    ).toEqual([
+      'Novo Lead',
+      'Em Contato',
+      'Em Qualificação',
+      'Qualificado',
+      'Perdido',
+    ]);
+  });
+
+  it('disables Proposta Enviada and Negociação with the reason', async () => {
+    const wrapper = await mountDialog();
+
+    const disabled = wrapper
+      .findAll('[data-testid="new-lead-initial-stage"] option[disabled]')
+      .map(o => [o.attributes('value'), o.text()]);
+    expect(disabled).toEqual([
+      [
+        'proposta_enviada',
+        'Proposta Enviada (indisponível: exige uma proposta real enviada)',
+      ],
+      [
+        'negociacao',
+        'Negociação (indisponível: exige uma proposta real enviada)',
+      ],
+    ]);
+    expect(
+      wrapper.find('[data-testid="new-lead-initial-stage-hint"]').text()
+    ).toContain('Proposta Enviada e Negociação');
+  });
+
+  it('sends the chosen initial stage', async () => {
+    ScanSoloPipelineOpportunitiesAPI.create.mockResolvedValue({
+      data: { ...createdOpportunity, stage: 'em_qualificacao' },
+    });
+    const wrapper = await mountDialog();
+    await fill(wrapper, { phone: '+5511999999999' });
+    await wrapper
+      .find('[data-testid="new-lead-initial-stage"]')
+      .setValue('em_qualificacao');
+
+    await confirm(wrapper);
+
+    expect(ScanSoloPipelineOpportunitiesAPI.create).toHaveBeenCalledWith(
+      expect.objectContaining({ initial_stage: 'em_qualificacao' })
+    );
+  });
+
+  it('shows the i18n message of a 422 invalid_initial_stage', async () => {
+    reject422({ error: 'invalid_initial_stage' });
+    const wrapper = await mountDialog();
+    await fill(wrapper, { phone: '+5511999999999' });
+
+    await confirm(wrapper);
+
+    expect(
+      wrapper.find('[data-testid="new-lead-server-error"]').text()
+    ).toContain('Esta etapa não pode receber um lead novo.');
   });
 
   it('requires an inbox when more than one WhatsApp inbox is allowlisted', async () => {

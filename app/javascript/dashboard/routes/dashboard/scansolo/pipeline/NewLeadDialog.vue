@@ -10,8 +10,16 @@ import { INBOX_TYPES } from 'dashboard/helper/inbox';
 import Dialog from 'dashboard/components-next/dialog/Dialog.vue';
 import Input from 'dashboard/components-next/input/Input.vue';
 import Button from 'dashboard/components-next/button/Button.vue';
-import { MANUAL_LEAD_ERROR_LABELS, enumLabel } from '../scansoloLabels';
-import { E164_PHONE_PATTERN } from './pipelineConstants';
+import {
+  MANUAL_LEAD_ERROR_LABELS,
+  STAGE_LABELS,
+  enumLabel,
+} from '../scansoloLabels';
+import {
+  E164_PHONE_PATTERN,
+  NEW_LEAD_DEFAULT_STAGE,
+  NEW_LEAD_STAGE_OPTIONS,
+} from './pipelineConstants';
 
 const emit = defineEmits(['close']);
 
@@ -36,6 +44,7 @@ const emptyForm = () => ({
   email: '',
   company: '',
   ownerId: '',
+  initialStage: NEW_LEAD_DEFAULT_STAGE,
   inboxId: '',
 });
 const form = reactive(emptyForm());
@@ -48,6 +57,15 @@ const whatsappInboxes = computed(() => {
       inbox.channel_type === INBOX_TYPES.WHATSAPP && allowed.includes(inbox.id)
   );
 });
+
+const stageOptionLabel = ({ stage, blockedReason }) => {
+  const label = enumLabel(t, STAGE_LABELS, stage);
+  if (!blockedReason) return label;
+  const reasonKey = `SCANSOLO.PIPELINE_BOARD.NEW_LEAD.INITIAL_STAGE_BLOCKED.${blockedReason}`;
+  // Keys come from the static NEW_LEAD_STAGE_OPTIONS list.
+  // eslint-disable-next-line @intlify/vue-i18n/no-dynamic-keys
+  return `${label} (${t(reasonKey)})`;
+};
 
 const resetForm = () => {
   Object.assign(form, emptyForm());
@@ -98,6 +116,7 @@ const payload = () => ({
   email: form.email.trim() || undefined,
   company: form.company.trim() || undefined,
   owner_id: form.ownerId || undefined,
+  initial_stage: form.initialStage,
   inbox_id: form.inboxId || undefined,
 });
 
@@ -207,6 +226,29 @@ defineExpose({ open, close, submit });
             {{ agent.name }}
           </option>
         </select>
+      </label>
+      <label class="flex flex-col gap-1 text-heading-3 text-n-slate-12">
+        {{ t('SCANSOLO.PIPELINE_BOARD.NEW_LEAD.FIELDS.INITIAL_STAGE') }}
+        <select
+          v-model="form.initialStage"
+          data-testid="new-lead-initial-stage"
+          class="w-full rounded-lg border border-n-weak px-3 py-2 text-sm"
+        >
+          <option
+            v-for="option in NEW_LEAD_STAGE_OPTIONS"
+            :key="option.stage"
+            :value="option.stage"
+            :disabled="!!option.blockedReason"
+          >
+            {{ stageOptionLabel(option) }}
+          </option>
+        </select>
+        <span
+          data-testid="new-lead-initial-stage-hint"
+          class="text-sm text-n-slate-11"
+        >
+          {{ t('SCANSOLO.PIPELINE_BOARD.NEW_LEAD.INITIAL_STAGE_HINT') }}
+        </span>
       </label>
       <label class="flex flex-col gap-1 text-heading-3 text-n-slate-12">
         {{ t('SCANSOLO.PIPELINE_BOARD.NEW_LEAD.FIELDS.INBOX') }}

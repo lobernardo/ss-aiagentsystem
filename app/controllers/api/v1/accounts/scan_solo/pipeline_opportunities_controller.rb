@@ -12,7 +12,9 @@
 #
 # CT-01 / RF-05: create ("Novo lead") rejects malformed input here with 422
 # before any write; the database rules (opt-out, conflict, open opportunity)
-# belong to ScanSolo::Pipeline::ManualLeadService.
+# belong to ScanSolo::Pipeline::ManualLeadService. An `initial_stage` outside
+# the service's INITIAL_STAGES is refused with 422 `invalid_initial_stage`;
+# omitted, the lead starts in novo_lead.
 #
 # CT-09 / RF-09: update also edits the lead e-mail; a malformed or empty
 # address is refused here with 422 `invalid_email`, the conflict with another
@@ -102,13 +104,13 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
   end
 
   def create_params
-    params.permit(:name, :phone_number, :email, :company, :owner_id, :inbox_id)
+    params.permit(:name, :phone_number, :email, :company, :owner_id, :inbox_id, :initial_stage)
   end
 
   def manual_lead_attributes
     input = create_params
     { name: input[:name], phone_number: input[:phone_number], email: input[:email].presence, company: input[:company].presence,
-      owner_id: input[:owner_id].presence }
+      owner_id: input[:owner_id].presence, initial_stage: input.fetch(:initial_stage, 'novo_lead') }
   end
 
   def manual_lead_input_error
@@ -116,6 +118,7 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
     return 'missing_name' if input[:name].blank?
     return 'invalid_phone' unless input[:phone_number].to_s.match?(E164_PHONE_REGEXP)
     return 'invalid_email' if input[:email].present? && !input[:email].match?(URI::MailTo::EMAIL_REGEXP)
+    return 'invalid_initial_stage' unless ::ScanSolo::Pipeline::ManualLeadService::INITIAL_STAGES.include?(input.fetch(:initial_stage, 'novo_lead'))
 
     manual_lead_reference_error
   end

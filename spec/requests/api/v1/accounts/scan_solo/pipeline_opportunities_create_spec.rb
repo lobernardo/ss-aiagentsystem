@@ -67,6 +67,13 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API create (CT-01)', type: :requ
       expect_rejection(valid_params.merge(inbox_id: api_inbox.id), 'invalid_inbox')
     end
 
+    %w[proposta_enviada negociacao ganho desconhecida].each do |stage|
+      it "rejects the initial stage #{stage} with invalid_initial_stage" do
+        expect_rejection(valid_params.merge(initial_stage: stage), 'invalid_initial_stage')
+        expect(ScanSolo::CadenceEnrollment.count).to eq(0)
+      end
+    end
+
     it 'rejects a WhatsApp inbox outside the published allowlist with invalid_inbox' do
       other_inbox = create(:channel_whatsapp, account: account, sync_templates: false).inbox
 
@@ -116,6 +123,36 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API create (CT-01)', type: :requ
       expect(body['lead_state'].keys).to eq(%w[intent qualification next_action authorized_actions blocks status history])
       expect(body).to include('quote_request' => nil, 'proposal' => nil)
       expect(opportunity.conversation.inbox).to eq(inbox)
+    end
+
+    it 'creates the lead in the chosen initial stage with that stage cadence' do
+      ScanSolo::CadenceDefinition.create!(stage: 'em_qualificacao', version: 2, offsets: [24, 48, 96, 168])
+
+      post_lead(valid_params.merge(initial_stage: 'em_qualificacao'))
+
+      expect(response).to have_http_status(:created)
+      opportunity = ScanSolo::PipelineOpportunity.find(response.parsed_body['id'])
+      expect(response.parsed_body).to include('stage' => 'em_qualificacao')
+      expect(opportunity.cadence_enrollments.sole.cadence_definition.stage).to eq('em_qualificacao')
+    end
+
+    it 'keeps the lead and its cadence inside the current account' do
+      other_account = create(:account, scansolo_enabled: true)
+      other_contact = create(:contact, account: other_account, phone_number: valid_params[:phone_number])
+      other_opportunity = ScanSolo::PipelineOpportunity.create!(
+        account: other_account, contact: other_contact, stage: :em_contato,
+        conversation: create(:conversation, account: other_account, contact: other_contact)
+      )
+      ScanSolo::CadenceDefinition.create!(stage: 'em_contato', version: 1, offsets: [24, 48, 72, 96, 120])
+
+      post_lead(valid_params.merge(initial_stage: 'em_contato'))
+
+      expect(response).to have_http_status(:created)
+      opportunity = ScanSolo::PipelineOpportunity.find(response.parsed_body['id'])
+      expect(opportunity).to have_attributes(account_id: account.id, stage: 'em_contato')
+      expect(opportunity.contact).not_to eq(other_contact)
+      expect(ScanSolo::CadenceEnrollment.pluck(:opportunity_id)).to eq([opportunity.id])
+      expect(other_opportunity.reload).to have_attributes(stage: 'em_contato')
     end
 
     it 'reports contact_created false when the phone already belongs to a contact' do

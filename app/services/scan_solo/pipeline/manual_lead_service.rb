@@ -4,20 +4,27 @@
 # transaction, serialized per account+phone by an advisory lock so two
 # concurrent registrations of the same phone never create two contacts.
 #
-# The opportunity is a regular novo_lead one (lead_source `manual`, no
-# customer interaction yet) enrolled in the Novo Lead cadence like any other;
-# step 1 is recorded `skipped` because the manual initial template replaces it,
-# so steps 2..n keep their own offsets from the enrollment (RF-10).
+# The opportunity (lead_source `manual`, no customer interaction yet) starts
+# in the operator's initial stage and gets that stage's cadence through
+# ScanSolo::Cadence::StageEntryEnroller, the same entry used by every stage
+# change. Only stages a brand-new lead can truly be in are accepted:
+# proposta_enviada/negociacao need a real proposal and ganho a closed deal.
+#
+# A novo_lead opportunity also gets the manual initial template; its cadence
+# step 1 is recorded `skipped` because that template replaces it, so steps
+# 2..n keep their own offsets from the enrollment (RF-10). Other stages run
+# their own cadence unchanged, and perdido gets none.
 class ScanSolo::Pipeline::ManualLeadService
   Result = Struct.new(:opportunity, :contact_created, keyword_init: true)
 
   INITIAL_TEMPLATE_SKIP_REASON = 'manual_initial_template'.freeze
+  INITIAL_STAGES = %w[novo_lead em_contato em_qualificacao qualificado perdido].freeze
 
   def self.call(**)
     new(**).call
   end
 
-  def initialize(account:, actor:, name:, phone_number:, email:, company:, owner_id:, inbox:) # rubocop:disable Metrics/ParameterLists
+  def initialize(account:, actor:, name:, phone_number:, email:, company:, owner_id:, inbox:, initial_stage:) # rubocop:disable Metrics/ParameterLists
     @account = account
     @actor = actor
     @name = name
@@ -26,6 +33,7 @@ class ScanSolo::Pipeline::ManualLeadService
     @company = company
     @owner_id = owner_id
     @inbox = inbox
+    @initial_stage = initial_stage
   end
 
   def call
@@ -36,12 +44,12 @@ class ScanSolo::Pipeline::ManualLeadService
       reject_open_opportunity!(contact)
 
       opportunity = ScanSolo::PipelineOpportunity.create!(
-        account: account, contact: contact, conversation: resolve_conversation!(contact), stage: :novo_lead,
+        account: account, contact: contact, conversation: resolve_conversation!(contact), stage: initial_stage,
         lead_source: 'manual', owner_id: owner_id, last_customer_interaction_at: nil
       )
       record_creation!(opportunity, contact_created)
       enroll!(opportunity)
-      ActiveRecord.after_all_transactions_commit { ScanSolo::Pipeline::ManualLeadOutreach.call(opportunity: opportunity) }
+      ActiveRecord.after_all_transactions_commit { ScanSolo::Pipeline::ManualLeadOutreach.call(opportunity: opportunity) } if opportunity.novo_lead?
 
       Result.new(opportunity: opportunity, contact_created: contact_created)
     end
@@ -49,7 +57,7 @@ class ScanSolo::Pipeline::ManualLeadService
 
   private
 
-  attr_reader :account, :actor, :name, :phone_number, :email, :company, :owner_id, :inbox
+  attr_reader :account, :actor, :name, :phone_number, :email, :company, :owner_id, :inbox, :initial_stage
 
   def lock_phone!
     ActiveRecord::Base.connection.execute(
@@ -95,13 +103,13 @@ class ScanSolo::Pipeline::ManualLeadService
       event_type: 'pipeline.opportunity_created',
       actor: actor,
       correlation_id: SecureRandom.uuid,
-      payload: { source: 'manual', conversation_id: opportunity.conversation_id, contact_created: contact_created }
+      payload: { source: 'manual', conversation_id: opportunity.conversation_id, contact_created: contact_created, initial_stage: initial_stage }
     )
   end
 
   def enroll!(opportunity)
     enrollment = ScanSolo::Cadence::StageEntryEnroller.call(opportunity: opportunity)
-    return if enrollment.blank?
+    return if enrollment.blank? || !opportunity.novo_lead?
 
     ScanSolo::Cadence::AttemptEvidenceRecorder.new(enrollment.attempts.find_by!(step: 1))
                                               .record!(result: :skipped, last_block_reason: INITIAL_TEMPLATE_SKIP_REASON)

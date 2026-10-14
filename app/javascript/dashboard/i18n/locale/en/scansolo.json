@@ -132,8 +132,13 @@
           "EMAIL": "E-mail",
           "COMPANY": "Empresa",
           "OWNER": "Responsável",
+          "INITIAL_STAGE": "Etapa inicial do pipeline",
           "INBOX": "Caixa de entrada WhatsApp"
         },
+        "INITIAL_STAGE_BLOCKED": {
+          "REQUIRES_PROPOSAL": "indisponível: exige uma proposta real enviada"
+        },
+        "INITIAL_STAGE_HINT": "Proposta Enviada e Negociação só são alcançadas depois do envio de uma proposta real.",
         "PLACEHOLDERS": {
           "NAME": "Nome do contato",
           "PHONE": "+5511999999999",
@@ -152,6 +157,7 @@
           "INVALID_EMAIL": "O e-mail informado não é válido.",
           "INVALID_OWNER": "O responsável escolhido não é um usuário desta conta.",
           "INVALID_INBOX": "Escolha uma caixa de entrada WhatsApp atendida pela IA.",
+          "INVALID_INITIAL_STAGE": "Esta etapa não pode receber um lead novo.",
           "CONTACT_OPTED_OUT": "Este contato pediu para não receber mensagens (opt-out).",
           "CONTACT_CONFLICT": "O telefone e o e-mail informados pertencem a contatos diferentes.",
           "OPPORTUNITY_EXISTS": "Este contato já tem uma oportunidade em andamento."

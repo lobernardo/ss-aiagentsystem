@@ -11,6 +11,21 @@ export const SCANSOLO_PIPELINE_STAGES = [
   'perdido',
 ];
 
+// "Novo lead" initial stage, in board order. Stages whose real
+// precondition a brand-new lead cannot meet stay listed but disabled with
+// their reason; the server (ManualLeadService::INITIAL_STAGES) refuses them
+// too. Ganho is not an entry stage.
+export const NEW_LEAD_DEFAULT_STAGE = 'novo_lead';
+export const NEW_LEAD_STAGE_OPTIONS = [
+  { stage: 'novo_lead' },
+  { stage: 'em_contato' },
+  { stage: 'em_qualificacao' },
+  { stage: 'qualificado' },
+  { stage: 'proposta_enviada', blockedReason: 'REQUIRES_PROPOSAL' },
+  { stage: 'negociacao', blockedReason: 'REQUIRES_PROPOSAL' },
+  { stage: 'perdido' },
+];
+
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // RF-12: fixed, non-account-configurable staleness threshold, mirroring

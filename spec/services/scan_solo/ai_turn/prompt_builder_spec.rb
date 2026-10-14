@@ -282,9 +282,12 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
       section = system[/## Critérios de transferência\n.*?\n\n/m]
 
       expect(section).to eq("## Critérios de transferência\n#{described_class::HANDOFF_RULE}\ncriterio-transferir\n\n")
-      expect(described_class::HANDOFF_RULE).to include('Você é o especialista da ScanSOLO', 'sem human_handoff',
-                                                       'pedir explicitamente uma pessoa, um humano ou um atendente',
-                                                       'não quer falar com robô ou IA')
+      expect(described_class::HANDOFF_RULE).to include(
+        'Você é o especialista virtual da ScanSOLO', 'alguém especializado não é pedir um humano',
+        'perguntar se fala com uma pessoa, um humano ou uma IA, responda com transparência',
+        'pedir explicitamente uma pessoa, um humano ou um atendente', 'não quer falar com robô ou IA',
+        'só depois que ele confirmar que quer um humano'
+      )
     end
 
     it 'limits the human_handoff action to an explicit request for a person or a transfer criterion' do

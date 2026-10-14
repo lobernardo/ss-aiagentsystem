@@ -52,7 +52,8 @@ class ScanSolo::LeadState::Writer
     :applied
   end
 
-  # A nil source_message_id only comes from the RF-01a backfill.
+  # A nil source_message_id only comes from the RF-01a backfill or an
+  # operator clearing a residual next action (value nil).
   def record_next_action!(value:, source_message_id:)
     lead_state.lock!
     previous = lead_state.next_action
@@ -74,6 +75,18 @@ class ScanSolo::LeadState::Writer
         { 'action' => action, 'source_message_id' => source_message_id, 'recorded_at' => Time.current.iso8601(6) }
       ]
     )
+    :applied
+  end
+
+  # Symmetric to authorize_action!: an operator removes an authorization the
+  # customer never gave (e.g. left by a wrong handoff); the caller audits it.
+  def revoke_action!(action:)
+    raise ArgumentError, "invalid authorized action: #{action}" unless ScanSolo::LeadState::NEXT_ACTIONS.include?(action)
+
+    lead_state.lock!
+    return :unchanged if lead_state.authorized_actions.none? { |entry| entry['action'] == action }
+
+    lead_state.update!(authorized_actions: lead_state.authorized_actions.reject { |entry| entry['action'] == action })
     :applied
   end
 

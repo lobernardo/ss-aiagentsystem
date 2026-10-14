@@ -237,6 +237,42 @@ RSpec.describe ScanSolo::LeadState::Writer do
     end
   end
 
+  describe '#revoke_action!' do
+    it 'removes only the given authorization, without history events' do
+      writer.authorize_action!(action: 'atendimento_humano', source_message_id: first_message.id)
+      writer.authorize_action!(action: 'proposta', source_message_id: second_message.id)
+
+      expect(writer.revoke_action!(action: 'atendimento_humano')).to eq(:applied)
+      expect(lead_state.reload.authorized_actions.pluck('action')).to eq(['proposta'])
+      expect(writer.revoke_action!(action: 'atendimento_humano')).to eq(:unchanged)
+      expect(lead_state.events).to be_empty
+    end
+
+    it 'rejects an action outside the list' do
+      expect { writer.revoke_action!(action: 'xyz') }.to raise_error(ArgumentError)
+    end
+
+    # Regression (a "specialist" request handed off): the wrong turn left atendimento_humano as next action and
+    # authorized action, and the model kept copying it. Clearing both keeps the fields, history and AI state.
+    it 'clears the residual atendimento_humano of a wrong handoff, keeping fields and history' do
+      writer.apply_field!(key: 'cidade_uf', value: 'Joinville/SC', status: 'confirmado', source_message_id: second_message.id)
+      writer.record_next_action!(value: 'atendimento_humano', source_message_id: first_message.id)
+      writer.authorize_action!(action: 'atendimento_humano', source_message_id: first_message.id)
+
+      writer.revoke_action!(action: 'atendimento_humano')
+      writer.record_next_action!(value: nil, source_message_id: nil)
+
+      projection = ScanSolo::LeadState::Projection.call(opportunity: opportunity.reload, config: nil)
+      prompt = ScanSolo::AiTurn::LeadStatePrompt.call(lead_state_context: projection.to_h.merge(summary_allowed: false))['Estado do lead']
+      expect(lead_state.reload).to have_attributes(next_action: nil, authorized_actions: [])
+      expect(lead_state.fields['cidade_uf']).to include('value' => 'Joinville/SC', 'status' => 'confirmado')
+      expect(lead_state.events.where(subject: 'next_action').pluck(:previous_value, :new_value))
+        .to eq([[nil, 'atendimento_humano'], ['atendimento_humano', nil]])
+      expect(prompt).to include("Próxima ação: nenhuma\nAções autorizadas (já pedidas ou autorizadas pelo cliente, não peça confirmação):\nnenhuma")
+      expect(prompt).not_to include('atendimento_humano')
+    end
+  end
+
   describe '#complete!' do
     it 'completes once and raises on a second completion (RF-21)' do
       completed_at = Time.zone.parse('2026-09-29 10:00:00')

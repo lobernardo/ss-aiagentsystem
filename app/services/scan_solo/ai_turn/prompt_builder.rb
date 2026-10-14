@@ -9,8 +9,10 @@
 # config -- no agent config edit can remove or reword them. They include the
 # `nao_informado` rule (proposta-template-local RF-26) and the 2-field limit
 # names the bulk collection exception (RF-38 d). HANDOFF_RULE opens the
-# transfer criteria the same way: the agent is the ScanSOLO specialist, so
-# only an explicit request for a person (or a config criterion) hands off.
+# transfer criteria the same way: the agent is the ScanSOLO virtual
+# specialist, so neither asking for a specialist nor asking whether it is a
+# person hands off -- only an explicit (or confirmed) request for a human or a
+# config criterion does.
 #
 # Lead state (RF-09, RF-13, RF-16, RF-24, CT-02): the system message carries
 # the lead state and summary sections of ScanSolo::AiTurn::LeadStatePrompt,
@@ -40,10 +42,12 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'e não pergunte de novo.'
   ].freeze
 
-  HANDOFF_RULE = 'Você é o especialista da ScanSOLO: pedir para falar com um especialista, técnico ou alguém especializado não é ' \
-                 'pedir um humano. Nesse caso apresente-se como especialista da ScanSOLO, entenda a necessidade e siga o atendimento, ' \
-                 'sem human_handoff. Por pedido do cliente, use human_handoff só quando ele pedir explicitamente uma pessoa, um humano ' \
-                 'ou um atendente, ou disser que não quer falar com robô ou IA.'.freeze
+  HANDOFF_RULE = 'Você é o especialista virtual da ScanSOLO: pedir para falar com um especialista, técnico ou alguém especializado não ' \
+                 'é pedir um humano; apresente-se como especialista virtual, entenda a necessidade e siga o atendimento, sem ' \
+                 'human_handoff. Se o cliente perguntar se fala com uma pessoa, um humano ou uma IA, responda com transparência que ' \
+                 'é o especialista virtual da ScanSOLO, sem human_handoff. Por pedido do cliente, use human_handoff só quando ele ' \
+                 'pedir explicitamente uma pessoa, um humano ou um atendente, ou disser que não quer falar com robô ou IA; se você ' \
+                 'oferecer a transferência, use human_handoff só depois que ele confirmar que quer um humano.'.freeze
 
   # RF-11a: the violations that trigger one regenerated attempt.
   VIOLATION_INSTRUCTIONS = {

@@ -7,7 +7,7 @@ require 'rails_helper'
 # Gotenberg → approval request → explicit approval → e-mail to the lead (RF-10,
 # RF-13..RF-16, RF-20, RF-24, RNF-02, RNF-04, RNF-05, RNF-09). Real ScanSolo
 # services are wired together; only the true external boundaries are replaced:
-# the LLM (MockLlmProvider), Gotenberg (WebMock answering with `sample.pdf`),
+# the LLM (MockLlmProvider), Gotenberg (WebMock answering with `spec/assets/sample.pdf`),
 # the WhatsApp transport (360dialog stubbed by WebMock) and SMTP (ActionMailer
 # `:test`). The Make credentials are present, so every assertion of "0 Make"
 # proves the local mode's precedence (RF-01, RF-16). The template is a
@@ -34,7 +34,7 @@ RSpec.describe 'ScanSolo proposta gerada localmente pelo template', type: :reque
   let(:draft) { ScanSolo::AiAgentConfig.draft_for!(account) }
   let(:listener) { ScanSolo::ConversationListener.instance }
   let(:convert_url) { 'http://gotenberg.test:3000/forms/libreoffice/convert' }
-  let(:pdf) { file_fixture('sample.pdf').binread }
+  let(:pdf) { Rails.root.join('spec/assets/sample.pdf').binread }
   let(:base_path) { "/api/v1/accounts/#{account.id}/scan_solo" }
   let(:lead_email) { 'ana@solar.example' }
   let(:transaction_open_at) { [] }

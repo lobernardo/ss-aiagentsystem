@@ -40,7 +40,7 @@ RSpec.describe ScanSolo::Proposal::LocalGenerationService do
     with_modified_env(SCANSOLO_GOTENBERG_URL: 'http://gotenberg.test:3000') { example.run }
   end
 
-  before { stub_request(:post, convert_url).to_return(status: 200, body: file_fixture('sample.pdf').binread) }
+  before { stub_request(:post, convert_url).to_return(status: 200, body: Rails.root.join('spec/assets/sample.pdf').binread) }
 
   def expect_failed(reason, cause, placeholders: nil)
     version.reload

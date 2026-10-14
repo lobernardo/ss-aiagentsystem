@@ -7,7 +7,7 @@ RSpec.describe ScanSolo::Proposal::GotenbergClient do
 
   let(:convert_url) { 'http://gotenberg.test:3000/forms/libreoffice/convert' }
   let(:docx) { scan_solo_docx_valid }
-  let(:pdf) { file_fixture('sample.pdf').binread }
+  let(:pdf) { Rails.root.join('spec/assets/sample.pdf').binread }
 
   around do |example|
     with_modified_env(SCANSOLO_GOTENBERG_URL: 'http://gotenberg.test:3000') { example.run }

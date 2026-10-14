@@ -57,7 +57,7 @@ RSpec.describe ScanSolo::ProposalLocalGenerationJob do
   end
 
   it 'generates the proposal when a 5xx is followed by a 200' do
-    stub_request(:post, convert_url).to_return({ status: 503 }, { status: 200, body: file_fixture('sample.pdf').binread })
+    stub_request(:post, convert_url).to_return({ status: 503 }, { status: 200, body: Rails.root.join('spec/assets/sample.pdf').binread })
 
     perform_enqueued_jobs(only: described_class) { described_class.perform_later(version.id, correlation_id) }
 

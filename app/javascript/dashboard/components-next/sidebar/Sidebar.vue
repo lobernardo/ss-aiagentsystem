@@ -367,6 +367,21 @@ const reportRoutes = computed(() => newReportRoutes());
 
 const menuItems = computed(() => {
   return [
+    // ScanSolo accounts work the pipeline first; other accounts keep the
+    // native order.
+    ...(isScanSoloEnabled.value
+      ? [
+          {
+            name: 'ScanSolo',
+            label: t('SCANSOLO.SIDEBAR.GROUP_LABEL'),
+            icon: 'i-lucide-rocket',
+            activeOn: SCANSOLO_MODULES.map(
+              scanSoloModule => scanSoloModule.name
+            ),
+            children: buildScanSoloSidebarItems({ t, accountScopedRoute }),
+          },
+        ]
+      : []),
     {
       name: 'Inbox',
       label: t('SIDEBAR.INBOX'),
@@ -595,19 +610,6 @@ const menuItems = computed(() => {
             icon: 'i-lucide-phone',
             to: accountScopedRoute('calls_dashboard_index'),
             activeOn: ['calls_dashboard_index'],
-          },
-        ]
-      : []),
-    ...(isScanSoloEnabled.value
-      ? [
-          {
-            name: 'ScanSolo',
-            label: t('SCANSOLO.SIDEBAR.GROUP_LABEL'),
-            icon: 'i-lucide-rocket',
-            activeOn: SCANSOLO_MODULES.map(
-              scanSoloModule => scanSoloModule.name
-            ),
-            children: buildScanSoloSidebarItems({ t, accountScopedRoute }),
           },
         ]
       : []),

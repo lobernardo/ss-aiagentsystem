@@ -166,7 +166,9 @@ defineExpose({ onDragStart, onDrop, openOpportunity });
 
 <template>
   <ScanSoloPageLayout>
-    <div class="p-4">
+    <!-- The board takes the remaining height so its horizontal scrollbar
+         stays on screen; each column scrolls its own cards vertically. -->
+    <div class="flex flex-col h-full min-h-0 p-4">
       <div class="flex items-center justify-end mb-4">
         <Button
           type="button"
@@ -184,120 +186,128 @@ defineExpose({ onDragStart, onDrop, openOpportunity });
         :empty-message="t('SCANSOLO.PIPELINE_BOARD.EMPTY_STATE')"
         @retry="loadOpportunities"
       >
-        <div class="flex gap-4 overflow-x-auto" data-testid="pipeline-board">
+        <div
+          class="flex flex-1 min-h-0 gap-4 pb-2 overflow-x-auto"
+          data-testid="pipeline-board"
+        >
           <div
             v-for="stage in SCANSOLO_PIPELINE_STAGES"
             :key="stage"
             data-testid="pipeline-column"
             :data-stage="stage"
-            class="flex-shrink-0 w-72"
+            class="flex flex-col flex-shrink-0 w-72 min-h-0"
             @dragover.prevent
             @drop="onDrop(stage)"
           >
             <h3 class="text-n-slate-11 text-sm font-medium mb-2">
               {{ enumLabel(t, STAGE_LABELS, stage) }}
             </h3>
-            <p
-              v-if="!opportunitiesByStage[stage].length"
-              class="text-xs text-n-slate-10"
-            >
-              {{ t('SCANSOLO.PIPELINE_BOARD.EMPTY_COLUMN') }}
-            </p>
             <div
-              v-for="opportunity in opportunitiesByStage[stage]"
-              :key="opportunity.id"
-              draggable="true"
-              data-testid="pipeline-card"
-              :data-opportunity-id="opportunity.id"
-              class="rounded-lg border border-n-weak p-3 mb-2 bg-n-solid-1 text-sm cursor-pointer"
-              @dragstart="onDragStart(opportunity.id)"
-              @dragend="onDragEnd"
-              @click="openOpportunity(opportunity)"
+              class="flex-1 min-h-0 overflow-y-auto"
+              data-testid="pipeline-column-cards"
             >
-              <div class="flex items-center gap-2 mb-1">
-                <span
-                  v-if="LEAD_SOURCE_TAGS[opportunity.leadSource]"
-                  data-testid="card-lead-source"
-                  class="text-xs font-medium px-2 py-0.5 rounded-full bg-n-slate-3 text-n-slate-11"
+              <p
+                v-if="!opportunitiesByStage[stage].length"
+                class="text-xs text-n-slate-10"
+              >
+                {{ t('SCANSOLO.PIPELINE_BOARD.EMPTY_COLUMN') }}
+              </p>
+              <div
+                v-for="opportunity in opportunitiesByStage[stage]"
+                :key="opportunity.id"
+                draggable="true"
+                data-testid="pipeline-card"
+                :data-opportunity-id="opportunity.id"
+                class="rounded-lg border border-n-weak p-3 mb-2 bg-n-solid-1 text-sm cursor-pointer"
+                @dragstart="onDragStart(opportunity.id)"
+                @dragend="onDragEnd"
+                @click="openOpportunity(opportunity)"
+              >
+                <div class="flex items-center gap-2 mb-1">
+                  <span
+                    v-if="LEAD_SOURCE_TAGS[opportunity.leadSource]"
+                    data-testid="card-lead-source"
+                    class="text-xs font-medium px-2 py-0.5 rounded-full bg-n-slate-3 text-n-slate-11"
+                  >
+                    {{ enumLabel(t, LEAD_SOURCE_TAGS, opportunity.leadSource) }}
+                  </span>
+                  <span
+                    v-if="isHumanAttended(opportunity)"
+                    data-testid="card-human-attendance"
+                    class="text-xs font-medium px-2 py-0.5 rounded-full bg-n-amber-3 text-n-amber-11"
+                  >
+                    {{ t('SCANSOLO.PIPELINE_BOARD.HUMAN_ATTENDANCE') }}
+                  </span>
+                </div>
+                <p data-testid="card-title" class="font-medium text-n-slate-12">
+                  {{ opportunity.company || opportunity.contactName }}
+                </p>
+                <p
+                  v-if="opportunity.service"
+                  data-testid="card-service"
+                  class="text-xs text-n-slate-11"
                 >
-                  {{ enumLabel(t, LEAD_SOURCE_TAGS, opportunity.leadSource) }}
-                </span>
-                <span
-                  v-if="isHumanAttended(opportunity)"
-                  data-testid="card-human-attendance"
-                  class="text-xs font-medium px-2 py-0.5 rounded-full bg-n-amber-3 text-n-amber-11"
+                  {{ opportunity.service }}
+                </p>
+                <p
+                  v-if="opportunity.cityUf"
+                  data-testid="card-city-uf"
+                  class="text-xs text-n-slate-11"
                 >
-                  {{ t('SCANSOLO.PIPELINE_BOARD.HUMAN_ATTENDANCE') }}
-                </span>
-              </div>
-              <p data-testid="card-title" class="font-medium text-n-slate-12">
-                {{ opportunity.company || opportunity.contactName }}
-              </p>
-              <p
-                v-if="opportunity.service"
-                data-testid="card-service"
-                class="text-xs text-n-slate-11"
-              >
-                {{ opportunity.service }}
-              </p>
-              <p
-                v-if="opportunity.cityUf"
-                data-testid="card-city-uf"
-                class="text-xs text-n-slate-11"
-              >
-                {{ opportunity.cityUf }}
-              </p>
-              <p
-                v-if="commercialStatusLabel(opportunity)"
-                data-testid="card-commercial-status"
-                class="text-xs font-medium text-n-blue-11"
-              >
-                {{ commercialStatusLabel(opportunity) }}
-              </p>
-              <p
-                v-if="daysWithoutInteraction(opportunity) >= 1"
-                data-testid="card-no-interaction"
-                class="text-xs text-n-amber-11"
-              >
-                {{
-                  t('SCANSOLO.PIPELINE_BOARD.NO_INTERACTION_DAYS', {
-                    days: daysWithoutInteraction(opportunity),
-                  })
-                }}
-              </p>
-              <p data-testid="card-stage" class="text-xs text-n-slate-11">
-                {{ enumLabel(t, STAGE_LABELS, stage) }}
-              </p>
-              <p data-testid="card-owner" class="text-xs text-n-slate-11">
-                {{ t('SCANSOLO.PIPELINE_BOARD.OWNER_LABEL') }}:
-                {{ ownerLabel(opportunity) }}
-              </p>
-              <p class="text-xs text-n-slate-11">
-                {{ t('SCANSOLO.PIPELINE_BOARD.LAST_INTERACTION_LABEL') }}:
-                <ScanSoloTime
-                  data-testid="card-last-interaction"
-                  :value="opportunity.lastCustomerInteractionAt"
-                  :fallback="t('SCANSOLO.COMMON.NOT_AVAILABLE')"
-                />
-              </p>
-              <p class="text-xs text-n-slate-11">
-                {{ t('SCANSOLO.PIPELINE_BOARD.NEXT_FOLLOW_UP_LABEL') }}:
-                <ScanSoloTime
-                  data-testid="card-next-follow-up"
-                  :value="opportunity.nextFollowUpAt"
-                  :fallback="t('SCANSOLO.PIPELINE_BOARD.NOT_SCHEDULED')"
-                />
-              </p>
-              <p data-testid="card-stale" class="text-xs text-n-amber-11">
-                {{
-                  isStale(opportunity)
-                    ? t('SCANSOLO.PIPELINE_BOARD.STALE_INDICATOR')
-                    : ''
-                }}
-              </p>
-              <!-- Expanding the admin details must not open the lead. -->
-              <div @click.stop>
-                <TechnicalDetails :items="cardTechnicalItems(opportunity)" />
+                  {{ opportunity.cityUf }}
+                </p>
+                <p
+                  v-if="commercialStatusLabel(opportunity)"
+                  data-testid="card-commercial-status"
+                  class="text-xs font-medium text-n-blue-11"
+                >
+                  {{ commercialStatusLabel(opportunity) }}
+                </p>
+                <p
+                  v-if="daysWithoutInteraction(opportunity) >= 1"
+                  data-testid="card-no-interaction"
+                  class="text-xs text-n-amber-11"
+                >
+                  {{
+                    t('SCANSOLO.PIPELINE_BOARD.NO_INTERACTION_DAYS', {
+                      days: daysWithoutInteraction(opportunity),
+                    })
+                  }}
+                </p>
+                <p data-testid="card-stage" class="text-xs text-n-slate-11">
+                  {{ enumLabel(t, STAGE_LABELS, stage) }}
+                </p>
+                <p data-testid="card-owner" class="text-xs text-n-slate-11">
+                  {{ t('SCANSOLO.PIPELINE_BOARD.OWNER_LABEL') }}:
+                  {{ ownerLabel(opportunity) }}
+                </p>
+                <p class="text-xs text-n-slate-11">
+                  {{ t('SCANSOLO.PIPELINE_BOARD.LAST_INTERACTION_LABEL') }}:
+                  <ScanSoloTime
+                    data-testid="card-last-interaction"
+                    :value="opportunity.lastCustomerInteractionAt"
+                    :fallback="t('SCANSOLO.COMMON.NOT_AVAILABLE')"
+                  />
+                </p>
+                <p class="text-xs text-n-slate-11">
+                  {{ t('SCANSOLO.PIPELINE_BOARD.NEXT_FOLLOW_UP_LABEL') }}:
+                  <ScanSoloTime
+                    data-testid="card-next-follow-up"
+                    :value="opportunity.nextFollowUpAt"
+                    :fallback="t('SCANSOLO.PIPELINE_BOARD.NOT_SCHEDULED')"
+                  />
+                </p>
+                <p data-testid="card-stale" class="text-xs text-n-amber-11">
+                  {{
+                    isStale(opportunity)
+                      ? t('SCANSOLO.PIPELINE_BOARD.STALE_INDICATOR')
+                      : ''
+                  }}
+                </p>
+                <!-- Expanding the admin details must not open the lead. -->
+                <div @click.stop>
+                  <TechnicalDetails :items="cardTechnicalItems(opportunity)" />
+                </div>
               </div>
             </div>
           </div>

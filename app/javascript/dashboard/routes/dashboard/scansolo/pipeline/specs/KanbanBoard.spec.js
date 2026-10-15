@@ -194,6 +194,39 @@ describe('KanbanBoard', () => {
     ).toBe(false);
   });
 
+  it('scrolls the board horizontally with fixed-width columns for every stage', async () => {
+    const wrapper = mountBoard();
+    await flushPromises();
+
+    const page = wrapper.find('[data-testid="scansolo-page-scroll"] > div');
+    expect(page.classes()).toEqual(
+      expect.arrayContaining(['flex', 'flex-col', 'h-full', 'min-h-0'])
+    );
+    const board = wrapper.find('[data-testid="pipeline-board"]');
+    expect(board.classes()).toEqual(
+      expect.arrayContaining(['flex', 'flex-1', 'min-h-0', 'overflow-x-auto'])
+    );
+    const columns = board.findAll('[data-testid="pipeline-column"]');
+    expect(columns.map(column => column.attributes('data-stage'))).toEqual([
+      'novo_lead',
+      'em_contato',
+      'em_qualificacao',
+      'qualificado',
+      'proposta_enviada',
+      'negociacao',
+      'ganho',
+      'perdido',
+    ]);
+    columns.forEach(column => {
+      expect(column.classes()).toEqual(
+        expect.arrayContaining(['flex-shrink-0', 'w-72', 'min-h-0'])
+      );
+      expect(
+        column.find('[data-testid="pipeline-column-cards"]').classes()
+      ).toEqual(expect.arrayContaining(['min-h-0', 'overflow-y-auto']));
+    });
+  });
+
   it('renders the loading, empty and error states (UI-09)', async () => {
     ScanSoloPipelineOpportunitiesAPI.get.mockReturnValueOnce(
       new Promise(() => {})

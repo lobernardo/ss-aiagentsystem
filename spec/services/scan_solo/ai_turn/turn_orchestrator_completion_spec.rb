@@ -94,7 +94,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     expect(lead_state.fields.slice(*last_fields.keys).transform_values { |field| field['status'] }.values.uniq).to eq(['confirmado'])
     expect(lead_state).to have_attributes(qualification_status: 'concluida', next_action: 'proposta')
     expect(opportunity.reload.stage).to eq('qualificado')
-    expect(replies.sole.content).to eq(I18n.t('scan_solo.qualification.completed_reply.quote'))
+    expect(replies.sole.content).to eq(I18n.t('scan_solo.qualification.completed_reply'))
     expect(ScanSolo::QuoteRequest.count).to eq(0)
     expect(ScanSolo::QuoteRequestJob).to have_been_enqueued.with(opportunity.id).once
   end
@@ -106,7 +106,7 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     quote_request = ScanSolo::QuoteRequest.sole
     expect(quote_request).to have_attributes(opportunity_id: opportunity.id, status: 'awaiting_reply', sent_at: be_present)
     sent = ScanSolo::AuditEvent.where(event_type: 'quote_request.sent').sole
-    expect(replies.pluck(:content)).to eq([I18n.t('scan_solo.qualification.completed_reply.quote'), I18n.t('scan_solo.quote.customer_notice')])
+    expect(replies.pluck(:content)).to eq([I18n.t('scan_solo.qualification.completed_reply'), I18n.t('scan_solo.quote.customer_notice')])
     expect(replies.last.id).to eq(quote_request.customer_notice_message_id)
     expect(replies.last.created_at).to be >= sent.created_at
   end

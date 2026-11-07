@@ -82,7 +82,7 @@ RSpec.describe 'ScanSolo lead state turn' do # rubocop:disable RSpec/DescribeCla
                                         'responda-a antes de qualquer pergunta de qualificação.')
   end
 
-  it '(c) rejects both attempts with qualification_closed once the qualification is concluded (RF-22)' do
+  it '(c) rejects both attempts with qualification_closed once the qualification is concluded and answers with the fallback (RF-22)' do
     run_turn(create_message('800 m² e 30 minutos de integração'), fields_action('area' => '800 m²', 'tempo_integracao' => '30 minutos'))
     expect(lead_state).to be_concluida
     payloads.clear
@@ -92,8 +92,9 @@ RSpec.describe 'ScanSolo lead state turn' do # rubocop:disable RSpec/DescribeCla
     expect(payloads.size).to eq(2)
     expect(payloads.map { |payload| lead_state_section(payload) }).to all(include('Próximos campos elegíveis: nenhum'))
     expect(turn.context_snapshot['output_regeneration']).to eq('first_attempt_violation' => 'qualification_closed')
-    expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: qualification_closed')
-    expect(ai_replies.count).to eq(1)
+    expect(turn.context_snapshot['output_fallback']).to eq('violation' => 'qualification_closed')
+    expect(turn).to be_succeeded
+    expect(ai_replies.order(:id).last.content).to eq(I18n.t('scan_solo.qualification.fallback_reply.concluded'))
   end
 
   it '(d) regenerates once with the violation and sends 1 message (RF-11a)' do
@@ -110,7 +111,7 @@ RSpec.describe 'ScanSolo lead state turn' do # rubocop:disable RSpec/DescribeCla
     expect(ai_replies.where('messages.id > ?', turn.message_id).count).to eq(1)
   end
 
-  it '(e) persists 0 PDF fields and 0 messages after 2 rejections (RF-05, RF-19)' do
+  it '(e) keeps the PDF fields as inferido and answers with the fallback after 2 rejections (RF-05, RF-19)' do
     message = create_message('Segue o convite')
     attachment = message.attachments.new(account_id: account.id, file_type: :file)
     attachment.file.attach(io: Rails.root.join('spec/fixtures/files/scansolo/lead_state_company.pdf').open,
@@ -122,10 +123,10 @@ RSpec.describe 'ScanSolo lead state turn' do # rubocop:disable RSpec/DescribeCla
     expect(payloads.size).to eq(2)
     expect(payloads.first[:messages]).to include(role: 'user', content: "Segue o convite\n[Anexo PDF: lead_state_company.pdf, extração: sim]")
     expect(lead_state_section(payloads.first)).to include('CNPJ: 12.345.678/0001-90 (inferido)')
-    expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: question_limit')
-    expect(lead_state.fields.slice('cnpj', 'empresa', 'endereco_obra').values.pluck('status')).to all(eq('faltante'))
-    expect(ScanSolo::LeadStateEvent.where(key: %w[cnpj empresa endereco_obra])).to be_empty
-    expect(ai_replies.count).to eq(0)
+    expect(turn).to be_succeeded
+    expect(turn.context_snapshot['output_fallback']).to eq('violation' => 'question_limit')
+    expect(lead_state.fields['cnpj']).to include('value' => '12.345.678/0001-90', 'status' => 'inferido')
+    expect(ai_replies.count).to eq(1)
   end
 
   it '(f) writes a map URL as inferido link_local from the message with 0 HTTP requests (RF-18a)' do
@@ -169,7 +170,7 @@ RSpec.describe 'ScanSolo lead state turn' do # rubocop:disable RSpec/DescribeCla
       Rake::Task['scansolo:backfill_lead_states'].reenable
     end
 
-    it 'is not requalified: both attempts asking nome are rejected with qualification_closed and 0 messages' do
+    it 'is not requalified: both attempts asking nome are rejected with qualification_closed and only the fallback is sent' do
       expect { Rake::Task['scansolo:backfill_lead_states'].invoke }.to output("Lead states created: 1\n").to_stdout
       expect(lead_state).to be_concluida
       expect(lead_state.fields['nome']).to include('value' => 'Ana', 'status' => 'inferido')
@@ -178,8 +179,8 @@ RSpec.describe 'ScanSolo lead state turn' do # rubocop:disable RSpec/DescribeCla
 
       expect(payloads.size).to eq(2)
       expect(payloads.map { |payload| lead_state_section(payload) }).to all(include('Próximos campos elegíveis: nenhum'))
-      expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: qualification_closed')
-      expect(ai_replies.count).to eq(0)
+      expect(turn.context_snapshot['output_fallback']).to eq('violation' => 'qualification_closed')
+      expect(ai_replies.sole.content).to eq(I18n.t('scan_solo.qualification.fallback_reply.concluded'))
     end
   end
 end

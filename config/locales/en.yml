@@ -856,9 +856,11 @@ en:
           agent: 'Atendimento'
     qualification:
       not_informed_by_client: 'não informado pelo cliente'
-      completed_reply:
-        quote: 'Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico/comercial preparar o orçamento.'
-        other: 'Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico dar sequência ao seu atendimento.'
+      completed_reply: 'Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico/comercial preparar o orçamento.'
+      fallback_reply:
+        concluded: 'Certo, obrigado! Qualquer informação nova segue para o nosso time técnico/comercial junto com o seu pedido.'
+        ask: 'Certo! Para seguir com o orçamento, me informe: %{fields}. Se não souber algum, pode responder "não sei".'
+        generic: 'Certo! Me conta como posso te ajudar.'
     amount_in_words:
       units: ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove']
       teens: ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove']

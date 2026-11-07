@@ -27,24 +27,35 @@
 #    pending field must be asked (proposta-template-local RF-38 c);
 # 5. an approved reply is sent through ScanSolo::AiTurn::ResponseSender.
 # An exception propagates, so the caller rolls the whole turn back.
+#
+# The fallback attempt (`fallback: true`), run by the orchestrator once the
+# model's replies were blocked, keeps the model's actions and replaces its
+# reply with a fixed one built from the updated lead state, so the customer
+# always gets an answer: the completion reply when the attempt concludes, a
+# notice that new data goes with the request once concluded, the next
+# eligible field(s) of a budget intent (every relevant pending key in
+# `em_bloco`), else a generic question.
 class ScanSolo::AiTurn::AttemptRunner
   Result = Struct.new(:status, :violation, keyword_init: true)
 
   TURN_SCOPED_PARAMS = ScanSolo::AiTurn::PromptBuilder::TURN_SCOPED_PARAMS
   NEGOTIATION_STAGES = %w[proposta_enviada negociacao].freeze
+  LEAD_STATE_LABELS = ScanSolo::AiTurn::LeadStatePrompt::CATALOG_LABELS
 
   # rubocop:disable Metrics/ParameterLists
-  def self.call(turn:, message:, config:, result:, opportunity:, pending_updates:)
-    new(turn: turn, message: message, config: config, result: result, opportunity: opportunity, pending_updates: pending_updates).call
+  def self.call(turn:, message:, config:, result:, opportunity:, pending_updates:, fallback: false)
+    new(turn: turn, message: message, config: config, result: result, opportunity: opportunity, pending_updates: pending_updates,
+        fallback: fallback).call
   end
 
-  def initialize(turn:, message:, config:, result:, opportunity:, pending_updates:)
+  def initialize(turn:, message:, config:, result:, opportunity:, pending_updates:, fallback: false)
     @turn = turn
     @message = message
     @config = config
     @result = result
     @opportunity = opportunity
     @pending_updates = pending_updates
+    @fallback = fallback
   end
   # rubocop:enable Metrics/ParameterLists
 
@@ -54,7 +65,11 @@ class ScanSolo::AiTurn::AttemptRunner
     ActiveRecord::Base.transaction(requires_new: true) do
       apply_pending_updates! if opportunity
       evidence = execute_actions
-      reply_completion! if opportunity && ScanSolo::LeadState::CompletionService.call(opportunity: opportunity, turn: turn)
+      if opportunity && ScanSolo::LeadState::CompletionService.call(opportunity: opportunity, turn: turn)
+        reply_completion!
+      elsif fallback
+        reply_fallback!
+      end
       request_negotiation! if negotiation_requested?(evidence)
 
       validation = validate_reply
@@ -72,7 +87,7 @@ class ScanSolo::AiTurn::AttemptRunner
 
   private
 
-  attr_reader :turn, :message, :config, :result, :opportunity, :pending_updates
+  attr_reader :turn, :message, :config, :result, :opportunity, :pending_updates, :fallback
 
   def apply_pending_updates!
     writer = ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
@@ -114,11 +129,35 @@ class ScanSolo::AiTurn::AttemptRunner
   end
 
   def reply_completion!
-    reply_key = opportunity.lead_state.next_action == 'proposta' ? 'quote' : 'other'
     @result = result.dup.tap do |reply|
-      reply.content = I18n.t("scan_solo.qualification.completed_reply.#{reply_key}")
+      reply.content = I18n.t('scan_solo.qualification.completed_reply')
       reply.asked_fields = []
     end
+  end
+
+  def reply_fallback!
+    lead_state = ScanSolo::LeadState::Projection.call(opportunity: opportunity.reload, config: config) if opportunity
+    keys = fallback_keys(lead_state)
+    content = if lead_state&.qualification&.fetch(:status) == 'concluida'
+                I18n.t('scan_solo.qualification.fallback_reply.concluded')
+              elsif keys.any?
+                I18n.t('scan_solo.qualification.fallback_reply.ask', fields: keys.map { |key| LEAD_STATE_LABELS.fetch(key) }.join(', '))
+              else
+                I18n.t('scan_solo.qualification.fallback_reply.generic')
+              end
+
+    @result = result.dup.tap do |reply|
+      reply.content = content
+      reply.asked_fields = keys
+    end
+  end
+
+  def fallback_keys(lead_state)
+    return [] unless lead_state&.qualification&.fetch(:status) == 'em_andamento'
+    return [] unless ScanSolo::AiTurn::ContextAssembler::BUDGET_INTENTS.include?(lead_state.intent)
+    return lead_state.relevant_pending_keys if lead_state.collection[:mode] == 'em_bloco'
+
+    lead_state.eligible_keys.first(1)
   end
 
   def action_params(action_id, params)

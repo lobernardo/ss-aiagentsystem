@@ -117,10 +117,10 @@ RSpec.describe 'ScanSolo qualification with nao_informado' do # rubocop:disable 
       expect(ScanSolo::QuoteRequestJob).to have_been_enqueued.with(opportunity.id).once
       expect(ScanSolo::AuditEvent.where(event_type: 'lead_state.qualification_completed').count).to eq(1)
 
-      # RF-34: the initial explanation reaches only the 1st turn that asks fields.
+      # RF-34: the list offer reaches only the 1st turn.
       expect(payloads.size).to eq(5)
-      expect(payloads.count { |payload| payload[:system].include?(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_INTRO) }).to eq(1)
-      expect(payloads.first[:system]).to include(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_INTRO)
+      expect(payloads.count { |payload| payload[:system].include?(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_OFFER) }).to eq(1)
+      expect(payloads.first[:system]).to include(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_OFFER)
       expect(conversation.messages.outgoing.where(content: depth_question).count).to eq(1)
     end
 
@@ -132,7 +132,7 @@ RSpec.describe 'ScanSolo qualification with nao_informado' do # rubocop:disable 
       expect(section(payload, 'Regras do agente')).to include("Instruções: #{instructions}")
       expect(section(payload, 'Regras fixas de atendimento')).to end_with("- #{ScanSolo::AiTurn::PromptBuilder::CONTINUITY_RULES.last}")
       expect(ScanSolo::AiTurn::PromptBuilder::CONTINUITY_RULES.last).to include('registre o campo com status nao_informado')
-      expect(section(payload, 'Estado do lead')).to end_with(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_INTRO)
+      expect(section(payload, 'Estado do lead')).to end_with(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_OFFER)
       expect(received_configs.map(&:id)).to eq([published.id])
       expect(ScanSolo::AiAgent::ModelResolver.resolve(config: received_configs.sole)).to include(provider: 'openai', model: 'gpt-4.1')
       expect(published).to have_attributes(allowed_inbox_ids: [inbox.id], opt_out_keywords: %w[PARAR SAIR], enabled: true)
@@ -156,15 +156,13 @@ RSpec.describe 'ScanSolo qualification with nao_informado' do # rubocop:disable 
     end
   end
 
-  describe 'the one-time bulk offer (RF-35, RF-36)' do
-    it 'instructs the offer in exactly 1 sent turn of 8 and records 1 collection_offered_at, the model taking no action', :aggregate_failures do
-      run_turn('Preciso de um orçamento', { fixture_asked_fields: ['profundidade'] })
-      run_turn('Ainda estou vendo', { fixture_asked_fields: ['area'] })
-      6.times { |index| run_turn("Mensagem #{index + 3}") }
+  describe 'the one-time list offer (RF-35, RF-36)' do
+    it 'instructs the offer in exactly the 1st sent turn of 8 and records 1 collection_offered_at, the model taking no action', :aggregate_failures do
+      8.times { |index| run_turn("Mensagem #{index + 1}") }
 
       expect(sent_turns.count).to eq(8)
       expect(sent_turns.count { |turn| turn.context_snapshot['collection_offer_instructed'] }).to eq(1)
-      expect(sent_turns.third.context_snapshot['collection_offer_instructed']).to be(true)
+      expect(sent_turns.first.context_snapshot['collection_offer_instructed']).to be(true)
       expect(payloads.count { |payload| payload[:system].include?(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_OFFER) }).to eq(1)
       expect(offered_events.count).to eq(1)
       expect(lead_state.collection_offered_at).to be_present
@@ -172,11 +170,8 @@ RSpec.describe 'ScanSolo qualification with nao_informado' do # rubocop:disable 
     end
 
     it 'brings the instruction back on the next turn when the instructed reply fails to send', :aggregate_failures do
-      run_turn('Preciso de um orçamento', { fixture_asked_fields: ['profundidade'] })
-      run_turn('Ainda estou vendo', { fixture_asked_fields: ['area'] })
-
       allow(ScanSolo::AiTurn::ResponseSender).to receive(:call).and_raise(StandardError, 'falha simulada no envio')
-      failed = run_turn('Oi?')
+      failed = run_turn('Preciso de um orçamento')
       expect(failed).to be_failed
       expect(failed.context_snapshot['collection_offer_instructed']).to be(true)
       expect(lead_state.collection_offered_at).to be_nil
@@ -201,15 +196,15 @@ RSpec.describe 'ScanSolo qualification with nao_informado' do # rubocop:disable 
     let(:relevant) { %w[area metragem profundidade integracao_seguranca] }
 
     before do
-      run_turn('Preciso de um orçamento', { fixture_asked_fields: ['profundidade'] })
-      run_turn('Ainda estou vendo', { fixture_asked_fields: ['area'] })
-      run_turn('Ok', { fixture_response: 'Se preferir, posso te mandar tudo de uma vez. Quer assim?' })
+      run_turn('Preciso de um orçamento', { fixture_response: 'Para preparar o orçamento, preciso de alguns dados. Posso te mandar a lista?' })
     end
 
     it 'asks exactly the relevant pending set after the acceptance and never asks profundidade after "não sei"', :aggregate_failures do
       accepted = run_turn('Sim, pode mandar tudo',
                           { fixture_actions: [mode_action('em_bloco')], fixture_asked_fields: [*relevant, 'cnpj'] },
                           { fixture_actions: [mode_action('em_bloco')], fixture_asked_fields: relevant })
+      expect(section(payloads[-2], 'Estado do lead')).to include(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_ANSWER,
+                                                                  *relevant.map { |key| "- #{key} (" })
       expect(accepted).to be_succeeded
       expect(accepted.context_snapshot['output_regeneration']).to eq('first_attempt_violation' => 'bulk_out_of_scope')
       expect(accepted.context_snapshot['asked_fields']).to match_array(relevant)
@@ -241,12 +236,10 @@ RSpec.describe 'ScanSolo qualification with nao_informado' do # rubocop:disable 
   end
 
   describe 'an old lead state and the sole writer (RF-39)' do
-    it 'offers the bulk collection to a state whose collection columns are NULL' do
+    it 'offers the list to a state whose collection columns are NULL' do
       expect(ScanSolo::LeadState.where(id: lead_state.id).pick(:collection_offered_at, :collection_mode)).to eq([nil, nil])
 
-      run_turn('Preciso de um orçamento', { fixture_asked_fields: ['profundidade'] })
-      run_turn('Ainda estou vendo', { fixture_asked_fields: ['area'] })
-      offered = run_turn('Ok')
+      offered = run_turn('Preciso de um orçamento')
 
       expect(offered.context_snapshot['collection_offer_instructed']).to be(true)
       expect(section(payloads.last, 'Estado do lead')).to include(ScanSolo::AiTurn::LeadStatePrompt::COLLECTION_OFFER)

@@ -29,11 +29,9 @@ RSpec.describe 'ScanSolo backend locale' do
     )
   end
 
-  it 'holds the completion replies, an intent that never claims the request was sent' do
-    expect(I18n.t('scan_solo.qualification.completed_reply.quote'))
+  it 'holds the completion reply, an intent that never claims the request was sent' do
+    expect(I18n.t('scan_solo.qualification.completed_reply'))
       .to eq('Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico/comercial preparar o orçamento.')
-    expect(I18n.t('scan_solo.qualification.completed_reply.other'))
-      .to eq('Perfeito, recebi as informações. Vou encaminhar agora para o nosso time técnico dar sequência ao seu atendimento.')
   end
 
   it 'interpolates the CT-03 quote request subject' do

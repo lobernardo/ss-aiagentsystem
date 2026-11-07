@@ -93,27 +93,49 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
       expect(ScanSolo::AgentActionExecution.count).to eq(1)
     end
 
-    it 'fails with the 2nd violation and 0 changes after 2 rejections' do
+    it 'answers with the fallback reply and keeps the 2nd attempt changes after 2 rejections' do
       attach_pdf('lead_state_company.pdf')
       responses << { fixture_asked_fields: ['cidade_uf'] }
-      responses << { fixture_asked_fields: %w[bairro area cargo] }
+      responses << { fixture_asked_fields: %w[bairro area cargo],
+                     fixture_actions: [{ 'action_id' => 'private_note', 'params' => { 'content' => 'segunda' } }] }
 
-      expect { described_class.call(message: message, llm_provider: provider) }
-        .not_to(change { [opportunity.lead_state.reload.fields, ScanSolo::LeadStateEvent.count] })
+      expect { described_class.call(message: message, llm_provider: provider) }.to change(ScanSolo::LeadStateEvent, :count)
 
       expect(calls.size).to eq(2)
-      expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: question_limit')
-      expect(ai_replies.count).to eq(0)
+      expect(turn).to have_attributes(invocation_status: 'succeeded', failure_reason: nil)
+      expect(turn.context_snapshot).to include('output_fallback' => { 'violation' => 'question_limit' }, 'asked_fields' => [])
+      expect(ai_replies.sole.content).to eq(I18n.t('scan_solo.qualification.fallback_reply.generic'))
+      expect(private_notes).to eq(['segunda'])
     end
 
-    it 'fails a price claim without regenerating' do
+    it 'answers a price claim with the fallback reply without regenerating' do
       responses << { fixture_response: 'O serviço custa R$ 5000' }
 
       described_class.call(message: message, llm_provider: provider)
 
       expect(calls.size).to eq(1)
-      expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: price')
-      expect(ai_replies.count).to eq(0)
+      expect(turn).to be_succeeded
+      expect(turn.context_snapshot['output_fallback']).to eq('violation' => 'price')
+      expect(ai_replies.sole.content).not_to include('R$')
+    end
+
+    it 'asks the next eligible field in the fallback reply of a budget intent' do
+      ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state).set_intent!(intent: 'orcamento', source_message_id: message.id)
+      responses << { fixture_response: 'O serviço custa R$ 5000' }
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(turn.context_snapshot['asked_fields']).to eq(['metragem'])
+      expect(ai_replies.sole.content).to eq(I18n.t('scan_solo.qualification.fallback_reply.ask', fields: 'Metragem'))
+    end
+
+    it 'tells a concluded lead that new data goes with the request' do
+      opportunity.lead_state.update!(qualification_status: :concluida, qualification_completed_at: Time.current)
+      responses << { fixture_response: 'O serviço custa R$ 5000' }
+
+      described_class.call(message: message, llm_provider: provider)
+
+      expect(ai_replies.sole.content).to eq(I18n.t('scan_solo.qualification.fallback_reply.concluded'))
     end
 
     it 'succeeds with a corrupt PDF and records the reason in the snapshot (RF-20)' do
@@ -164,15 +186,15 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
   end
 
   describe 'RF-06: restricted_information in the model output' do
-    it 'fails the turn and sends nothing' do
+    it 'never sends the restricted output, only the fallback reply' do
       ScanSolo::AiAgentConfig.draft_for!(account).update!(restricted_information: ['margem interna'])
       ScanSolo::AiAgent::PublishService.new(account: account).call
       provider = ->(**kwargs) { ScanSolo::TestMode::MockLlmProvider.call(**kwargs, fixture_response: 'Nossa Margem Interna é 40%') }
 
       described_class.call(message: message, llm_provider: provider)
 
-      expect(turn).to have_attributes(invocation_status: 'failed', failure_reason: 'output validation blocked: restricted_information')
-      expect(ai_replies.count).to eq(0)
+      expect(turn.context_snapshot['output_fallback']).to eq('violation' => 'restricted_information')
+      expect(ai_replies.sole.content).to eq(I18n.t('scan_solo.qualification.fallback_reply.generic'))
     end
   end
 

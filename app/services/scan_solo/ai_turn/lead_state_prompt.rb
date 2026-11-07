@@ -8,10 +8,11 @@
 # allowed this turn.
 #
 # Collection UX (proposta-template-local RF-34, RF-36, RF-38 d): code-constant
-# instructions, never config -- the initial explanation while no collection
-# round happened, the one-time bulk offer once the ContextAssembler flags it,
-# and, in `em_bloco` with the qualification `em_andamento`, asking every
-# eligible field in a single message with the "não sei" notice.
+# instructions, never config -- the up-front offer of the list of needed data
+# once the ContextAssembler flags it, then, while the lead has not answered
+# it, the exact list to send on acceptance, and, in `em_bloco` with the
+# qualification `em_andamento`, asking every eligible field in a single
+# message with the "não sei" notice.
 class ScanSolo::AiTurn::LeadStatePrompt
   # RF-15: one script line per intent (and for the not yet classified one);
   # the intent never changes which fields are required.
@@ -32,11 +33,15 @@ class ScanSolo::AiTurn::LeadStatePrompt
   SUMMARY_EXCEPTION = 'exceto se esta resposta concluir a qualificação, registrar next_action, pedir human_handoff, ' \
                       'mudar a etapa ou declarar interpretation_risk'.freeze
 
-  COLLECTION_INTRO = 'Antes da primeira pergunta de qualificação, explique de forma natural, com suas palavras, o sentido de: ' \
-                     '"Para preparar seu orçamento corretamente, preciso coletar algumas informações rápidas sobre o serviço."'.freeze
-  COLLECTION_OFFER = 'Ofereça uma única vez, de forma natural, o sentido de: "Se preferir, posso te mandar de uma vez todas as ' \
-                     'informações que ainda preciso e você responde tudo junto. Quer assim?" Registre a resposta do cliente em ' \
-                     'lead_state_update.collection_mode (em_bloco se aceitar, progressiva se recusar).'.freeze
+  COLLECTION_OFFER = 'Antes de perguntar qualquer dado do orçamento, explique de forma natural, com suas palavras, o sentido de: ' \
+                     '"Para o comercial preparar o orçamento mais personalizado possível, preciso de algumas informações sobre o ' \
+                     'serviço. Posso te mandar a lista do que preciso?" Nesta resposta não pergunte nenhum campo.'.freeze
+  COLLECTION_ANSWER = 'O cliente já recebeu a oferta da lista. Se ele aceitar, registre lead_state_update.collection_mode em_bloco e, ' \
+                      'nesta mesma resposta, peça numa única mensagem, em lista, todos estes campos (campos do mesmo assunto podem ' \
+                      'ficar na mesma linha, todos em asked_fields), avisando que pode responder "não sei", "não tenho" ou ' \
+                      '"não se aplica":'.freeze
+  COLLECTION_ANSWER_PROGRESSIVE = 'Se ele preferir responder aos poucos, registre collection_mode progressiva e siga perguntando ' \
+                                  'os campos elegíveis.'.freeze
   COLLECTION_BULK = 'Coleta em bloco: peça todos os próximos campos elegíveis numa única mensagem e avise que o cliente pode ' \
                     'responder "não sei", "não tenho" ou "não se aplica".'.freeze
 
@@ -103,11 +108,18 @@ class ScanSolo::AiTurn::LeadStatePrompt
   end
 
   def collection_lines
+    collecting = state[:qualification][:status] == 'em_andamento'
+    awaiting_answer = collecting && state[:collection][:offered_at].present? && state[:collection][:mode].nil?
+
     [
-      (COLLECTION_INTRO if state[:collection_intro]),
       (COLLECTION_OFFER if state[:collection_offer_instructed]),
-      (COLLECTION_BULK if state[:collection][:mode] == 'em_bloco' && state[:qualification][:status] == 'em_andamento')
+      (collection_answer if awaiting_answer),
+      (COLLECTION_BULK if collecting && state[:collection][:mode] == 'em_bloco')
     ].compact
+  end
+
+  def collection_answer
+    "#{COLLECTION_ANSWER}\n#{list(state[:relevant_pending_keys].map { |key| field_reference(key) })}\n#{COLLECTION_ANSWER_PROGRESSIVE}"
   end
 
   def field_reference(key)

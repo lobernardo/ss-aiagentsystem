@@ -26,7 +26,10 @@
 #
 # A 1st-attempt violation in OutputValidator::REGENERABLE_VIOLATIONS is kept
 # in `context_snapshot['output_regeneration']` and the model is called once
-# more with it; a 2nd rejection, or any other violation, fails the turn with
+# more with it; a 2nd rejection, or any other violation, is kept in
+# `context_snapshot['output_fallback']` and runs the fallback attempt: the
+# last model actions with a fixed reply (AttemptRunner), so the customer is
+# never left without an answer. Only a blocked fallback fails the turn with
 # 0 messages. An action exception rolls every change of the turn back and
 # fails it (all-or-nothing). The attachment extraction evidence (RF-20) is
 # in `context_snapshot['attachment_extraction']` whatever the outcome.
@@ -101,15 +104,21 @@ class ScanSolo::AiTurn::TurnOrchestrator
 
       previous_violation = outcome.violation.to_s
       regenerable = attempt.zero? && ScanSolo::AiTurn::OutputValidator::REGENERABLE_VIOLATIONS.include?(outcome.violation)
-      return fail!(turn, "output validation blocked: #{previous_violation}") unless regenerable
+      return send_fallback(turn, config, result, pending_updates, previous_violation) unless regenerable
 
       turn.update!(context_snapshot: turn.context_snapshot.merge('output_regeneration' => { 'first_attempt_violation' => previous_violation }))
     end
   end
 
+  def send_fallback(turn, config, result, pending_updates, violation)
+    turn.update!(context_snapshot: turn.context_snapshot.merge('output_fallback' => { 'violation' => violation }))
+    outcome = send_response(turn, config, result, pending_updates, fallback: true)
+    fail!(turn, "output validation blocked: #{violation}") if outcome&.status == :blocked
+  end
+
   # Returns the AttemptRunner result, or nil when the turn is no longer
   # pending or the recheck suppressed it.
-  def send_response(turn, config, result, pending_updates)
+  def send_response(turn, config, result, pending_updates, fallback: false)
     reason = nil
     outcome = nil
     extension = ScanSolo::ConversationExtension.resolve_for(conversation)
@@ -122,7 +131,7 @@ class ScanSolo::AiTurn::TurnOrchestrator
       next if reason
 
       outcome = ScanSolo::AiTurn::AttemptRunner.call(turn: turn, message: message, config: config, result: result, opportunity: opportunity,
-                                                     pending_updates: pending_updates)
+                                                     pending_updates: pending_updates, fallback: fallback)
     end
 
     suppress!(turn, reason) if reason

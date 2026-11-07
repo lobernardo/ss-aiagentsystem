@@ -110,7 +110,7 @@ Models: `ScanSolo::LeadState`, `LeadStateEvent`. Sole writer: `ScanSolo::LeadSta
 - `qualification_status`: `em_andamento` → `concluida` once, and never reopens (`Writer#complete!` raises on a second call).
 - `authorized_actions` is append-only, with 1 entry per action from `NEXT_ACTIONS`.
 
-Default next action by intent (`ScanSolo::LeadState::DEFAULT_NEXT_ACTION_BY_INTENT`):
+Default next action by intent while the qualification is open (`ScanSolo::LeadState::DEFAULT_NEXT_ACTION_BY_INTENT`); the completion always records `proposta`:
 
 | Intent | Next action |
 |---|---|
@@ -135,9 +135,9 @@ Default next action by intent (`ScanSolo::LeadState::DEFAULT_NEXT_ACTION_BY_INTE
 
 1. It needs a non-empty required list with every field `confirmado` or `nao_informado` (`inferido` does not count). An empty list never completes.
 2. `complete!` sets `concluida`, and the stage advances per `STAGE_PATH` (stages at or past `qualificado` stay).
-3. It keeps the next action the model recorded this turn, else records the intent default.
+3. It records the next action `proposta`, whatever the intent or the model recorded: every concluded qualification goes to the commercial team.
 4. It audits `lead_state.qualification_completed` with the turn correlation id.
-5. When next action is `proposta`, `QuoteRequestJob` is enqueued after all transactions commit.
+5. `QuoteRequestJob` is enqueued after all transactions commit; the attempt answers with the single `scan_solo.qualification.completed_reply`.
 
 ### AI turn lifecycle
 
@@ -191,8 +191,8 @@ In bulk collection (`collection_mode` `em_bloco` with the qualification `em_anda
 
 `ScanSolo::AiTurn::ContextAssembler` + `LeadStatePrompt` + fixed rules in `PromptBuilder` (appended to the published instructions, never replacing them):
 
-- `collection_rounds` = sent turns of the conversation (since the lead state) whose reply asked at least 1 field (`context_snapshot['asked_fields']`, stored by `ResponseSender` for the reply actually sent).
-- With a budget intent (`orcamento`, `convite_cotacao`) and the qualification `em_andamento`: 0 rounds → initial explanation (`collection_intro`); 2+ rounds and no offer recorded → the turn carries the one-time bulk offer instruction (`collection_offer_instructed`, also stored in the `context_snapshot`). When that turn's reply is sent, `ResponseSender` records `collection_offered_at` in the same transaction, whatever the model wrote.
+- With a budget intent (`orcamento`, `convite_cotacao`) and the qualification `em_andamento`, while no offer is recorded, the turn carries the up-front list offer (`COLLECTION_OFFER`: why the data is needed + "posso te mandar a lista?", no field asked; `collection_offer_instructed`, also stored in the `context_snapshot`). When that turn's reply is sent, `ResponseSender` records `collection_offered_at` in the same transaction, whatever the model wrote.
+- While the offer is recorded and no mode chosen, the prompt carries `COLLECTION_ANSWER` with the exact relevant pending keys to ask on acceptance (`em_bloco`), or `progressiva` on refusal.
 - Progressive collection asks ≤ 2 fields per turn. `em_bloco` asks the whole relevant pending set at once: `faltante` published required fields ∪ `faltante` keys of the service's pending items in `config/scan_solo/quote_request_email.yml`.
 - The required list always comes from the published config (`required_qualification_fields`); nothing here changes `AiAgentConfig`.
 ### Agent action registry and executor

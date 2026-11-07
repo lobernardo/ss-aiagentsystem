@@ -25,7 +25,7 @@ RSpec.describe ScanSolo::LeadState::CompletionService do
     it 'concludes, moves em_qualificacao to qualificado and records the next action and one audit event' do
       described_class.call(opportunity: opportunity, turn: turn)
 
-      expect(lead_state).to have_attributes(qualification_status: 'concluida', next_action: 'aguardar_cliente',
+      expect(lead_state).to have_attributes(qualification_status: 'concluida', next_action: 'proposta',
                                             next_action_source_message_id: message.id)
       expect(lead_state.qualification_completed_at).to be_present
       expect(opportunity.reload.stage).to eq('qualificado')
@@ -76,17 +76,16 @@ RSpec.describe ScanSolo::LeadState::CompletionService do
       end
     end
 
-    it 'records the intent default when the model recorded no next action in the turn (RF-15)' do
+    it 'records proposta whatever the intent' do
       writer.set_intent!(intent: 'visita', source_message_id: message.id)
 
       described_class.call(opportunity: opportunity, turn: turn)
 
-      expect(lead_state.next_action).to eq('avaliacao_tecnica')
+      expect(lead_state.next_action).to eq('proposta')
       expect(opportunity.reload.stage).to eq('qualificado')
     end
 
-    it 'keeps the next action the model recorded in the same turn' do
-      writer.set_intent!(intent: 'visita', source_message_id: message.id)
+    it 'keeps proposta recorded by the model in the same turn without a 2nd event' do
       writer.record_next_action!(value: 'proposta', source_message_id: message.id)
 
       described_class.call(opportunity: opportunity, turn: turn)
@@ -95,23 +94,12 @@ RSpec.describe ScanSolo::LeadState::CompletionService do
       expect(lead_state.events.where(subject: 'next_action').count).to eq(1)
     end
 
-    it 'replaces aguardar_cliente recorded in the same turn with the intent default' do
-      writer.set_intent!(intent: 'orcamento', source_message_id: message.id)
-      writer.record_next_action!(value: 'aguardar_cliente', source_message_id: message.id)
+    it 'replaces another next action the model recorded in the same turn with proposta' do
+      writer.record_next_action!(value: 'atendimento_humano', source_message_id: message.id)
 
       expect(described_class.call(opportunity: opportunity, turn: turn)).to be(true)
       expect(lead_state).to have_attributes(next_action: 'proposta', next_action_source_message_id: message.id)
       expect(ScanSolo::QuoteRequestJob).to have_been_enqueued.with(opportunity.id).once
-    end
-
-    it 'replaces a next action recorded in an earlier turn with the intent default' do
-      earlier = create(:message, account: account, conversation: conversation, message_type: :incoming)
-      writer.record_next_action!(value: 'atendimento_humano', source_message_id: earlier.id)
-      writer.set_intent!(intent: 'orcamento', source_message_id: message.id)
-
-      described_class.call(opportunity: opportunity, turn: turn)
-
-      expect(lead_state).to have_attributes(next_action: 'proposta', next_action_source_message_id: message.id)
     end
   end
 
@@ -140,13 +128,13 @@ RSpec.describe ScanSolo::LeadState::CompletionService do
       expect(ScanSolo::QuoteRequestJob).not_to have_been_enqueued
     end
 
-    it 'enqueues nothing for a next action other than proposta' do
+    it 'enqueues the quote request for an intent that is not a budget' do
       writer.set_intent!(intent: 'duvida', source_message_id: message.id)
 
       described_class.call(opportunity: opportunity, turn: turn)
 
       expect(lead_state).to be_concluida
-      expect(ScanSolo::QuoteRequestJob).not_to have_been_enqueued
+      expect(ScanSolo::QuoteRequestJob).to have_been_enqueued.with(opportunity.id).once
     end
 
     it 'enqueues nothing when the lead state backfill concludes an opportunity' do

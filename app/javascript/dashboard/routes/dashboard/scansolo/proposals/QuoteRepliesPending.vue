@@ -2,17 +2,27 @@
 import ScanSoloListState from 'dashboard/routes/dashboard/scansolo/components/ScanSoloListState.vue';
 import ScanSoloConfirmDialog from 'dashboard/routes/dashboard/scansolo/components/ScanSoloConfirmDialog.vue';
 import ScanSoloTime from 'dashboard/routes/dashboard/scansolo/components/ScanSoloTime.vue';
+import Button from 'dashboard/components-next/button/Button.vue';
+import Checkbox from 'dashboard/components-next/checkbox/Checkbox.vue';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import { useAlert } from 'dashboard/composables';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
+import ScanSoloQuoteRequestsAPI from 'dashboard/api/scansoloQuoteRequests';
 import { useScansoloQuoteRepliesStore } from 'dashboard/store/scansolo/quoteReplies';
 import { useScansoloPipelineOpportunitiesStore } from 'dashboard/store/scansolo/pipelineOpportunities';
-import { QUOTE_REPLY_ERROR_LABELS, enumLabel } from '../scansoloLabels';
+import {
+  HANDLED_MANUALLY_ERROR_LABELS,
+  QUOTE_REPLY_ERROR_LABELS,
+  STAGE_LABELS,
+  enumLabel,
+} from '../scansoloLabels';
 
 const UNMATCHED = 'unmatched';
 const OPEN_QUOTE_REQUEST_STATUSES = ['awaiting_reply', 'correction_requested'];
+const AWAITING_ARTUR = 'aguardando_artur';
+const HANDLED = 'handled';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -24,6 +34,11 @@ const loadError = ref(false);
 // reply id → opportunity id chosen in the "Vincular" select
 const selections = reactive({});
 const pendingDiscard = ref(null);
+// UI-09: bulk "proposta enviada manualmente" over the requests awaiting Artur.
+const selectedIds = ref([]);
+const showBulkConfirm = ref(false);
+const bulkSubmitting = ref(false);
+const bulkResults = ref([]);
 
 // UI-05: a reply can only be linked to an open quote request.
 const openQuoteRequestOpportunities = computed(() =>
@@ -31,6 +46,79 @@ const openQuoteRequestOpportunities = computed(() =>
     OPEN_QUOTE_REQUEST_STATUSES.includes(opportunity.quoteRequestStatus)
   )
 );
+
+const awaitingArturOpportunities = computed(() =>
+  pipelineStore.opportunities.filter(
+    opportunity => opportunity.commercialStatus === AWAITING_ARTUR
+  )
+);
+
+const allSelected = computed(
+  () =>
+    awaitingArturOpportunities.value.length > 0 &&
+    awaitingArturOpportunities.value.every(opportunity =>
+      selectedIds.value.includes(opportunity.id)
+    )
+);
+
+const someSelected = computed(
+  () => selectedIds.value.length > 0 && !allSelected.value
+);
+
+const toggleAll = checked => {
+  selectedIds.value = checked
+    ? awaitingArturOpportunities.value.map(opportunity => opportunity.id)
+    : [];
+};
+
+const toggleOne = (id, checked) => {
+  selectedIds.value = checked
+    ? [...selectedIds.value, id]
+    : selectedIds.value.filter(selectedId => selectedId !== id);
+};
+
+const opportunityName = opportunity =>
+  opportunity.company || opportunity.contactName;
+
+const bulkResultLabel = result =>
+  result === HANDLED
+    ? t('SCANSOLO.HANDLED_MANUALLY.BULK.RESULT_HANDLED')
+    : enumLabel(t, HANDLED_MANUALLY_ERROR_LABELS, result);
+
+// CT-04: one result per id; the names are kept from before the reload,
+// when the handled opportunities leave this list.
+const confirmBulk = async () => {
+  showBulkConfirm.value = false;
+  bulkSubmitting.value = true;
+  const names = Object.fromEntries(
+    awaitingArturOpportunities.value.map(opportunity => [
+      opportunity.id,
+      opportunityName(opportunity),
+    ])
+  );
+  try {
+    const { data } = await ScanSoloQuoteRequestsAPI.bulkMarkHandledManually(
+      selectedIds.value
+    );
+    bulkResults.value = data.results.map(({ opportunity_id: id, result }) => ({
+      id,
+      name: names[id],
+      result,
+    }));
+    selectedIds.value = [];
+    await pipelineStore.fetchOpportunities();
+  } catch (error) {
+    useAlert(
+      enumLabel(
+        t,
+        HANDLED_MANUALLY_ERROR_LABELS,
+        error?.response?.data?.error
+      ) || t('SCANSOLO.COMMON.ACTION_ERROR')
+    );
+  } finally {
+    bulkSubmitting.value = false;
+  }
+};
 
 const loadReplies = async () => {
   loadError.value = false;
@@ -205,5 +293,95 @@ defineExpose({ link, confirmDiscard });
       @confirm="confirmDiscard"
       @cancel="pendingDiscard = null"
     />
+
+    <div data-testid="awaiting-artur" class="mt-6">
+      <h2 class="text-base font-medium text-n-slate-12 mb-3">
+        {{ t('SCANSOLO.HANDLED_MANUALLY.BULK.TITLE') }}
+      </h2>
+      <p
+        v-if="!awaitingArturOpportunities.length"
+        data-testid="awaiting-artur-empty"
+        class="py-2 text-sm text-n-slate-10"
+      >
+        {{ t('SCANSOLO.HANDLED_MANUALLY.BULK.EMPTY') }}
+      </p>
+      <template v-else>
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <label
+            data-testid="awaiting-artur-select-all"
+            class="flex items-center gap-2 text-sm text-n-slate-11"
+          >
+            <Checkbox
+              :model-value="allSelected"
+              :indeterminate="someSelected"
+              @update:model-value="toggleAll"
+            />
+            {{ t('SCANSOLO.HANDLED_MANUALLY.BULK.SELECT_ALL') }}
+          </label>
+          <Button
+            type="button"
+            size="sm"
+            data-testid="awaiting-artur-bulk-button"
+            :label="t('SCANSOLO.HANDLED_MANUALLY.BULK.ACTION')"
+            :is-loading="bulkSubmitting"
+            :disabled="!selectedIds.length || bulkSubmitting"
+            @click="showBulkConfirm = true"
+          />
+        </div>
+        <label
+          v-for="opportunity in awaitingArturOpportunities"
+          :key="opportunity.id"
+          data-testid="awaiting-artur-item"
+          :data-opportunity-id="opportunity.id"
+          class="flex items-center gap-3 rounded-lg border border-n-weak p-3 mb-2 text-sm"
+        >
+          <Checkbox
+            :model-value="selectedIds.includes(opportunity.id)"
+            @update:model-value="checked => toggleOne(opportunity.id, checked)"
+          />
+          <span class="text-n-slate-12">{{
+            opportunityName(opportunity)
+          }}</span>
+          <span class="text-xs text-n-slate-11">
+            {{ enumLabel(t, STAGE_LABELS, opportunity.stage) }}
+          </span>
+        </label>
+      </template>
+
+      <div v-if="bulkResults.length" data-testid="awaiting-artur-results">
+        <h3 class="text-sm font-medium text-n-slate-11 mt-4 mb-2">
+          {{ t('SCANSOLO.HANDLED_MANUALLY.BULK.RESULTS_TITLE') }}
+        </h3>
+        <ul class="text-sm">
+          <li
+            v-for="item in bulkResults"
+            :key="item.id"
+            data-testid="awaiting-artur-result"
+            :data-opportunity-id="item.id"
+            :data-result="item.result"
+            class="flex flex-wrap gap-2 py-1"
+          >
+            <span class="text-n-slate-12">{{ item.name }}</span>
+            <span class="text-n-slate-11">
+              {{ bulkResultLabel(item.result) }}
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      <ScanSoloConfirmDialog
+        :show="showBulkConfirm"
+        :message="
+          t(
+            'SCANSOLO.HANDLED_MANUALLY.BULK.CONFIRM_MESSAGE',
+            { count: selectedIds.length },
+            selectedIds.length
+          )
+        "
+        :confirm-label="t('SCANSOLO.HANDLED_MANUALLY.BULK.ACTION')"
+        @confirm="confirmBulk"
+        @cancel="showBulkConfirm = false"
+      />
+    </div>
   </section>
 </template>

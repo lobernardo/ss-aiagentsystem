@@ -739,6 +739,13 @@ describe('AgentCenter', () => {
           to: 'scansolo_executions_index',
           activeOn: ['scansolo_executions_index'],
         },
+        {
+          name: 'ScanSolo reports',
+          label: 'SCANSOLO.SIDEBAR.REPORTS',
+          icon: 'i-lucide-bar-chart-3',
+          to: 'scansolo_reports_index',
+          activeOn: ['scansolo_reports_index'],
+        },
       ]);
     });
   });

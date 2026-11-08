@@ -1,5 +1,5 @@
-// Single source of truth for the 6 net-new ScanSolo modules (RF-01). The
-// remaining 5 of the 11 required modules (Conversas, Contatos, Equipe,
+// Single source of truth for the 7 net-new ScanSolo modules (RF-01). The
+// remaining 5 of the 12 required modules (Conversas, Contatos, Equipe,
 // Templates, Automação e integrações) are pre-existing native Chatwoot
 // navigation entries and are left untouched.
 export const SCANSOLO_MODULES = [
@@ -38,5 +38,11 @@ export const SCANSOLO_MODULES = [
     path: 'executions',
     name: 'scansolo_executions_index',
     icon: 'i-lucide-shield-check',
+  },
+  {
+    key: 'reports',
+    path: 'reports',
+    name: 'scansolo_reports_index',
+    icon: 'i-lucide-bar-chart-3',
   },
 ];

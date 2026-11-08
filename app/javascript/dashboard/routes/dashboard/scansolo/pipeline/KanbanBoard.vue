@@ -4,7 +4,9 @@ import ScanSoloListState from 'dashboard/routes/dashboard/scansolo/components/Sc
 import ScanSoloTime from 'dashboard/routes/dashboard/scansolo/components/ScanSoloTime.vue';
 import TechnicalDetails from 'dashboard/routes/dashboard/scansolo/components/TechnicalDetails.vue';
 import Button from 'dashboard/components-next/button/Button.vue';
+import Select from 'dashboard/components-next/select/Select.vue';
 import NewLeadDialog from './NewLeadDialog.vue';
+import MarkHandledManuallyButton from './MarkHandledManuallyButton.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
@@ -12,18 +14,21 @@ import { storeToRefs } from 'pinia';
 import { useStore, useMapGetter } from 'dashboard/composables/store.js';
 import { useScansoloPipelineOpportunitiesStore } from 'dashboard/store/scansolo/pipelineOpportunities';
 import {
+  COMMERCIAL_STATUSES,
+  COMMERCIAL_STATUS_LABELS,
   LEAD_SOURCE_TAGS,
   STAGE_LABELS,
-  commercialStatusKey,
   enumLabel,
 } from '../scansoloLabels';
 import {
   MS_PER_DAY,
   SCANSOLO_PIPELINE_STAGES,
-  SCANSOLO_STALE_THRESHOLD_MS,
+  isStaleOpportunity,
 } from './pipelineConstants';
 
 const AI_ACTIVE = 'ai_active';
+// UI-06: "Todas" shows every card.
+const ALL_COMMERCIAL_STATUSES = '';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -36,24 +41,37 @@ const agents = useMapGetter('agents/getAgents');
 const draggedOpportunityId = ref(null);
 const loadError = ref(false);
 const newLeadDialogRef = ref(null);
+const commercialStatusFilter = ref(ALL_COMMERCIAL_STATUSES);
+
+const commercialStatusOptions = computed(() => [
+  {
+    value: ALL_COMMERCIAL_STATUSES,
+    label: t('SCANSOLO.PIPELINE_BOARD.COMMERCIAL_FILTER.ALL'),
+  },
+  ...COMMERCIAL_STATUSES.map(status => ({
+    value: status,
+    label: enumLabel(t, COMMERCIAL_STATUS_LABELS, status),
+  })),
+]);
 
 const opportunitiesByStage = computed(() => {
   const groups = Object.fromEntries(
     SCANSOLO_PIPELINE_STAGES.map(stage => [stage, []])
   );
-  opportunities.value.forEach(opportunity => {
-    (groups[opportunity.stage] ||= []).push(opportunity);
-  });
+  opportunities.value
+    .filter(
+      opportunity =>
+        commercialStatusFilter.value === ALL_COMMERCIAL_STATUSES ||
+        opportunity.commercialStatus === commercialStatusFilter.value
+    )
+    .forEach(opportunity => {
+      (groups[opportunity.stage] ||= []).push(opportunity);
+    });
   return groups;
 });
 
-const isStale = opportunity => {
-  if (!opportunity.lastCustomerInteractionAt) return false;
-  const lastInteraction = new Date(
-    opportunity.lastCustomerInteractionAt
-  ).getTime();
-  return Date.now() - lastInteraction >= SCANSOLO_STALE_THRESHOLD_MS;
-};
+// Relatórios RF-04: same rule as the report's stalled list.
+const isStale = opportunity => isStaleOpportunity(opportunity, new Date());
 
 // UI-02: whole days since the last customer interaction (or the creation,
 // while the customer never replied); shown only from 1 day on.
@@ -64,15 +82,9 @@ const daysWithoutInteraction = opportunity => {
   return Math.floor((Date.now() - new Date(reference).getTime()) / MS_PER_DAY);
 };
 
-const commercialStatusLabel = opportunity => {
-  const key = commercialStatusKey(
-    opportunity.quoteRequestStatus,
-    opportunity.proposalStatus
-  );
-  // Keys come from the static maps in scansoloLabels.
-  // eslint-disable-next-line @intlify/vue-i18n/no-dynamic-keys
-  return key ? t(key) : '';
-};
+// RF-03 / UI-07: the server's `commercial_status`, never derived here.
+const commercialStatusLabel = opportunity =>
+  enumLabel(t, COMMERCIAL_STATUS_LABELS, opportunity.commercialStatus);
 
 const isHumanAttended = opportunity =>
   (opportunity.aiControlState || AI_ACTIVE) !== AI_ACTIVE;
@@ -169,7 +181,13 @@ defineExpose({ onDragStart, onDrop, openOpportunity });
     <!-- The board takes the remaining height so its horizontal scrollbar
          stays on screen; each column scrolls its own cards vertically. -->
     <div class="flex flex-col h-full min-h-0 p-4">
-      <div class="flex items-center justify-end mb-4">
+      <div class="flex items-center justify-between gap-4 mb-4">
+        <Select
+          v-model="commercialStatusFilter"
+          data-testid="commercial-status-filter"
+          :options="commercialStatusOptions"
+          :aria-label="t('SCANSOLO.PIPELINE_BOARD.COMMERCIAL_FILTER.LABEL')"
+        />
         <Button
           type="button"
           size="sm"
@@ -304,6 +322,7 @@ defineExpose({ onDragStart, onDrop, openOpportunity });
                       : ''
                   }}
                 </p>
+                <MarkHandledManuallyButton :opportunity="opportunity" />
                 <!-- Expanding the admin details must not open the lead. -->
                 <div @click.stop>
                   <TechnicalDetails :items="cardTechnicalItems(opportunity)" />

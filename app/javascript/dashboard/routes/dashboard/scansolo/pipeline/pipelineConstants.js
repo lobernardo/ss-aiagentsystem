@@ -32,5 +32,22 @@ export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 // ScanSolo::PIPELINE_STALE_THRESHOLD.
 export const SCANSOLO_STALE_THRESHOLD_MS = 2 * MS_PER_DAY;
 
+// Mirrors ScanSolo::Pipeline::StageTransitionService::TERMINAL_STAGES.
+export const TERMINAL_STAGES = ['ganho', 'perdido'];
+
+// Relatórios RF-04 (Q-01): the single "stalled" rule, mirroring
+// ScanSolo::Pipeline::OpportunityQuery.stale? — not terminal and the last
+// customer interaction (or the creation, when the customer never wrote) at
+// least 48 h before `now`.
+export const isStaleOpportunity = (opportunity, now = new Date()) => {
+  if (TERMINAL_STAGES.includes(opportunity.stage)) return false;
+  const lastActivity =
+    opportunity.lastCustomerInteractionAt || opportunity.createdAt;
+  return (
+    now.getTime() - new Date(lastActivity).getTime() >=
+    SCANSOLO_STALE_THRESHOLD_MS
+  );
+};
+
 // CT-01: mirrors the controller's E164_PHONE_REGEXP.
 export const E164_PHONE_PATTERN = /^\+[1-9]\d{1,14}$/;

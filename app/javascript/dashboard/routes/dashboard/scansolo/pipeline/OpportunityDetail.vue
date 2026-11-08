@@ -5,6 +5,7 @@ import ScanSoloTime from 'dashboard/routes/dashboard/scansolo/components/ScanSol
 import TechnicalDetails from 'dashboard/routes/dashboard/scansolo/components/TechnicalDetails.vue';
 import { computed, onMounted, ref } from 'vue';
 import camelcaseKeys from 'camelcase-keys';
+import { messageStamp } from 'shared/helpers/timeHelper';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import { useAlert } from 'dashboard/composables';
@@ -13,16 +14,18 @@ import Button from 'dashboard/components-next/button/Button.vue';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
 import { useScansoloPipelineOpportunitiesStore } from 'dashboard/store/scansolo/pipelineOpportunities';
 import { useScanSoloRole } from '../composables/useScanSoloRole';
+import MarkHandledManuallyButton from './MarkHandledManuallyButton.vue';
 import {
+  COMMERCIAL_STATUS_LABELS,
   FIELD_STATUS_LABELS,
   INITIAL_TEMPLATE_FAILURE_STATUS_LABELS,
   LEAD_EMAIL_ERROR_LABELS,
   LEAD_SOURCE_LABELS,
   PROPOSAL_STATUS_LABELS,
+  QUOTE_REQUEST_COMMERCIAL_STATUS_LABELS,
   QUOTE_REQUEST_RESEND_ERROR_LABELS,
   REASON_LABELS,
   STAGE_LABELS,
-  commercialStatusKey,
   enumLabel,
 } from '../scansoloLabels';
 
@@ -124,23 +127,29 @@ const fieldText = field => {
   return `${field.label}: ${value ?? ''}`;
 };
 
-const statusLabel = key =>
-  // Keys come from the static maps in scansoloLabels.
-  // eslint-disable-next-line @intlify/vue-i18n/no-dynamic-keys
-  key ? t(key) : '';
-
+// RF-03 / UI-07: the server's `commercial_status`, never derived here.
 const commercialStatusLabel = computed(() =>
-  statusLabel(
-    commercialStatusKey(
-      opportunity.value.quoteRequestStatus,
-      opportunity.value.proposalStatus
-    )
-  )
+  enumLabel(t, COMMERCIAL_STATUS_LABELS, opportunity.value.commercialStatus)
 );
 
 const quoteRequestStatusLabel = computed(() =>
-  statusLabel(commercialStatusKey(opportunity.value.quoteRequest?.status, null))
+  enumLabel(
+    t,
+    QUOTE_REQUEST_COMMERCIAL_STATUS_LABELS,
+    opportunity.value.quoteRequest?.status
+  )
 );
+
+const formatDateTime = value =>
+  messageStamp(
+    Math.floor(new Date(value).getTime() / 1000),
+    'dd/MM/yyyy HH:mm'
+  );
+
+// UI-08: the action answers with the show JSON.
+const onHandledManually = updated => {
+  opportunity.value = updated;
+};
 
 const showProposalTerms = computed(() =>
   PROPOSAL_STATUSES_WITH_TERMS.includes(opportunity.value.proposal?.status)
@@ -295,6 +304,21 @@ defineExpose({
             >
               {{ commercialStatusLabel }}
             </p>
+            <p
+              v-if="opportunity.commercialForwardedAt"
+              data-testid="opportunity-commercial-forwarded-at"
+              class="text-sm text-n-slate-11"
+            >
+              {{
+                t('SCANSOLO.PIPELINE_BOARD.DETAIL.COMMERCIAL_FORWARDED_AT', {
+                  date: formatDateTime(opportunity.commercialForwardedAt),
+                })
+              }}
+            </p>
+            <MarkHandledManuallyButton
+              :opportunity="opportunity"
+              @updated="onHandledManually"
+            />
           </section>
 
           <section data-testid="opportunity-lead-email" class="mb-4">

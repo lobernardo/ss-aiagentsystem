@@ -11,6 +11,7 @@ vi.mock('dashboard/api/scansoloPipelineOpportunities', () => ({
     show: vi.fn(),
     resendQuoteRequest: vi.fn(),
     updateLeadEmail: vi.fn(),
+    markHandledManually: vi.fn(),
   },
 }));
 
@@ -561,6 +562,7 @@ describe('OpportunityDetail', () => {
 
     it('shows "Aguardando aprovação" for an awaiting_approval proposal', async () => {
       const wrapper = await mountWith({
+        commercial_status: 'proposta_em_aprovacao',
         proposal_status: 'awaiting_approval',
         proposal: {
           version_number: 1,
@@ -576,11 +578,12 @@ describe('OpportunityDetail', () => {
       );
       expect(
         wrapper.find('[data-testid="opportunity-commercial-status"]').text()
-      ).toBe('Aguardando aprovação');
+      ).toBe('Proposta em aprovação');
     });
 
     it('shows "Rejeitada" with the rejection reason for a rejected proposal', async () => {
       const wrapper = await mountWith({
+        commercial_status: 'aguardando_artur',
         proposal_status: 'rejected',
         proposal: {
           version_number: 1,
@@ -599,7 +602,92 @@ describe('OpportunityDetail', () => {
       ).toBe('Motivo da rejeição: Valor acima do combinado');
       expect(
         wrapper.find('[data-testid="opportunity-commercial-status"]').text()
-      ).toBe('Proposta rejeitada');
+      ).toBe('Aguardando o Artur');
+    });
+  });
+  describe('UI-07 / UI-08: commercial status, forwarding date and manual action', () => {
+    const mountWith = async overrides => {
+      ScanSoloPipelineOpportunitiesAPI.show.mockResolvedValue({
+        data: { ...seededOpportunity, ...overrides },
+      });
+      const wrapper = mountDetail();
+      await flushPromises();
+      return wrapper;
+    };
+
+    const commercialStatus = wrapper =>
+      wrapper.find('[data-testid="opportunity-commercial-status"]');
+    const forwardedAt = wrapper =>
+      wrapper.find('[data-testid="opportunity-commercial-forwarded-at"]');
+
+    it('labels proposta_enviada_manual from commercial_status, ignoring the raw statuses', async () => {
+      const wrapper = await mountWith({
+        commercial_status: 'proposta_enviada_manual',
+        quote_request_status: 'handled_manually',
+        proposal_status: null,
+        quote_request: {
+          id: 3,
+          status: 'handled_manually',
+          sent_at: '2026-01-02T10:00:00Z',
+          replied_at: null,
+          email_conversation_id: 77,
+        },
+      });
+
+      expect(commercialStatus(wrapper).text()).toBe(
+        'Proposta enviada manualmente'
+      );
+      expect(wrapper.find('[data-testid="quote-request-status"]').text()).toBe(
+        'Status do orçamento: Proposta enviada manualmente'
+      );
+    });
+
+    it('shows "Encaminhado ao Artur em <data>" only when commercial_forwarded_at is set', async () => {
+      const forwarded = await mountWith({
+        commercial_status: 'aguardando_artur',
+        commercial_forwarded_at: '2026-01-02T10:00:00Z',
+      });
+      expect(forwardedAt(forwarded).text()).toBe(
+        'Encaminhado ao Artur em 02/01/2026 10:00'
+      );
+
+      const notForwarded = await mountWith({
+        commercial_status: 'nao_encaminhado',
+        commercial_forwarded_at: null,
+      });
+      expect(forwardedAt(notForwarded).exists()).toBe(false);
+    });
+
+    it('updates the detail with the CT-03 response after confirming', async () => {
+      ScanSoloPipelineOpportunitiesAPI.markHandledManually.mockResolvedValue({
+        data: {
+          ...seededOpportunity,
+          stage: 'proposta_enviada',
+          commercial_status: 'proposta_enviada_manual',
+        },
+      });
+      const wrapper = await mountWith({
+        stage: 'qualificado',
+        commercial_status: 'aguardando_artur',
+      });
+
+      await wrapper
+        .find('[data-testid="mark-handled-manually-button"]')
+        .trigger('click');
+      await wrapper
+        .find('[data-testid="confirm-dialog-confirm"]')
+        .trigger('click');
+      await flushPromises();
+
+      expect(
+        ScanSoloPipelineOpportunitiesAPI.markHandledManually
+      ).toHaveBeenCalledWith(7);
+      expect(commercialStatus(wrapper).text()).toBe(
+        'Proposta enviada manualmente'
+      );
+      expect(
+        wrapper.find('[data-testid="mark-handled-manually-button"]').exists()
+      ).toBe(false);
     });
   });
 });

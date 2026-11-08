@@ -799,6 +799,8 @@
       "CONFIRM_MESSAGE": "Nenhuma mensagem será enviada agora. A cadência pós-proposta existente seguirá normalmente.",
       "SUCCESS": "Proposta marcada como enviada manualmente.",
       "BULK": {
+        "TITLE": "Pedidos aguardando o Artur",
+        "EMPTY": "Nenhum pedido aguardando o Artur.",
         "ACTION": "Marcar selecionados como proposta enviada manualmente",
         "SELECT_ALL": "Selecionar todos",
         "SELECT_ITEM": "Selecionar",

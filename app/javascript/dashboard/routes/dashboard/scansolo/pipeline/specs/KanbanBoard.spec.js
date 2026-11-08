@@ -270,8 +270,7 @@ describe('KanbanBoard', () => {
         company: 'Solar Ltda',
         service: 'Georradar',
         city_uf: 'Campinas/SP',
-        quote_request_status: 'awaiting_reply',
-        proposal_status: null,
+        commercial_status: 'aguardando_artur',
       });
 
       expect(card.find('[data-testid="card-lead-source"]').text()).toBe('SITE');
@@ -283,7 +282,7 @@ describe('KanbanBoard', () => {
         'Campinas/SP'
       );
       expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
-        'Aguardando orçamento'
+        'Aguardando o Artur'
       );
     });
 
@@ -293,8 +292,7 @@ describe('KanbanBoard', () => {
         company: null,
         service: null,
         city_uf: null,
-        quote_request_status: null,
-        proposal_status: null,
+        commercial_status: null,
       });
 
       expect(card.find('[data-testid="card-title"]').text()).toBe(
@@ -310,38 +308,28 @@ describe('KanbanBoard', () => {
       );
     });
 
-    it('labels a generated proposal "Proposta gerada", never as sent (RF-33)', async () => {
-      const card = await mountWith({
-        quote_request_status: 'replied',
-        proposal_status: 'generated',
-      });
+    it.each([
+      ['nao_encaminhado', 'Não encaminhado'],
+      ['resposta_recebida', 'Resposta recebida'],
+      ['proposta_em_aprovacao', 'Proposta em aprovação'],
+      ['proposta_enviada', 'Proposta enviada'],
+      ['proposta_enviada_manual', 'Proposta enviada manualmente'],
+    ])(
+      'labels the card from commercial_status %s (RF-03 / UI-07)',
+      async (commercialStatus, label) => {
+        // The quote/proposal statuses would read differently: the card must
+        // follow the server's commercial_status only.
+        const card = await mountWith({
+          commercial_status: commercialStatus,
+          quote_request_status: 'awaiting_reply',
+          proposal_status: 'generated',
+        });
 
-      expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
-        'Proposta gerada'
-      );
-    });
-
-    it('labels a proposal awaiting approval "Aguardando aprovação" (UI-03)', async () => {
-      const card = await mountWith({
-        quote_request_status: 'replied',
-        proposal_status: 'awaiting_approval',
-      });
-
-      expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
-        'Aguardando aprovação'
-      );
-    });
-
-    it('labels a rejected proposal "Proposta rejeitada" (UI-03)', async () => {
-      const card = await mountWith({
-        quote_request_status: 'awaiting_reply',
-        proposal_status: 'rejected',
-      });
-
-      expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
-        'Proposta rejeitada'
-      );
-    });
+        expect(card.find('[data-testid="card-commercial-status"]').text()).toBe(
+          label
+        );
+      }
+    );
 
     it('counts whole days without interaction: 49 hours → 2 days', async () => {
       const card = await mountWith({
@@ -462,7 +450,150 @@ describe('KanbanBoard', () => {
         'ScanSolo followups',
         'ScanSolo proposals',
         'ScanSolo executions',
+        'ScanSolo reports',
       ]);
+    });
+  });
+  describe('UI-06: commercial status filter', () => {
+    const threeOpportunities = [
+      { ...seededOpportunity, id: 1, commercial_status: 'aguardando_artur' },
+      {
+        ...seededOpportunity,
+        id: 2,
+        stage: 'qualificado',
+        commercial_status: 'nao_encaminhado',
+      },
+      {
+        ...seededOpportunity,
+        id: 3,
+        stage: 'proposta_enviada',
+        commercial_status: 'proposta_enviada_manual',
+      },
+    ];
+
+    const filterSelect = wrapper =>
+      wrapper.find('[data-testid="commercial-status-filter"] select');
+
+    beforeEach(() => {
+      ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValue({
+        data: threeOpportunities,
+      });
+    });
+
+    it('defaults to "Todas" and lists the 6 commercial statuses', async () => {
+      const wrapper = mountBoard();
+      await flushPromises();
+
+      expect(filterSelect(wrapper).element.value).toBe('');
+      expect(
+        wrapper
+          .findAll('[data-testid="commercial-status-filter"] option')
+          .map(option => option.text())
+      ).toEqual([
+        'Todas',
+        'Não encaminhado',
+        'Aguardando o Artur',
+        'Resposta recebida',
+        'Proposta em aprovação',
+        'Proposta enviada',
+        'Proposta enviada manualmente',
+      ]);
+      expect(wrapper.findAll('[data-testid="pipeline-card"]')).toHaveLength(3);
+    });
+
+    it('shows only the matching cards, and all of them again in "Todas"', async () => {
+      const wrapper = mountBoard();
+      await flushPromises();
+
+      await filterSelect(wrapper).setValue('aguardando_artur');
+      const filtered = wrapper.findAll('[data-testid="pipeline-card"]');
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].attributes('data-opportunity-id')).toBe('1');
+
+      await filterSelect(wrapper).setValue('');
+      expect(wrapper.findAll('[data-testid="pipeline-card"]')).toHaveLength(3);
+    });
+  });
+
+  describe('Relatórios RF-04: "Inativo" badge uses the stalled rule', () => {
+    const MINUTE_MS = 60 * 1000;
+    const minutesAgo = minutes =>
+      new Date(Date.now() - minutes * MINUTE_MS).toISOString();
+    const staleText = card => card.find('[data-testid="card-stale"]').text();
+
+    it.each([
+      [
+        'interaction 47 h 59 min ago',
+        { last_customer_interaction_at: minutesAgo(47 * 60 + 59) },
+        '',
+      ],
+      [
+        'interaction 48 h ago',
+        { last_customer_interaction_at: minutesAgo(48 * 60) },
+        'Inativo',
+      ],
+      [
+        'no interaction, created 48 h ago',
+        { last_customer_interaction_at: null, created_at: minutesAgo(48 * 60) },
+        'Inativo',
+      ],
+      [
+        'no interaction, created 47 h 59 min ago',
+        {
+          last_customer_interaction_at: null,
+          created_at: minutesAgo(47 * 60 + 59),
+        },
+        '',
+      ],
+      [
+        'ganho with the last interaction 30 days ago',
+        { stage: 'ganho', last_customer_interaction_at: hoursAgo(30 * 24) },
+        '',
+      ],
+      [
+        'perdido with the last interaction 30 days ago',
+        { stage: 'perdido', last_customer_interaction_at: hoursAgo(30 * 24) },
+        '',
+      ],
+    ])('%s', async (_name, attributes, expected) => {
+      const card = await mountWith(attributes);
+
+      expect(staleText(card)).toBe(expected);
+    });
+  });
+
+  describe('UI-08: single "proposta enviada manualmente" action on the card', () => {
+    const button = card =>
+      card.find('[data-testid="mark-handled-manually-button"]');
+
+    it('shows the action only for aguardando_artur in qualificado/proposta_enviada', async () => {
+      expect(
+        button(
+          await mountWith({
+            stage: 'qualificado',
+            commercial_status: 'aguardando_artur',
+          })
+        ).exists()
+      ).toBe(true);
+      expect(
+        button(
+          await mountWith({
+            stage: 'qualificado',
+            commercial_status: 'resposta_recebida',
+          })
+        ).exists()
+      ).toBe(false);
+    });
+
+    it('never opens the lead when the action is clicked', async () => {
+      const card = await mountWith({
+        stage: 'qualificado',
+        commercial_status: 'aguardando_artur',
+      });
+
+      await button(card).trigger('click');
+
+      expect(push).not.toHaveBeenCalled();
     });
   });
 });

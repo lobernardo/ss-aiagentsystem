@@ -10,6 +10,7 @@ import KnowledgeCenter from './knowledge/KnowledgeCenter.vue';
 import FollowUps from './followups/FollowUps.vue';
 import Proposals from './proposals/Proposals.vue';
 import Executions from './executions/Executions.vue';
+import Reports from './reports/Reports.vue';
 
 const meta = {
   permissions: ['administrator', 'agent', 'custom_role'],
@@ -39,6 +40,7 @@ const MODULE_COMPONENTS = {
   followups: FollowUps,
   proposals: Proposals,
   executions: Executions,
+  reports: Reports,
 };
 
 export default {

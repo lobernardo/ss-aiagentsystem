@@ -4,6 +4,7 @@ import { withFullI18n } from 'test-i18n';
 import { useAlert } from 'dashboard/composables';
 import ScanSoloQuoteRepliesAPI from 'dashboard/api/scansoloQuoteReplies';
 import ScanSoloPipelineOpportunitiesAPI from 'dashboard/api/scansoloPipelineOpportunities';
+import ScanSoloQuoteRequestsAPI from 'dashboard/api/scansoloQuoteRequests';
 import QuoteRepliesPending from '../QuoteRepliesPending.vue';
 
 vi.mock('dashboard/api/scansoloQuoteReplies', () => ({
@@ -12,6 +13,10 @@ vi.mock('dashboard/api/scansoloQuoteReplies', () => ({
 
 vi.mock('dashboard/api/scansoloPipelineOpportunities', () => ({
   default: { get: vi.fn(), show: vi.fn() },
+}));
+
+vi.mock('dashboard/api/scansoloQuoteRequests', () => ({
+  default: { bulkMarkHandledManually: vi.fn() },
 }));
 
 vi.mock('dashboard/composables', () => ({ useAlert: vi.fn() }));
@@ -235,5 +240,171 @@ describe('QuoteRepliesPending', () => {
     expect(wrapper.find('[data-testid="list-state-error"]').exists()).toBe(
       true
     );
+  });
+  describe('UI-09: bulk "proposta enviada manualmente" for requests awaiting Artur', () => {
+    const awaitingArtur = [
+      {
+        id: 21,
+        contact_name: 'Ada Lovelace',
+        company: 'Solar Ltda',
+        stage: 'qualificado',
+        commercial_status: 'aguardando_artur',
+      },
+      {
+        id: 22,
+        contact_name: 'Grace Hopper',
+        company: null,
+        stage: 'qualificado',
+        commercial_status: 'aguardando_artur',
+      },
+      {
+        id: 23,
+        contact_name: 'Katherine Johnson',
+        company: null,
+        stage: 'proposta_enviada',
+        commercial_status: 'aguardando_artur',
+      },
+    ];
+    const replied = {
+      id: 24,
+      contact_name: 'Already Replied',
+      company: null,
+      stage: 'qualificado',
+      commercial_status: 'resposta_recebida',
+    };
+
+    const items = wrapper =>
+      wrapper.findAll('[data-testid="awaiting-artur-item"]');
+    const itemCheckbox = (wrapper, id) =>
+      wrapper.find(
+        `[data-testid="awaiting-artur-item"][data-opportunity-id="${id}"] input[type="checkbox"]`
+      );
+    const bulkButton = wrapper =>
+      wrapper.find('[data-testid="awaiting-artur-bulk-button"]');
+
+    beforeEach(() => {
+      ScanSoloQuoteRepliesAPI.getPending.mockResolvedValue({ data: [] });
+      ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValue({
+        data: [...awaitingArtur, replied],
+      });
+    });
+
+    it('lists only the aguardando_artur opportunities, without phone or e-mail', async () => {
+      const wrapper = await mountPending();
+
+      expect(
+        items(wrapper).map(item => item.attributes('data-opportunity-id'))
+      ).toEqual(['21', '22', '23']);
+      expect(items(wrapper)[0].text()).toContain('Solar Ltda');
+      expect(items(wrapper)[0].text()).toContain('Qualificado');
+      expect(
+        wrapper.find('[data-testid="awaiting-artur"]').text()
+      ).not.toContain('Already Replied');
+      expect(wrapper.find('[data-testid="awaiting-artur"]').html()).not.toMatch(
+        /@|\+55/
+      );
+    });
+
+    it('sends exactly the 2 selected ids after confirming and renders one result per item', async () => {
+      ScanSoloQuoteRequestsAPI.bulkMarkHandledManually.mockResolvedValue({
+        data: {
+          results: [
+            { opportunity_id: 21, result: 'handled' },
+            { opportunity_id: 23, result: 'quote_request_closed' },
+          ],
+        },
+      });
+      const wrapper = await mountPending();
+
+      expect(bulkButton(wrapper).attributes('disabled')).toBeDefined();
+      await itemCheckbox(wrapper, 21).setValue(true);
+      await itemCheckbox(wrapper, 23).setValue(true);
+      await bulkButton(wrapper).trigger('click');
+
+      expect(
+        wrapper.find('[data-testid="confirm-dialog-message"]').text()
+      ).toBe(
+        '2 pedidos serão marcados como proposta enviada manualmente. Nenhuma mensagem será enviada e nenhuma cadência pós-proposta será iniciada.'
+      );
+
+      ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValue({
+        data: [awaitingArtur[1], awaitingArtur[2], replied],
+      });
+      await wrapper
+        .find('[data-testid="confirm-dialog-confirm"]')
+        .trigger('click');
+      await flushPromises();
+
+      expect(
+        ScanSoloQuoteRequestsAPI.bulkMarkHandledManually
+      ).toHaveBeenCalledWith([21, 23]);
+      const results = wrapper.findAll('[data-testid="awaiting-artur-result"]');
+      expect(results).toHaveLength(2);
+      expect(results[0].text()).toContain('Solar Ltda');
+      expect(results[0].text()).toContain(
+        'Marcado como proposta enviada manualmente'
+      );
+      expect(results[1].text()).toContain('Katherine Johnson');
+      expect(results[1].text()).toContain(
+        'O pedido de orçamento desta oportunidade já foi encerrado.'
+      );
+      // The opportunities are reloaded after the action.
+      expect(ScanSoloPipelineOpportunitiesAPI.get).toHaveBeenCalledTimes(2);
+      expect(
+        items(wrapper).map(item => item.attributes('data-opportunity-id'))
+      ).toEqual(['22', '23']);
+    });
+
+    it('selects every item with "Selecionar todos"', async () => {
+      ScanSoloQuoteRequestsAPI.bulkMarkHandledManually.mockResolvedValue({
+        data: { results: [] },
+      });
+      const wrapper = await mountPending();
+
+      await wrapper
+        .find('[data-testid="awaiting-artur-select-all"] input')
+        .setValue(true);
+      await bulkButton(wrapper).trigger('click');
+      expect(
+        wrapper.find('[data-testid="confirm-dialog-message"]').text()
+      ).toContain('3 pedidos');
+      await wrapper
+        .find('[data-testid="confirm-dialog-confirm"]')
+        .trigger('click');
+      await flushPromises();
+
+      expect(
+        ScanSoloQuoteRequestsAPI.bulkMarkHandledManually
+      ).toHaveBeenCalledWith([21, 22, 23]);
+    });
+
+    it('does not call the API when the confirmation is cancelled', async () => {
+      const wrapper = await mountPending();
+
+      await itemCheckbox(wrapper, 22).setValue(true);
+      await bulkButton(wrapper).trigger('click');
+      await wrapper
+        .find('[data-testid="confirm-dialog-cancel"]')
+        .trigger('click');
+      await flushPromises();
+
+      expect(
+        ScanSoloQuoteRequestsAPI.bulkMarkHandledManually
+      ).not.toHaveBeenCalled();
+      expect(wrapper.find('[data-testid="confirm-dialog"]').exists()).toBe(
+        false
+      );
+    });
+
+    it('shows the empty message when nobody awaits Artur', async () => {
+      ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValue({
+        data: [replied],
+      });
+      const wrapper = await mountPending();
+
+      expect(wrapper.find('[data-testid="awaiting-artur-empty"]').text()).toBe(
+        'Nenhum pedido aguardando o Artur.'
+      );
+    });
   });
 });

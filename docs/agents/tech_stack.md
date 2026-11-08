@@ -6,71 +6,76 @@
 
 ### Runtime and language
 
-- **Language**: Ruby 3.4.4 (`Gemfile` `ruby '3.4.4'`, `.ruby-version`) + JavaScript on Node 24.x (`package.json` engines, `.nvmrc` 24.13.0)
-- **Framework**: Rails 7.2.3.1 (`Gemfile.lock`) + Vue ^3.5.12 on Vite 6.4.2 (`vite_rails`, `vite-plugin-ruby`); base product Chatwoot 4.17.1
+- **Language**: Ruby 3.4.4 (`.ruby-version`, Gemfile `ruby '3.4.4'`); JavaScript (ES modules) on Node 24.x (`.nvmrc` 24.13.0)
+- **Framework**: Rails 7.2.3.1 (Gemfile.lock); Vue ^3.5.12 dashboard; base product Chatwoot 4.17.1 (`package.json` `version`)
 
 | Component | Version | Source |
 |---|---|---|
-| Web server | Puma 7.2.1 | `Gemfile` / `Procfile` `web` |
-| Background jobs | Sidekiq 7.3.10 + sidekiq-cron 2.4.0 | `config/sidekiq.yml`, `config/schedule.yml` |
-| Database | PostgreSQL (pg 1.5.3) + pgvector 0.1.1 / neighbor 0.2.3 | `db/schema.rb` `enable_extension "vector"`; CI image `pgvector/pgvector:pg16` |
-| Cache / locks / queue backend | Redis (redis 5.0.6) | `config/initializers/01_redis.rb` |
-| LLM client | ruby_llm 1.15.0 via `lib/llm` (`Llm::FeatureRouter`) | `config/llm.yml` |
-| JSON Schema | json_schemer 0.2.24 | `ScanSolo::Actions::Executor`, `ScanSolo::Make::CallbackVerifier` |
-| HTTP client (Make) | httparty 0.24.0 | `ScanSolo::Make::OutboundRequestService` |
-| PDF text | pdf-reader 2.16.0 | `ScanSolo::AiTurn::AttachmentReader` |
-| Account flags | flag_shih_tzu 0.3.23 | `Account` `has_flags 1 => :scansolo_enabled` |
-| Authorization | pundit | `app/policies/scan_solo/` |
-| Frontend state | Pinia ^3.0.4 (ScanSolo stores), Vuex ~4.1.0 (native) | `app/javascript/dashboard/store/scansolo/` |
-| Styling | tailwindcss ^3.4.19 | `tailwind.config.js` |
-| Package managers | Bundler 2.5.16, pnpm 10.2.0 | `Gemfile.lock` BUNDLED WITH, `package.json` packageManager |
-
-### Models used by ScanSolo
-
-| Feature key (`config/llm.yml`) | Models | Default |
-|---|---|---|
-| `scansolo_agent_response` | gpt-4.1-mini, gpt-4.1, gpt-5.1, gpt-5.2 | gpt-4.1-mini |
-| `scansolo_knowledge_embedding` | text-embedding-3-small (internal) | text-embedding-3-small |
+| Ruby | 3.4.4 | `.ruby-version` |
+| Rails | 7.2.3.1 | `Gemfile.lock` |
+| Node | 24.x (24.13.0) | `package.json` engines, `.nvmrc` |
+| pnpm | 10.x (`pnpm@10.2.0`) | `package.json` packageManager |
+| Bundler | from `Gemfile.lock` | Makefile `setup` |
+| Web server | Puma 7.2.1 | `Gemfile.lock` |
+| Background jobs | Sidekiq 7.3.10 + sidekiq-cron | `config/sidekiq.yml`, `config/schedule.yml` |
+| Database | PostgreSQL 16 + pgvector (`pgvector/pgvector:pg16` dev, `postgres` prod) | `docker-compose.yaml`, `db/schema.rb` |
+| Cache / queue backend | Redis | `REDIS_URL`, `docker-compose.scansolo.yaml` |
+| Frontend | Vue ^3.5.12, Pinia ^3.0.4, Vuex ~4.1.0, vue-router ~4.4.5, vue-i18n 9.14.5 | `package.json` |
+| Build | Vite 6.4.2 via vite_rails 3.10.0 | `package.json`, `Gemfile.lock` |
+| CSS | Tailwind ^3.4.19 | `package.json`, `tailwind.config.js` |
+| Event bus | wisper 2.0.0 | `Gemfile.lock` |
+| Authorization | Pundit 2.3.0 | `Gemfile.lock`, `app/policies/scan_solo/` |
+| LLM client | ruby_llm 1.15.0 (via `Llm::FeatureRouter`); ruby-openai 7.3.1; ai-agents 0.12.0 | `Gemfile.lock` |
+| Vector search | neighbor 0.2.3 (`has_neighbors :embedding`) | `app/models/scan_solo/knowledge_chunk.rb` |
+| JSON schema | json_schemer 0.2.24 | `ScanSolo::Make::CallbackVerifier` |
+| PDF read | pdf-reader 2.16.0 | `ScanSolo::AiTurn::AttachmentReader`, `GotenbergClient` |
+| DOCX templates | rubyzip 2.4.1 | `ScanSolo::Proposal::TemplateRenderer` |
+| HTTP | HTTParty 0.24.0 | `ScanSolo::Make::OutboundRequestService` |
+| PDF render service | Gotenberg 8.37.0 | `docker-compose.scansolo.yaml` |
+| Rate limiting | rack-attack 6.7.0 | `config/initializers/rack_attack.rb` |
 
 ### Tests
 
-| Concern | Tool | Version / config |
-|---|---|---|
-| Ruby runner | RSpec (rspec-rails) | 7.0.1; `.rspec` `--require spec_helper` |
-| Ruby assertions | rspec-expectations, shoulda-matchers | shoulda-matchers 5.3.0 |
-| Ruby mocks / fixtures | webmock 3.23.1, mock_redis, climate_control, factory_bot_rails 6.4.3, database_cleaner, test-prof | `spec/factories`, `spec/support` |
-| ScanSolo test doubles | `ScanSolo::TestMode::MockLlmProvider`, `MockEmbeddingProvider`, `ScanSolo::Proposal::MockProvider` | No outbound HTTP, no production credentials |
-| OpenAPI validation | skooma | `swagger/` |
-| Ruby coverage | simplecov 0.22.0 + simplecov_json_formatter | `spec/coverage_helper.rb` |
-| JS runner | Vitest 3.0.5 (jsdom, globals) | `vitest.config.ts`, include `app/**/*.{test,spec}.*` |
-| JS component tests | @vue/test-utils ^2.4.6, jsdom ^27.2.0 | `app/javascript/dashboard/routes/dashboard/scansolo/specs`, `store/scansolo/specs` |
-| JS coverage | @vitest/coverage-v8 3.0.5 (lcov, text) | `pnpm run test:coverage` |
-| E2E | @playwright/test ^1.56.1 | `tests/playwright/` |
+| Concern | Tool | Version | Config |
+|---|---|---|---|
+| Ruby runner | RSpec (rspec-rails) | 7.0.1 | `.rspec` (`--require spec_helper`) |
+| Ruby assertions | shoulda-matchers | 5.3.0 | — |
+| Ruby factories | factory_bot_rails | 6.4.3 | — |
+| Ruby mocks | webmock 3.23.1, mock_redis 0.36.0, climate_control 1.2.0 | — | — |
+| Ruby LLM/embedding doubles | `ScanSolo::TestMode::MockLlmProvider`, `MockEmbeddingProvider` | — | `app/services/scan_solo/test_mode/` |
+| Ruby DB cleanup | database_cleaner-active_record | 2.1.0 | — |
+| Ruby profiling | test-prof | 1.6.3 | — |
+| OpenAPI validation | skooma | 0.3.7 | — |
+| Ruby coverage | simplecov | 0.22.0 | — |
+| JS runner | Vitest (jsdom ^27.2.0, globals) | 3.0.5 | `vitest.config.ts`, include `app/**/*.{test,spec}.*` |
+| JS component testing | @vue/test-utils | ^2.4.6 | — |
+| JS mocks | `vi.mock`, fake-indexeddb ^6.0.0 | — | — |
+| JS coverage | @vitest/coverage-v8 (lcov, text) | 3.0.5 | `pnpm run test:coverage` |
+| E2E | @playwright/test | ^1.56.1 | `tests/playwright/playwright.config.ts` |
 
-| Command | Purpose |
-|---|---|
-| `bundle exec rspec spec/path/to/file_spec.rb` | Single Ruby spec |
-| `sh scripts/test.sh` | ScanSolo spec subset + Vitest |
-| `pnpm test` | `TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage` |
-| `bundle exec rubocop --parallel` | Ruby lint (CI) |
-| `pnpm run eslint` | `eslint app/**/*.{js,vue}` |
-| `bundle exec brakeman -q --no-pager` / `bundle-audit check` | Security scan (brakeman non-blocking) |
+Commands:
 
-- CI (`.github/workflows/run_foss_spec.yml`) removes `enterprise/` and `spec/enterprise` and runs backend specs 16-way parallel after `rake db:create` + `db:schema:load`.
+```bash
+pnpm test                                   # TZ=UTC vitest --no-watch --no-cache --no-coverage --logHeapUsage
+bundle exec rspec spec/path/to/file_spec.rb
+scripts/test.sh                             # ScanSolo RSpec files + vitest
+bundle exec rubocop --parallel
+pnpm run eslint
+```
 
 ### External integrations
 
 | System | Client wiring |
 |---|---|
-| Make | HTTParty in `ScanSolo::Make::OutboundRequestService`; inbound `Webhooks::ScanSolo::MakeController` |
-| LLM / embeddings | RubyLLM through `Llm::FeatureRouter` (`ModelResolver`, `EmbeddingService`) |
-| WhatsApp Cloud API | Native `Channel::Whatsapp` / `Whatsapp::SendOnWhatsappService` |
-| Email | Native email channel, ActionMailbox inbound, `ConversationReplyMailer` |
-| Object storage | ActiveStorage (aws-sdk-s3 / azure-blob / google-cloud-storage) |
-| Observability | sentry-*, datadog, newrelic_rpm, scout_apm, elastic-apm, opentelemetry-* (Gemfile) |
+| LLM chat | `ScanSolo::AiAgent::ModelResolver` → `Llm::FeatureRouter` feature `scansolo_agent_response` (`config/llm.yml`) |
+| LLM embeddings | `ScanSolo::Knowledge::EmbeddingService` → `RubyLLM.embed`, feature `scansolo_knowledge_embedding` |
+| Make | `ScanSolo::Make::OutboundRequestService` (HTTParty), Rails credentials `scan_solo.make.*` |
+| Gotenberg | `ScanSolo::Proposal::GotenbergClient`, `SCANSOLO_GOTENBERG_URL` |
+| Object storage | ActiveStorage, `ACTIVE_STORAGE_SERVICE`, MinIO (`STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`) |
+| WhatsApp / e-mail | Native Chatwoot channels (`Channel::Whatsapp`, e-mail inbox + ActionMailbox) |
 
 ## Related documents
 
-- [`dependencies.md`](dependencies.md) — service and infrastructure dependencies
-- [`coding_guidelines.md`](coding_guidelines.md) — lint rules and code patterns
+- [`dependencies.md`](dependencies.md) — external services and shared infrastructure
+- [`coding_guidelines.md`](coding_guidelines.md) — lint and style enforcement
 - [`architecture.md`](architecture.md) — how the stack is layered

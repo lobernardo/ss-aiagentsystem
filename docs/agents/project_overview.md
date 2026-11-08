@@ -6,52 +6,50 @@
 
 ### Purpose
 
-ScanSolo AI Agent System runs ScanSolo's WhatsApp sales operation on Chatwoot Community Edition 4.17.1 (`package.json` version). It adds a guarded AI sales agent, a commercial Kanban pipeline, lead qualification state, RAG knowledge, deterministic follow-up cadences and proposal generation through Make (`README.md`, `app/services/scan_solo/`).
+ScanSolo AI Agent System runs ScanSolo's WhatsApp sales service on Chatwoot Community 4.17.1: an AI agent qualifies leads, the commercial team quotes by e-mail, and the system generates, approves and delivers proposals while a Kanban pipeline and follow-up cadences track every lead (`README.md`, `app/services/scan_solo/`).
 
 ### Business problem
 
-- Leads arriving on WhatsApp need a reply, qualification and a follow-up without manual triage. `ScanSolo::ConversationListener` bootstraps an opportunity and enqueues an AI turn for every eligible inbound message.
-- Qualification data is scattered across messages. `ScanSolo::LeadState` tracks 34 catalog fields (`ScanSolo::Qualification::FieldResolver::CATALOG`) with `confirmado` / `inferido` / `faltante` status.
-- Quotes depend on the commercial team. `ScanSolo::Quote::RequestService` emails the commercial recipient, and `ScanSolo::Quote::ResponseBlockParser` reads the reply without an LLM.
-- Proposals must not carry hallucinated prices. Only `ScanSolo::Proposal::CallbackHandler`, fed by a signed Make callback, writes `value` / `currency` / `artifact_url`.
-- Follow-ups must respect Meta template approval and opt-out. `ScanSolo::Cadence::AttemptPrecheck` and `TemplateAvailabilityGuard` gate every send.
-- Operators need to see what the AI did. `ScanSolo::AuditEvent`, `ScanSolo::AiTurn` evidence and `ScanSolo::ExecutionsFeedQuery` (the Execuções view) record it.
+- Leads on the Meta WhatsApp inbox get no qualification outside business hours without the AI turn (`ScanSolo::AiTurn::TurnOrchestrator`).
+- Qualification data stays scattered in chat history without the per-opportunity lead state (`ScanSolo::LeadState`, 34-field catalog in `ScanSolo::Qualification::FieldResolver::CATALOG`).
+- The commercial team gets no structured quote request without the deterministic e-mail (`ScanSolo::Quote::RequestService`, template `quote_request_email.v2`).
+- Proposals get no approval gate or audit trail without `ScanSolo::Proposal::ApproveService` and `ScanSolo::AuditEvent`.
+- Silent leads get no follow-up without the cadence engine (`ScanSolo::CadenceDueAttemptJob`, cron `*/5`).
 
 ### Consumers and integrations
 
 | System | Role |
 |---|---|
-| WhatsApp leads (Meta WhatsApp Cloud API via native `Channel::Whatsapp`) | Send inbound messages and receive AI replies and cadence/proposal templates |
-| Chatwoot dashboard (Vue 3, `app/javascript/dashboard/routes/dashboard/scansolo/`) | Operator UI for Pipeline, Agent, Knowledge, Follow-ups, Proposals and Executions |
-| Commercial team (native email inbox, `quote_inbox_id`) | Receives quote requests and replies with the commercial block |
-| Make (`credentials scan_solo.make.*`) | Generates the proposal PDF and calls back `POST /webhooks/scan_solo/make` |
-| LLM provider via `lib/llm` / RubyLLM (`config/llm.yml` `scansolo_agent_response`, `scansolo_knowledge_embedding`) | Writes agent replies and computes embeddings |
-| Sidekiq + sidekiq-cron (`config/schedule.yml`) | Runs AI turns, cadence dispatch, the stale-turn sweeper, ingestion and quote/proposal jobs |
-| Administrators (`GET .../scan_solo/status`, `rake scansolo:smoke[account_id]`) | Check operational status |
+| Meta WhatsApp Cloud API (Chatwoot `Channel::Whatsapp`) | Inbound lead messages; outbound AI replies and approved Meta templates (cadence, manual lead, proposal notice) |
+| Chatwoot dashboard (Vue 3, `app/javascript/dashboard/routes/dashboard/scansolo/`) | Operators: Kanban, AI Agent Center, Proposals, Follow-ups, Knowledge, Executions |
+| Native e-mail inbox (quote inbox, `quote_inbox_id`) | Sends quote request / approval / proposal e-mails; receives commercial replies via ActionMailbox |
+| LLM provider via `Llm::FeatureRouter` (`config/llm.yml` `scansolo_agent_response`, `scansolo_knowledge_embedding`) | Agent reply generation; knowledge embeddings |
+| Make (`POST /webhooks/scan_solo/make`, `ScanSolo::Make::OutboundRequestService`) | Proposal generation provider when `SCANSOLO_GOTENBERG_URL` is unset |
+| Gotenberg 8.37.0 (`ScanSolo::Proposal::GotenbergClient`) | Local `.docx` → PDF conversion when `SCANSOLO_GOTENBERG_URL` is set |
+| MinIO / S3 (ActiveStorage) | Proposal PDFs, proposal templates, knowledge files |
 
 ### Macro flow
 
-1. A lead sends a WhatsApp message, and native Chatwoot persists the `Message`.
-2. `AsyncDispatcher` fires `message_created`. `ScanSolo::ConversationListener` checks `ScanSolo::Eligibility` (account flag, published+enabled config, inbox allowlist, no active bot).
-3. `OpportunityBootstrapService` creates or finds the conversation's `PipelineOpportunity` (`novo_lead`) and its `LeadState`, then enrolls the Novo Lead cadence.
-4. Later messages move `novo_lead` to `em_contato`, interrupt the next cadence attempt and run the opt-out keyword check.
-5. `ScanSolo::AiTurnJob` (Redis mutex per conversation) runs `TurnOrchestrator`. The steps are context, RAG, input guardrail, model call, actions, output validation, then a native reply.
-6. When every required field is `confirmado`, `LeadState::CompletionService` concludes qualification, moves the stage to `qualificado` and enqueues `QuoteRequestJob` when the next action is `proposta`.
-7. A quote email goes to the commercial recipient. The reply is parsed, and `Proposal::GenerateService` asks Make for a proposal.
-8. The signed Make callback stores value, currency and PDF. `ProposalDeliveryJob` sends the WhatsApp proposal template with the PDF header.
-9. `DeliveryReconciler` marks the version `sent`, the stage moves to `proposta_enviada` and one post-proposal follow-up is sent.
-10. Every 5 min, `CadenceDueAttemptJob` dispatches due template attempts between 09:00 and 20:00 America/Sao_Paulo.
+1. Lead sends a WhatsApp message → Chatwoot persists a native `Message` → `ScanSolo::ConversationListener#message_created` (wisper, `app/dispatchers/async_dispatcher.rb`).
+2. `ScanSolo::Eligibility` gates: `scansolo_enabled`, published+enabled config, inbox in `allowed_inbox_ids`, no active bot.
+3. `ScanSolo::Pipeline::OpportunityBootstrapService` creates the conversation's `PipelineOpportunity` in `novo_lead` (+ lead state, + `novo_lead` cadence); later messages move it to `em_contato`, interrupt the pending cadence attempt and check opt-out keywords.
+4. `ScanSolo::AiTurnJob` (Redis mutex per conversation) → `TurnOrchestrator`: context + RAG retrieval → `InputGuardrail` → model call → actions via `ScanSolo::Actions::Registry` → `OutputValidator` → `ResponseSender`.
+5. All required fields `confirmado`/`nao_informado` → `ScanSolo::LeadState::CompletionService`: qualification `concluida`, stage `qualificado`, next action `proposta`, enqueue `ScanSolo::QuoteRequestJob`.
+6. `ScanSolo::Quote::RequestService` e-mails the commercial recipient (`quote_recipient_email`, default `comercial@scansolo.com.br`) with a CT-04 reply block; the lead gets a one-time notice.
+7. Commercial reply e-mail → `ScanSolo::QuoteReplyJob` → `ScanSolo::Quote::ReplyProcessor` parses the block deterministically → `replied` → `ScanSolo::Proposal::GenerateService`.
+8. Provider (local Gotenberg or Make callback) fills the version → `awaiting_approval` → approval e-mail with PDF to the commercial team.
+9. Admin or published `commercial_user_id` approves → `ScanSolo::Proposal::DeliveryService` e-mails the PDF to the lead (CC commercial) → `sent` on native `source_id` → stage `proposta_enviada`, WhatsApp notice, `proposta_enviada` cadence.
+10. Operator moves the card to `negociacao` / `ganho` / `perdido`; terminal stages stop all cadence work.
 
 ### Out of scope
 
-- Proprietary `enterprise/` code: the README licensing boundary forbids copying it into ScanSolo. `ScanSolo::Knowledge::EmbeddingService` states it never depends on `enterprise/app/services/captain/`.
-- Proposal document rendering: Make generates the PDF (`ScanSolo::Proposal::MakeProvider`), and Chatwoot only stores and sends it.
-- Direct Meta HTTP calls: `ScanSolo::Messaging::NativeTemplateSender` sends only through native `conversation.messages.create!`.
-- Lexus CRM runtime: the README lists it as a reference source only, not a runtime dependency.
+- Proprietary `enterprise/` code: README "Licensing boundary" forbids copying it; `grep scan_solo enterprise/` returns nothing.
+- The previous Lexus CRM: README states it is a reference source, not a runtime dependency.
+- Tenant-specific downstream integrations beyond proposal generation: README delegates them to Make.
 
 ## Related documents
 
 - [`architecture.md`](architecture.md) — layers, directory layout, async flows
-- [`domain_rules.md`](domain_rules.md) — eligibility, stages, cadence, proposal and lead state rules
-- [`api_contracts.md`](api_contracts.md) — ScanSolo HTTP endpoints and Make callback
+- [`domain_rules.md`](domain_rules.md) — pipeline, qualification, quote, proposal, cadence rules
+- [`api_contracts.md`](api_contracts.md) — ScanSolo REST endpoints and Make callback contract
 - [`tech_stack.md`](tech_stack.md) — languages, frameworks, test tooling

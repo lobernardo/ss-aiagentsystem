@@ -6,196 +6,166 @@
 
 ### Storage
 
-| Item | Value |
-|---|---|
-| Engine | PostgreSQL (`pg` 1.5.3); extensions `vector`, `pg_trgm`, `pgcrypto`, `pg_stat_statements`, `plpgsql` (`db/schema.rb`) |
-| Schema file | `db/schema.rb`, `ActiveRecord::Schema[7.2].define(version: 2026_10_01_000005)`, 121 tables |
-| Migrations | `db/migrate/` (215 files); ScanSolo migrations `20260918005004_create_scan_solo_conversation_extensions` … `20261001000005_add_commercial_settings_to_scan_solo_ai_agent_configs` (34 files) |
-| Migration tool | ActiveRecord migrations; `bundle exec rails db:chatwoot_prepare` (Procfile `release`), `db:migrate` |
-| Vectors | `neighbor` 0.2.3 `has_neighbors :embedding, normalize: true`; `vector(1536)` |
-| Annotations | annotaterb `== Schema Information` headers in `app/models/scan_solo/*.rb` |
-| Seeds | `db/seeds/scansolo_cadence_definitions.rb` |
-| Native tables reused | `accounts`, `contacts`, `conversations`, `messages`, `inboxes`, `users`, `channel_whatsapp` (template catalogue `message_templates`), ActiveStorage |
+- Engine: PostgreSQL (`config/database.yml`), extensions `vector`, `pg_trgm`, `pgcrypto`, `pg_stat_statements` (`db/schema.rb`).
+- Schema: `db/schema.rb`, `ActiveRecord::Schema[7.2]`, version `2026_10_13_100002`.
+- Migrations: `db/migrate/` (222 files; 42 ScanSolo, `20260917231850`…`20261013100002`); run with `make db_migrate` / `rails db:chatwoot_prepare`.
+- Annotations: annotaterb (`.annotaterb.yml`) writes schema comments on models.
+- Files: ActiveStorage — `KnowledgeSource#file`, `ProposalTemplate#file`, `ProposalVersion#document`.
+- Native Chatwoot tables reused: `accounts`, `contacts`, `conversations`, `messages`, `inboxes`, `users`. ScanSolo never adds columns to them except the account flag.
 
-`accounts.scansolo_feature_flags` (`bigint`, default 0) holds bit 1 `scansolo_enabled` (`Account` `has_flags`).
+### Account flag
 
-### Entity relationships
-
-```
-Account 1─* PipelineOpportunity *─1 Contact
-                 │ 1─1 Conversation (unique conversation_id)
-                 ├─1 LeadState 1─* LeadStateEvent
-                 ├─* PipelineStageEvent
-                 ├─* CadenceEnrollment *─1 CadenceDefinition
-                 │        └─* CadenceAttempt ─0..1 Message
-                 ├─1 QuoteRequest ─0..1 ProposalVersion
-                 └─1 Proposal 1─* ProposalVersion (1 is_current)
-Account 1─* ProposalTemplate (≤ 1 active; local mode)
-Conversation 1─1 ConversationExtension      Contact 1─1 ContactExtension
-Message 1─1 AiTurn 1─* AgentActionExecution *─1 AgentAction (by action_id)
-Account 1─* AiAgentConfig (1 draft ─> published_version snapshot)
-Account 1─* KnowledgeSource 1─* KnowledgeChunk
-Account 1─* MakeRequest      MakeCallback (by correlation_id)
-Account 1─* QuoteReply ─0..1 QuoteRequest   Account 1─* TemplateMapping
-AuditEvent ─ polymorphic subject / actor
-```
+- `accounts.scansolo_feature_flags` bigint default 0; bit 1 = `scansolo_enabled` (`has_flags` in `app/models/account.rb`), kept apart from Chatwoot `feature_flags`.
 
 ### Entities
 
-#### `scan_solo_pipeline_opportunities` — `ScanSolo::PipelineOpportunity`
+All tables prefixed `scan_solo_`; models in `app/models/scan_solo/`.
+
+#### PipelineOpportunity (`scan_solo_pipeline_opportunities`)
 
 | Column | Type | Notes |
 |---|---|---|
-| account_id, contact_id | bigint not null | |
-| conversation_id | bigint not null | UNIQUE |
-| owner_id | bigint | → users |
-| stage | integer not null default 0 | `novo_lead 0, em_contato 1, em_qualificacao 2, qualificado 3, proposta_enviada 4, negociacao 5, ganho 6, perdido 7` |
-| lead_source | string | CHECK `IN ('website','manual')`, nil allowed |
-| last_customer_interaction_at | datetime | |
+| `account_id`, `contact_id`, `conversation_id` | bigint, not null | `conversation_id` unique |
+| `owner_id` | bigint | → `users` |
+| `stage` | integer enum | `novo_lead 0, em_contato 1, em_qualificacao 2, qualificado 3, proposta_enviada 4, negociacao 5, ganho 6, perdido 7` |
+| `last_customer_interaction_at` | datetime | |
+| `lead_source` | string | check constraint `website` / `manual` / null |
 
+- has_many `stage_events`, `cadence_enrollments`; has_one `proposal`, `lead_state`, `quote_request`, `conversation_extension` (by `conversation_id`).
 - `after_create` → `LeadState::InitializeService`.
-- `has_one :conversation_extension` (by conversation_id) is a read-only preload path.
 
-#### `scan_solo_pipeline_stage_events` — `ScanSolo::PipelineStageEvent`
+#### PipelineStageEvent (`scan_solo_pipeline_stage_events`)
 
-`opportunity_id`, `from_stage`/`to_stage` (string, validated against stage keys), polymorphic `actor`, `created_at`. Read-only once persisted.
+- `opportunity_id`, `from_stage`, `to_stage` (strings, validated against stage keys), polymorphic `actor`, `created_at`. Read-only once persisted.
 
-#### `scan_solo_lead_states` — `ScanSolo::LeadState`
-
-| Column | Type | Notes |
-|---|---|---|
-| opportunity_id | bigint not null | UNIQUE |
-| intent | string | in `INTENTS` (10 values) or nil |
-| qualification_status | integer default 0 | `em_andamento 0, concluida 1` |
-| qualification_completed_at | datetime | |
-| next_action | string | in `proposta, avaliacao_tecnica, solicitar_documentos, atendimento_humano, aguardar_cliente` |
-| next_action_recorded_at, next_action_source_message_id | datetime, bigint | |
-| authorized_actions | jsonb default `[]` | `[{action, source_message_id, recorded_at}]` |
-| fields | jsonb default `{}` | `{key => {value, status, updated_at, source_message_id, source_attachment_id}}`, status ∈ `confirmado, inferido, faltante, nao_informado` (`nao_informado`: `value` = the lead's own words, audit only) |
-| collection_offered_at | datetime | When the one-time bulk collection offer was sent; null = never offered (CT-10, written once by the `Writer`) |
-| collection_mode | string | `em_bloco` \| `progressiva` (`COLLECTION_MODES`); null = progressive. Recorded once, only after the offer |
-
-#### `scan_solo_lead_state_events` — `ScanSolo::LeadStateEvent`
-
-`lead_state_id`, `subject` ∈ `field, intent, next_action, collection_mode` (`key` `collection_offered_at` or `collection_mode`), `key`, `previous_value`/`previous_status`, `new_value`/`new_status`, `source_message_id`, `source_attachment_id`, `created_at`. Append-only (`readonly?` when persisted).
-
-#### `scan_solo_conversation_extensions` / `scan_solo_contact_extensions`
-
-| Table | Columns | Invariant |
-|---|---|---|
-| conversation_extensions | `conversation_id` UNIQUE, `ai_control_state` int default 0 (`ai_active 0, handoff_requested 1, awaiting_human 2, human_active 3, paused 4, closed 5`) | lazily created by `resolve_for` |
-| contact_extensions | `contact_id` UNIQUE (FK contacts), `opted_out` bool default false, `opted_out_at`, `opted_out_source` (`keyword` / `model_action`) | cleared only by `OptOut::ClearService` |
-
-#### `scan_solo_ai_agent_configs` — `ScanSolo::AiAgentConfig`
-
-| Column | Type / default |
-|---|---|
-| account_id | bigint; partial UNIQUE where `status = 0` (one draft) |
-| status | int default 0 (`draft 0, published 1`) |
-| published_version_id | bigint → self |
-| name, model_provider, model_selection, role, objective, persona, tone, service_hours | string |
-| instructions, service_rules, transfer_criteria, response_limits | text |
-| enabled | bool default false |
-| qualification_playbook, required_qualification_fields, restricted_information, forbidden_subjects, allowed_inbox_ids | jsonb default `[]` |
-| opt_out_keywords | jsonb default `["PARAR","SAIR","STOP"]` |
-| require_proposal_approval | bool default true |
-| quote_inbox_id, commercial_user_id | bigint |
-| quote_recipient_email | string not null default `comercial@scansolo.com.br` |
-| quote_email_validation_mode | bool not null default true (validation paragraph of the quote request e-mail) |
-
-Published rows are immutable snapshots of `FIELDS`.
-
-#### `scan_solo_ai_turns` — `ScanSolo::AiTurn`
+#### LeadState (`scan_solo_lead_states`)
 
 | Column | Type | Notes |
 |---|---|---|
-| message_id | bigint not null | UNIQUE |
-| correlation_id | string not null | UNIQUE |
-| conversation_id, response_message_id | bigint | |
-| invocation_status | int default 0 | `pending 0, suppressed 1, succeeded 2, failed 3` |
-| guardrail_outcome, context_snapshot, knowledge_evidence, action_evidence | jsonb not null | `context_snapshot` also keeps `asked_fields` (keys asked by the reply actually sent, stored by `ResponseSender`; counts the collection rounds) and `collection_offer_instructed` (the turn carried the bulk offer instruction) |
-| model_provider, model_reference | string | |
-| input_tokens, output_tokens, latency_ms | integer | |
-| cost_estimate | decimal(10,6) | |
-| failure_reason | text | |
+| `opportunity_id` | bigint | unique |
+| `intent` | string | ∈ `LeadState::INTENTS` (10 values) |
+| `qualification_status` | integer enum | `em_andamento 0`, `concluida 1` |
+| `qualification_completed_at` | datetime | |
+| `next_action` | string | ∈ `proposta avaliacao_tecnica solicitar_documentos atendimento_humano aguardar_cliente` |
+| `next_action_recorded_at`, `next_action_source_message_id` | datetime, bigint | |
+| `authorized_actions` | jsonb `[]` | |
+| `fields` | jsonb `{}` | `{ key => { value, status, updated_at, source_message_id, source_attachment_id } }`; status ∈ `confirmado inferido faltante nao_informado` |
+| `collection_offered_at`, `collection_mode` | datetime, string | mode ∈ `em_bloco progressiva` |
 
-#### `scan_solo_agent_actions` / `scan_solo_agent_action_executions`
+#### LeadStateEvent (`scan_solo_lead_state_events`)
 
-| Table | Columns | Invariant |
-|---|---|---|
-| agent_actions | `action_id` UNIQUE, `classification` (`read_only 0, automatic 1, requires_confirmation 2, disabled 3`), `schema` jsonb | synced from `Actions::Registry` |
-| agent_action_executions | `action_id`, `turn_id` (FK ai_turns), `audit_event_id` (FK audit_events), `correlation_id`, `idempotency_key` UNIQUE, `params` jsonb, `status` (`pending 0, executed 1, failed 2`), `confirmed_at` | 1 row per idempotency key |
+- `lead_state_id`, `subject` (`field|intent|next_action|collection_mode`), `key`, `previous_value`/`new_value` (text), `previous_status`/`new_status`, `source_message_id`, `source_attachment_id`. Append-only (`readonly?`).
 
-#### `scan_solo_audit_events` — `ScanSolo::AuditEvent`
+#### ConversationExtension (`scan_solo_conversation_extensions`)
 
-`event_type` (indexed), polymorphic `subject` (not null) and `actor`, `correlation_id` (indexed), `payload` jsonb, `created_at` only. Read-only once persisted. No account column: account scope comes through the subject (`ExecutionsFeedQuery`).
+- `conversation_id` unique; `ai_control_state` enum `ai_active 0, handoff_requested 1, awaiting_human 2, human_active 3, paused 4, closed 5`.
 
-#### Cadence tables
+#### ContactExtension (`scan_solo_contact_extensions`)
 
-| Table | Columns | Invariant |
-|---|---|---|
-| `scan_solo_cadence_definitions` | `stage`, `version` default 1, `offsets` jsonb (hours), `active` default true | UNIQUE (stage, version) |
-| `scan_solo_cadence_enrollments` | `opportunity_id` (FK), `cadence_definition_id` (FK), `status` (`active 0, paused 1, cancelled 2, completed 3`), `current_step` default 0, `next_attempt_at`, `paused_at` | partial UNIQUE (opportunity_id, cadence_definition_id) WHERE status IN (0,1) |
-| `scan_solo_cadence_attempts` | `enrollment_id` (FK), `step`, `cadence_version`, `template_reference`, `scheduled_at`, `sent_at`, `result` (`scheduled 0, sent 1, skipped 2, failed 3, cancelled 4, dispatched 5`), `message_id` (FK messages), `last_block_reason`, `last_checked_at`, `external_error` | UNIQUE (enrollment_id, step); terminal result written once |
+- `contact_id` unique (FK `contacts`); `opted_out` bool, `opted_out_at`, `opted_out_source` (`keyword` / `model_action`).
 
-#### `scan_solo_template_mappings` — `ScanSolo::TemplateMapping`
-
-`account_id` (FK), `stage` ∈ `novo_lead, em_contato, em_qualificacao, proposta_enviada, lead_manual_inicial, proposta_acompanhamento`, `step` (int > 0, or null for single-template slots), `template_name`, `language`, `params` jsonb array of `{source, value?}`. UNIQUE (account_id, stage, step) `NULLS NOT DISTINCT`.
-
-#### Knowledge tables
-
-| Table | Columns | Invariant |
-|---|---|---|
-| `scan_solo_knowledge_sources` | `account_id`, `added_by_id` (User), `source_type` (`document 0, faq 1, company_info 2`), `title`, `content`, `origin` (required), `enabled` default true, `index_status` (`pending 0, indexing 1, indexed 2, failed 3`), `index_error`, `indexed_at`, `chunk_count`; ActiveStorage `file` | chunks `dependent: :destroy` |
-| `scan_solo_knowledge_chunks` | `source_id` (FK), `content` not null, `position`, `embedding vector(1536)` | |
-
-#### Quote tables
-
-| Table | Columns | Invariant |
-|---|---|---|
-| `scan_solo_quote_requests` | `account_id`, `opportunity_id` (FK), `status` (`awaiting_reply 0, correction_requested 1, replied 2`), `correlation_id`, `email_conversation_id`, `request_message_id`, `reply_message_id`, `customer_notice_message_id`, `commercial` jsonb `{total_value, schedule, scope, payment_terms, notes}`, `sent_at`, `replied_at`, `rendered_snapshot` jsonb (snapshot of the last e-mail sent, `quote_request_email.v2`), `rendered_digest` (SHA-256), `update_window_ends_at` | UNIQUE opportunity_id, correlation_id, email_conversation_id |
-| `scan_solo_quote_request_updates` | `account_id`, `quote_request_id` (FK), `version_digest`, `message_id`, `sent_at` | UNIQUE (quote_request_id, version_digest): ≤ 1 update e-mail (`quote_request.update_sent`) per version |
-| `scan_solo_quote_replies` | `account_id`, `message_id`, `conversation_id`, `quote_request_id` (FK), `kind` (`unmatched 0, late_reply 1`), `status` (`pending 0, linked 1, discarded 2`), `resolved_by_id` (FK users), `resolved_at` | UNIQUE message_id |
-
-#### Proposal tables
-
-| Table | Columns | Invariant |
-|---|---|---|
-| `scan_solo_proposals` | `opportunity_id` (FK), `current_version_id`, `email_conversation_id` (lead proposal e-mail thread) | UNIQUE opportunity_id, email_conversation_id |
-| `scan_solo_proposal_versions` | `proposal_id` (FK), `version_number`, `is_current` default true, `status` (`generating 0, generated 1, approved 2, sent 3, failed 4, awaiting_approval 5, rejected 6`), `value` decimal(12,2), `currency`, `artifact_url`, `artifact_sha256`, `valid_until`, `proposal_number`, `failure_reason`, `generate_correlation_id`, `send_correlation_id`, `generate_requested_at`, `generate_callback_applied_at`, `send_requested_at`, `send_callback_applied_at`, polymorphic `approved_by`, `approved_at`, polymorphic `rejected_by`, `rejected_at`, `rejection_reason`, `approval_requested_at`, `approval_request_message_id`, `sent_message_id` (lead e-mail), `notice_message_id`, `notice_failure_reason`, `follow_up_message_id`, `quote_request_id` (FK); ActiveStorage `document` | UNIQUE (proposal_id, version_number); partial UNIQUE proposal_id WHERE is_current; partial UNIQUE quote_request_id WHERE status IN (0, 2, 5) (≤ 1 non-terminal version per request); UNIQUE generate_correlation_id, send_correlation_id, proposal_number; index quote_request_id (N versions per request), notice_message_id, polymorphic rejected_by |
-
-`proposal_number` = `SS-<year>-<id 6 digits>`, set by `after_create`. In local mode `document` is attached by `LocalGenerationService` before the result is applied (`artifact_url` null, `artifact_sha256` = SHA-256 of the attached PDF).
-
-#### `scan_solo_proposal_templates` — `ScanSolo::ProposalTemplate` (local mode, CT-06)
+#### AiAgentConfig (`scan_solo_ai_agent_configs`)
 
 | Column | Type | Notes |
 |---|---|---|
-| account_id | bigint not null | FK accounts; templates are always read per account (`active_for(account)`) |
-| uploaded_by_id | bigint | FK users, `ON DELETE SET NULL` |
-| filename | string not null | Original file name |
-| byte_size | bigint not null | |
-| sha256 | string not null | 64 hex of the `.docx`; `template_version` = `"<id>:<sha256>"` |
-| active | boolean not null default false | |
-| created_at, updated_at | datetime | `created_at` = upload instant |
+| `account_id` | bigint | unique where `status = 0` (1 draft per account) |
+| `status` | enum | `draft 0`, `published 1` |
+| `published_version_id` | bigint | self-FK, draft → current published snapshot |
+| `name role objective persona tone service_hours model_provider model_selection` | string | |
+| `instructions service_rules transfer_criteria response_limits` | text | |
+| `enabled` | bool, default false | |
+| `qualification_playbook required_qualification_fields restricted_information forbidden_subjects allowed_inbox_ids` | jsonb `[]` | |
+| `opt_out_keywords` | jsonb | default `["PARAR", "SAIR", "STOP"]` |
+| `require_proposal_approval` | bool, default true | |
+| `quote_inbox_id`, `commercial_user_id` | bigint | |
+| `quote_recipient_email` | string | default `comercial@scansolo.com.br` |
+| `quote_email_validation_mode` | bool, default true | |
 
-ActiveStorage `file` (the `.docx`, never exposed by URL). Partial UNIQUE `account_id WHERE active` (≤ 1 active per account); index `(account_id, created_at)`. Inactive rows are never deleted (history). Sole writer: `Proposal::TemplateUploadService`.
+#### AiTurn (`scan_solo_ai_turns`)
 
-#### Make tables
-
-| Table | Columns | Invariant |
+| Column | Type | Notes |
 |---|---|---|
-| `scan_solo_make_requests` | `account_id` (FK), `correlation_id`, `idempotency_key`, `action`, `payload` jsonb, `status` (`pending 0, sent 1, completed 2, failed 3`), `retry_count` default 0 | UNIQUE correlation_id, idempotency_key; `dead_letter` = failed AND retry_count ≥ 3 |
-| `scan_solo_make_callbacks` | `correlation_id`, `action`, `payload` jsonb, `signature_valid`, `applied`, `rejection_reason`, `created_at` | partial UNIQUE correlation_id WHERE applied; read-only once persisted |
+| `message_id` | bigint | unique (1 turn per trigger message) |
+| `conversation_id`, `response_message_id` | bigint | |
+| `correlation_id` | string | unique |
+| `invocation_status` | enum | `pending 0, suppressed 1, succeeded 2, failed 3` |
+| `model_provider`, `model_reference` | string | |
+| `input_tokens`, `output_tokens`, `latency_ms` | integer | |
+| `cost_estimate` | decimal(10,6) | |
+| `failure_reason` | text | |
+| `context_snapshot`, `guardrail_outcome` | jsonb `{}` | |
+| `knowledge_evidence`, `action_evidence` | jsonb `[]` | |
+
+#### AgentAction / AgentActionExecution
+
+- `scan_solo_agent_actions`: `action_id` unique, `classification` enum `read_only 0, automatic 1, requires_confirmation 2, disabled 3`, `schema` jsonb.
+- `scan_solo_agent_action_executions`: `action_id` (→ `agent_actions.action_id`), `turn_id` (FK `ai_turns`), `correlation_id`, `idempotency_key` unique, `params` jsonb, `status` enum `pending 0, executed 1, failed 2`, `confirmed_at`, `audit_event_id` (FK).
+
+#### AuditEvent (`scan_solo_audit_events`)
+
+- Polymorphic `subject` (not null), polymorphic `actor`, `event_type`, `correlation_id`, `payload` jsonb, `created_at` only. Read-only once persisted.
+
+#### Cadence
+
+| Table | Key columns | Invariants |
+|---|---|---|
+| `scan_solo_cadence_definitions` | `stage`, `version`, `offsets` jsonb (hours), `active` | unique `(stage, version)` |
+| `scan_solo_cadence_enrollments` | `opportunity_id`, `cadence_definition_id`, `status` enum `active 0, paused 1, cancelled 2, completed 3`, `current_step`, `next_attempt_at`, `paused_at` | unique `(opportunity_id, cadence_definition_id)` where status ∈ {0,1} |
+| `scan_solo_cadence_attempts` | `enrollment_id`, `step`, `cadence_version`, `template_reference`, `scheduled_at`, `sent_at`, `result` enum `scheduled 0, sent 1, skipped 2, failed 3, cancelled 4, dispatched 5`, `message_id` (FK), `last_block_reason`, `last_checked_at`, `external_error` | unique `(enrollment_id, step)`; terminal = sent/skipped/failed/cancelled |
+| `scan_solo_template_mappings` | `account_id`, `stage`, `step`, `template_name`, `language`, `params` jsonb | unique `(account_id, stage, step)` nulls not distinct; `step` null only for slots `proposta_enviada lead_manual_inicial proposta_acompanhamento proposta_aviso_email` |
+
+#### Quote
+
+| Table | Key columns | Invariants |
+|---|---|---|
+| `scan_solo_quote_requests` | `account_id`, `opportunity_id`, `email_conversation_id`, `request_message_id`, `reply_message_id`, `customer_notice_message_id`, `status` enum `awaiting_reply 0, correction_requested 1, replied 2`, `correlation_id`, `commercial` jsonb, `sent_at`, `replied_at`, `rendered_snapshot` jsonb, `rendered_digest`, `update_window_ends_at` | unique `opportunity_id`, `correlation_id`, `email_conversation_id` |
+| `scan_solo_quote_request_updates` | `quote_request_id`, `version_digest`, `message_id`, `sent_at` | unique `(quote_request_id, version_digest)` |
+| `scan_solo_quote_replies` | `account_id`, `message_id`, `conversation_id`, `quote_request_id`, `kind` enum `unmatched 0, late_reply 1`, `status` enum `pending 0, linked 1, discarded 2`, `resolved_by_id`, `resolved_at` | unique `message_id` |
+
+#### Proposal
+
+| Table | Key columns | Invariants |
+|---|---|---|
+| `scan_solo_proposals` | `opportunity_id`, `current_version_id`, `email_conversation_id` | unique `opportunity_id`, `email_conversation_id` |
+| `scan_solo_proposal_versions` | `proposal_id`, `version_number`, `status` enum `generating 0, generated 1, approved 2, sent 3, failed 4, awaiting_approval 5, rejected 6`, `is_current`, `value` decimal(12,2), `currency`, `artifact_url`, `artifact_sha256`, `failure_reason`, `generate_*`/`send_*` correlation + timestamps, `approved_*`, `rejected_*`, `rejection_reason`, `approval_requested_at`, `approval_request_message_id`, `sent_message_id`, `notice_message_id`, `notice_failure_reason`, `follow_up_message_id`, `quote_request_id`, `proposal_number`, `valid_until` | unique `(proposal_id, version_number)`; 1 `is_current` per proposal; unique `proposal_number`, `generate_correlation_id`, `send_correlation_id`; 1 version per quote request with status ∈ {generating, approved, awaiting_approval} |
+| `scan_solo_proposal_templates` | `account_id`, `uploaded_by_id`, `filename`, `byte_size`, `sha256` (64 hex), `active` | 1 active per account (partial unique); `template_version` = `"<id>:<sha256>"` |
+
+- `proposal_number` assigned after create: `SS-<year>-<id %06d>`.
+
+#### Make
+
+- `scan_solo_make_requests`: `account_id`, `correlation_id` unique, `idempotency_key` unique, `action`, `payload` jsonb, `status` enum `pending 0, sent 1, completed 2, failed 3`, `retry_count`. Dead letter: `failed` and `retry_count >= 3`.
+- `scan_solo_make_callbacks`: `correlation_id` (unique where `applied`), `action`, `signature_valid`, `applied`, `rejection_reason`, `payload`. Read-only once persisted.
+
+#### Knowledge
+
+- `scan_solo_knowledge_sources`: `account_id`, `added_by_id`, `source_type` enum `document 0, faq 1, company_info 2`, `title`, `content`, `origin` (required), `enabled`, `index_status` enum `pending 0, indexing 1, indexed 2, failed 3`, `index_error`, `indexed_at`, `chunk_count`. `after_commit` on create/content change enqueues `KnowledgeIngestionJob`.
+- `scan_solo_knowledge_chunks`: `source_id` (FK), `content`, `position`, `embedding vector(1536)` (`has_neighbors :embedding, normalize: true`; migration `20260918030002`).
+
+### Relationships
+
+```
+accounts 1─* pipeline_opportunities *─1 contacts
+                  │ 1─1 conversations ─1 conversation_extensions
+                  ├─1 lead_states ─* lead_state_events
+                  ├─* pipeline_stage_events
+                  ├─* cadence_enrollments ─* cadence_attempts ; *─1 cadence_definitions
+                  ├─1 quote_requests ─* quote_request_updates ; ─* quote_replies
+                  └─1 proposals ─* proposal_versions *─1 quote_requests
+contacts 1─1 contact_extensions
+messages 1─1 ai_turns ─* agent_action_executions *─1 agent_actions
+accounts 1─* ai_agent_configs (draft ─> published_version)
+accounts 1─* knowledge_sources ─* knowledge_chunks
+accounts 1─* make_requests ; template_mappings ; proposal_templates
+audit_events → any subject (polymorphic)
+```
 
 ### Cache
 
-- Redis mutex for AI turns: key `SCANSOLO::AI_TURN::CONVERSATION::<conversation_id>`, TTL `ScanSolo::AI_TURN_LOCK_TTL` (3 min). It lives in `ScanSolo::AiTurnJob` through `MutexApplicationJob#with_lock` (`Redis::LockManager`).
-- Postgres advisory transaction lock `hashtext("scansolo_manual_lead:<account_id>:<phone>")` in `Pipeline::ManualLeadService` (no Redis).
-- Redis also backs Sidekiq queues, sidekiq-cron schedules and rack-attack throttles (`config/initializers/01_redis.rb`, `rack_attack.rb`).
-- There is no application-level result cache in `app/services/scan_solo/`.
+- Redis mutex `SCANSOLO::AI_TURN::CONVERSATION::<conversation_id>`, TTL 3 min (`ScanSolo::AiTurnJob`, `MutexApplicationJob`). No `Rails.cache` use in ScanSolo code.
 
 ## Related documents
 
-- [`domain_rules.md`](domain_rules.md) — rules enforced over these tables
-- [`api_contracts.md`](api_contracts.md) — JSON shapes rendered from these entities
-- [`architecture.md`](architecture.md) — services that write each table
+- [`domain_rules.md`](domain_rules.md) — behavior driven by these enums and constraints
+- [`api_contracts.md`](api_contracts.md) — JSON shapes rendered from these tables
+- [`architecture.md`](architecture.md) — services that own each write

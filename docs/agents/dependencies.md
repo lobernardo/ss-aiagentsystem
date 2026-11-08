@@ -6,44 +6,48 @@
 
 ### External services
 
-| Service | Purpose | Wiring / config |
-|---|---|---|
-| Meta WhatsApp Cloud API | Lead conversations; cadence, manual-lead and proposal templates | Native `Channel::Whatsapp`, `Whatsapp::SendOnWhatsappService`; synced `message_templates` read by `TemplateAvailabilityGuard` |
-| Make | Proposal PDF generation (`proposal.generate`) and legacy `proposal.send` | `ScanSolo::Make::OutboundRequestService` (HTTParty); credentials `scan_solo.make.scenario_url`, `secret`, `inbound_signing_secret`; callback `POST /webhooks/scan_solo/make` |
-| LLM provider (OpenAI models via RubyLLM) | Agent replies (`scansolo_agent_response`: gpt-4.1-mini default) | `ScanSolo::AiAgent::ModelResolver`, `ScanSolo::AiTurn::ModelInvoker`, `Llm::FeatureRouter`, `config/llm.yml` |
-| Embedding provider | Knowledge chunk and query vectors (`text-embedding-3-small`) | `ScanSolo::Knowledge::EmbeddingService` → `RubyLLM.embed` |
-| Email (SMTP outbound, ActionMailbox inbound) | Quote request / correction / negotiation emails and commercial replies | Native email inbox (`quote_inbox_id`), `ConversationReplyMailer`; env `SMTP_*`, `RAILS_INBOUND_EMAIL_*`, `MAILER_INBOUND_EMAIL_DOMAIN` |
-| Object storage | Knowledge uploads and proposal PDFs | ActiveStorage (`ACTIVE_STORAGE_SERVICE`, `S3_BUCKET_NAME`, `STORAGE_*`, aws-sdk-s3 / azure-blob / google-cloud-storage) |
-| Error tracking / APM | Exception capture with `scansolo_correlation_id` tag | `ChatwootExceptionTracker` → Sentry (`SENTRY_DSN`); Gemfile also ships datadog, newrelic_rpm, scout_apm, elastic-apm, opentelemetry-* |
+| Service | Purpose |
+|---|---|
+| Meta WhatsApp Cloud API (native `Channel::Whatsapp`) | Lead conversations; approved templates for cadence, manual lead, proposal notice/follow-up (`ScanSolo::Messaging::NativeTemplateSender`) |
+| LLM provider (OpenAI models via `RubyLLM`) | Agent replies, feature `scansolo_agent_response` (gpt-4.1-mini default); embeddings, feature `scansolo_knowledge_embedding` (text-embedding-3-small) — `config/llm.yml` |
+| Make (registered scenario) | Proposal generation provider when local mode is off; outbound `ScanSolo::Make::OutboundRequestService`, inbound `POST /webhooks/scan_solo/make`; credentials `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` |
+| Gotenberg 8.37.0 | `.docx` → PDF conversion (`ScanSolo::Proposal::GotenbergClient`, `SCANSOLO_GOTENBERG_URL`) |
+| SMTP / inbound e-mail (ActionMailbox: `RAILS_INBOUND_EMAIL_SERVICE`, Mailgun/Mandrill/SES keys) | Quote request, approval, proposal e-mails via the quote inbox; commercial replies |
+| Object storage (MinIO in `docker-compose.scansolo.yaml`; S3/Azure/GCS backends available) | ActiveStorage blobs: proposal PDFs, templates, knowledge files |
+| Sentry / APM (sentry-*, datadog, elastic-apm, newrelic_rpm, scout_apm, opentelemetry-*) | Error/perf reporting; ScanSolo reports via `ChatwootExceptionTracker` (9 call sites in services/jobs) |
+| Caddy 2.10.2 (`reverse-proxy` service) | TLS termination and reverse proxy; Let's Encrypt for `SCANSOLO_DOMAIN` |
 
 ### Internal libraries
 
+First-party code ScanSolo depends on (Chatwoot core, same repo):
+
 | Package | Role |
 |---|---|
-| `lib/llm` (`Llm::Config`, `Llm::FeatureRouter`, `Llm::Models`) | First-party LLM routing; ScanSolo resolves models only through it |
-| `lib/custom_exceptions/scan_solo.rb` | ScanSolo exception classes (`ProposalIntegrationNotConfigured`, `CadenceDefinitionMissing`, `Forbidden`, `ManualLeadRejected`, `QuoteInboxMisconfigured`, `DeliveryInsideTransaction`, `NegotiationNotificationFailed`, `QuoteRequestResendRejected`, `QuoteReplyRejected`) |
-| `MutexApplicationJob` / `Redis::LockManager` | Per-conversation AI turn lock |
-| `BaseListener` + `AsyncDispatcher` | Native event bus that `ScanSolo::ConversationListener` subscribes to |
-| `Messages::MessageBuilder`, `ConversationBuilder`, `ContactInboxBuilder` | Native builders reused for private notes and manual-lead conversations |
-| `rubocop/` custom cops | `OneClassPerFile`, `CustomCopLocation`, `AttachmentDownload`, `UseFromEmail` |
-| `enterprise/` overlay | Chatwoot Enterprise code; ScanSolo services state they do not depend on it (`EmbeddingService`, `ModelResolver`) |
+| `lib/llm/` (`Llm::FeatureRouter`, `Llm::Models`, `Llm::Config`) | Model/provider resolution for `ScanSolo::AiAgent::ModelResolver` and `Knowledge::EmbeddingService` |
+| `lib/safe_fetch.rb` (`SafeFetch`) | SSRF-safe download of Make `artifact_url` (PDF only) in `Proposal::ApprovalRequestService` |
+| `lib/custom_exceptions/scan_solo.rb` | `CustomExceptions::ScanSolo::*` error types with codes |
+| `MutexApplicationJob` | Redis lock base for `ScanSolo::AiTurnJob` |
+| `BaseListener` + `app/dispatchers/async_dispatcher.rb` | Event subscription for `ScanSolo::ConversationListener` |
+| `ChatwootExceptionTracker` | Exception reporting |
+| Native mail pipeline (`SendReplyJob` → `Email::SendOnEmailService` → `ConversationReplyMailer`) | Sends quote/proposal e-mails (`ScanSolo::Quote::EmailThread`) |
+| `Api::V1::Accounts::BaseController`, `ApiClient` (JS) | Auth/account scoping for ScanSolo controllers and dashboard API wrappers |
+| `rubocop/*.rb` custom cops | Lint rules (`one_class_per_file`, `attachment_download`, `custom_cop_location`, `use_from_email`) |
 
 ### Shared infrastructure
 
-| Component | Used for | Config |
-|---|---|---|
-| PostgreSQL + pgvector | All `scan_solo_*` tables, `vector(1536)` embeddings, advisory locks | `config/database.yml`, `POSTGRES_*` |
-| Redis | Sidekiq backend, sidekiq-cron, AI turn mutex, rack-attack store (`velma` namespace) | `config/initializers/01_redis.rb`, `REDIS_URL`, `REDIS_SENTINELS` |
-| Sidekiq 7.3.10 | Queues `medium` (AI turn, quote, proposal delivery), `low` (knowledge ingestion), `scheduled_jobs` (cron) | `config/sidekiq.yml`, `SIDEKIQ_CONCURRENCY` |
-| sidekiq-cron 2.4.0 | `scan_solo_cadence_due_attempt_job`, `scan_solo_stale_turn_sweeper_job` every 5 min | `config/schedule.yml` |
-| rack-attack | ScanSolo throttles | `RATE_LIMIT_SCANSOLO_KNOWLEDGE_WRITES` (20), `RATE_LIMIT_SCANSOLO_RETRIEVAL_TESTS` (30), `RATE_LIMIT_SCANSOLO_PUBLISH` (10), `RATE_LIMIT_SCANSOLO_MAKE_CALLBACK` (60) per minute |
-| Log redaction | Secret-shaped tokens → `[REDACTED]` in every log line | `config/initializers/scansolo_log_redaction.rb` |
-| Rails encrypted credentials | Make URLs/secrets (server-side only) | `config/credentials.yml.enc`; `docker-compose.scansolo.yaml` mounts `SCANSOLO_CREDENTIALS_DIR` |
-| Docker Compose production overlay | Healthchecks, restart, log rotation | `docker-compose.production.yaml` + `docker-compose.scansolo.yaml` (`SCANSOLO_DOMAIN`, `SCANSOLO_IMAGE_TAG`) |
-| Operational check | Pending migrations, cadence definitions, LLM key, inbox conflicts, cron, Make integration | `ScanSolo::StatusReport` via `GET .../scan_solo/status` and `rake scansolo:smoke[account_id]` |
+| Component | Used for |
+|---|---|
+| PostgreSQL 16 + pgvector (`vector` extension, `neighbor` gem) | All `scan_solo_*` tables; `knowledge_chunks.embedding vector(1536)` |
+| Redis | Sidekiq backend; AI turn mutex `SCANSOLO::AI_TURN::CONVERSATION::<id>`; rack-attack throttle store |
+| Sidekiq 7.3.10 + sidekiq-cron | Queues `medium`, `low`, `scheduled_jobs`; cron `*/5` cadence due attempts and stale turn sweeper (`config/schedule.yml`) |
+| rack-attack 6.7.0 | ScanSolo throttles: Make callback 60/min/IP, knowledge writes 20, retrieval tests 30, publish 10 per account/min |
+| ActionCable (`config/cable.yml`) | Native realtime updates of messages/conversations |
+| Rails encrypted credentials (`SCANSOLO_CREDENTIALS_DIR` mounted in prod compose) | Make secrets |
+| Log redaction (`config/initializers/scansolo_log_redaction.rb`) | Every log line passes through `ScanSolo::AiTurn::PromptRedactor` |
+| Backup service (`postgres:16.10-alpine`, `scansolo_backups` volume) | Database backups in prod compose |
 
 ## Related documents
 
-- [`tech_stack.md`](tech_stack.md) — versions of frameworks and gems
-- [`architecture.md`](architecture.md) — where each integration is called
-- [`api_contracts.md`](api_contracts.md) — Make request/callback formats
+- [`tech_stack.md`](tech_stack.md) — versions of runtime, frameworks and test tools
+- [`architecture.md`](architecture.md) — integration points per layer
+- [`project_overview.md`](project_overview.md) — consumers and macro flow

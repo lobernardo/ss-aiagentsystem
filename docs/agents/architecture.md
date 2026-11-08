@@ -6,139 +6,129 @@
 
 ### Style
 
-Rails MVC monolith (Chatwoot) with a namespaced `ScanSolo::` extension layer. Thin controllers, service objects, Pundit policies, Wisper-style listeners and Sidekiq jobs are bolted onto native Chatwoot seams (`AsyncDispatcher`, `Message` creation, `MutexApplicationJob`). There is also an `enterprise/` overlay and a Vue 3 SPA served by Vite.
+Rails 7.2 MVC monolith (Chatwoot Community) with a namespaced `ScanSolo` extension layer: thin controllers, service objects (`.call`), event listener on the native dispatcher, Sidekiq jobs, and a Vue 3 + Pinia dashboard module.
 
 ### Directory layout
 
 ```
-.
-├── app/
-│   ├── controllers/api/v1/accounts/scan_solo/   # ScanSolo REST API (account-scoped, BaseController gate)
-│   ├── controllers/webhooks/scan_solo/          # Make callback (only unauthenticated ScanSolo endpoint)
-│   ├── dispatchers/async_dispatcher.rb          # registers ScanSolo::ConversationListener.instance
-│   ├── jobs/scan_solo/                          # ai_turn, cadence_due_attempt, stale_turn_sweeper, knowledge_ingestion, quote_*, proposal_delivery,
-│   │                                            #   proposal_local_generation
-│   ├── models/scan_solo/                        # 23 ScanSolo ActiveRecord models (scan_solo_* tables)
-│   ├── policies/scan_solo/                      # Pundit policies, deny-by-default ScanSolo::ApplicationPolicy
-│   ├── services/scan_solo/                      # business core: actions, ai_turn, cadence, handoff, knowledge, lead_state,
-│   │                                            #   make, messaging, negotiation, notifications, opt_out, pipeline, proposal,
-│   │                                            #   qualification, quote, test_mode
-│   ├── views/api/v1/accounts/scan_solo/         # jbuilder response shapes
-│   └── javascript/dashboard/
-│       ├── api/scansolo*.js                     # axios ApiClient subclasses
-│       ├── store/scansolo/                      # Pinia stores
-│       └── routes/dashboard/scansolo/           # pages: agent, executions, followups, knowledge, pipeline, proposals
-├── config/
-│   ├── routes.rb                                # namespace :scan_solo (line 462), webhooks/scan_solo/make (line 756)
-│   ├── schedule.yml                             # sidekiq-cron: scan_solo_cadence_due_attempt_job, scan_solo_stale_turn_sweeper_job
-│   ├── llm.yml                                  # scansolo_agent_response, scansolo_knowledge_embedding features
-│   └── initializers/                            # scansolo_constants.rb, scansolo_log_redaction.rb, rack_attack.rb
-├── db/migrate/                                  # 215 migrations; ScanSolo 20260918005004..20261001000005
-├── lib/custom_exceptions/scan_solo.rb           # ScanSolo exception classes
-├── lib/tasks/scansolo.rake                      # load_cadence_definitions, backfill_lead_states, backfill_lead_source, smoke
-├── enterprise/                                  # Chatwoot Enterprise overlay (separate license)
-├── spec/                                        # RSpec; ScanSolo specs under */scan_solo/ (152 files)
-├── docker/ docker-compose.scansolo.yaml         # images + ScanSolo production overlay
-└── deployment/                                  # systemd units, nginx
+app/
+  controllers/api/v1/accounts/scan_solo/   # 14 account-scoped controllers + contacts/, conversations/, knowledge/
+  controllers/webhooks/scan_solo/          # make_controller.rb — only unauthenticated ScanSolo endpoint
+  dispatchers/async_dispatcher.rb          # registers ScanSolo::ConversationListener.instance
+  jobs/scan_solo/                          # 10 jobs (AI turn, cadence, quote, proposal, knowledge, sweeper)
+  models/scan_solo/                        # 25 models, tables scan_solo_*
+  policies/scan_solo/                      # Pundit policies (ScanSolo::ApplicationPolicy default-deny)
+  serializers/scan_solo/                   # cadence_enrollment_serializer.rb
+  services/scan_solo/                      # domain services, one folder per bounded area
+    actions/  ai_agent/  ai_turn/  cadence/  handoff/  knowledge/  lead_state/  make/
+    messaging/  negotiation/  notifications/  opt_out/  pipeline/  proposal/  qualification/  quote/  test_mode/
+  views/api/v1/accounts/scan_solo/         # jbuilder responses
+  javascript/dashboard/
+    api/scansolo*.js                       # 13 axios ApiClient wrappers (accountScoped)
+    routes/dashboard/scansolo/             # pipeline/ agent/ proposals/ followups/ knowledge/ executions/ components/
+    store/scansolo/                        # 9 Pinia stores (defineStore)
+config/
+  routes.rb                                # namespace :scan_solo (lines 462-536), webhook line 759
+  schedule.yml                             # sidekiq-cron: cadence due attempts, stale turn sweeper
+  llm.yml                                  # scansolo_agent_response, scansolo_knowledge_embedding features
+  scan_solo/quote_request_email.yml        # quote e-mail service labels / pending items
+  initializers/scansolo_constants.rb       # AI_TURN_* timeouts, PIPELINE_STALE_THRESHOLD
+  initializers/scansolo_log_redaction.rb   # log formatter through PromptRedactor
+db/migrate/                                # ScanSolo migrations 20260917231850…20261013100002
+db/seeds/scansolo_cadence_definitions.rb   # cadence offsets per stage
+lib/custom_exceptions/scan_solo.rb         # CustomExceptions::ScanSolo::*
+lib/tasks/scansolo.rake                    # load_cadence_definitions, backfills, smoke
+enterprise/                                # Chatwoot Enterprise overlay — no ScanSolo code
+docker-compose.scansolo.yaml               # prod: rails, sidekiq, postgres, redis, gotenberg, minio, reverse-proxy (caddy), backup
 ```
 
 ### Layer responsibilities
 
 | Layer | Owns | Does NOT own |
 |---|---|---|
-| `Api::V1::Accounts::ScanSolo::BaseController` + controllers | `scansolo_enabled` gate (404), Pundit authorize (403), request-boundary 422 validation, strong params | Business rules, state transitions |
-| `Webhooks::ScanSolo::MakeController` | Mapping verifier/applier outcome to 401/422/200 | Signature check, persistence |
-| `ScanSolo::ConversationListener` | Eligibility classification, routing to services/jobs; delivery reconciliation of the template origins `cadence`, `proposal`, `manual_lead`, `proposal_email` (lead proposal e-mail), `proposal_notice` (WhatsApp notice), `quote_request_email` and `quote_request_update` (quote request e-mails); an incoming attachment, location or map URL delegates to `Quote::UpdateScheduler` | AI logic, writes (delegates every write) |
-| `services/scan_solo/*` | Every write and business rule; one "sole path" service per state change | HTTP concerns |
-| `jobs/scan_solo/*` | Async boundary, locking, cron entry | Eligibility logic (`AttemptPrecheck` decides) |
-| `models/scan_solo/*` | Associations, enums, validations, unique-index invariants | Orchestration |
-| `policies/scan_solo/*` | Role checks (administrator, assigned agent, owner) | Data scoping (controllers scope by `Current.account`) |
-| jbuilder views | JSON response shape | Queries beyond preloads |
-| Vue `scansolo` routes/stores | UI, camelCase state via `camelcase-keys` | Validation authority |
+| Controllers (`Api::V1::Accounts::ScanSolo::*`) | `scansolo_enabled` 404 gate, Pundit `authorize` (→ 403), request-shape validation → 422 codes | Domain rules, state transitions |
+| Webhook (`Webhooks::ScanSolo::MakeController`) | Status mapping 401/422/200 | Signature/schema checks (`Make::CallbackVerifier`), persistence (`Make::CallbackApplicationService`) |
+| Listener (`ScanSolo::ConversationListener`) | Eligibility classification, routing incoming/outgoing/delivery/quote-reply events | Any AI logic or direct writes (delegates to services/jobs) |
+| Jobs (`app/jobs/scan_solo/`) | Queueing, retries, Redis mutex (`AiTurnJob`), row locks for due attempts | Business decisions (`Cadence::AttemptPrecheck` decides) |
+| Services (`app/services/scan_solo/`) | Every state change; sole-path services (`StageTransitionService`, `LeadState::Writer`, `Actions::Executor`, `Proposal::CallbackHandler`) | HTTP rendering |
+| Models (`app/models/scan_solo/`) | Enums, validations, associations, append-only `readonly?` on audit/event rows | Cross-aggregate workflows |
+| Views (jbuilder) | JSON shape | Queries beyond preloaded associations |
+| Frontend (`routes/dashboard/scansolo`, `store/scansolo`) | UI, Pinia state, route guard on `scansolo_enabled` | Authorization (server-side policies) |
 
 ### External integration points
 
 | System | Client/config | Notes |
 |---|---|---|
-| Make | `ScanSolo::Make::OutboundRequestService` (HTTParty, `credentials scan_solo.make.scenario_url/secret`) | 10 s timeout; Bearer + `X-Idempotency-Key`; inbound HMAC `X-Make-Signature` |
-| LLM | `ScanSolo::AiTurn::ModelInvoker` → `lib/llm` / RubyLLM, `Llm::FeatureRouter` | Timeout `AI_TURN_MODEL_TIMEOUT` 45 s, 1 retry |
-| Embeddings | `ScanSolo::Knowledge::EmbeddingService` → `RubyLLM.embed` | `text-embedding-3-small`, vector(1536) |
-| WhatsApp (Meta) | Native `Channel::Whatsapp` + `Whatsapp::SendOnWhatsappService` | Template catalogue from `channel.message_templates` |
-| Email | Native email inbox, `ConversationReplyMailer` | Quote request / reply / negotiation threads |
-| Gotenberg (local mode) | `ScanSolo::Proposal::GotenbergClient` (`rest-client` multipart `POST $SCANSOLO_GOTENBERG_URL/forms/libreoffice/convert`) | Only when `SCANSOLO_GOTENBERG_URL` is set; open 5 s / read 60 s; internal Compose network, no published port; never inside an open transaction (`DeliveryInsideTransaction`) |
-| ActiveStorage | `KnowledgeSource#file`, `ProposalVersion#document`, `ProposalTemplate#file` | Proposal PDF served via `rails_blob_url`; the `.docx` template is never exposed by URL |
-| Error tracking | `ChatwootExceptionTracker` | Tagged with `scansolo_correlation_id` |
+| LLM (chat) | `ScanSolo::AiTurn::ModelInvoker` → `RubyLLM` via `Llm::FeatureRouter` feature `scansolo_agent_response` | Models gpt-4.1-mini (default), gpt-4.1, gpt-5.1, gpt-5.2; timeout 45 s, 1 retry |
+| LLM (embeddings) | `ScanSolo::Knowledge::EmbeddingService` → `RubyLLM.embed`, feature `scansolo_knowledge_embedding` | text-embedding-3-small, `vector(1536)` |
+| Make | `ScanSolo::Make::OutboundRequestService` (HTTParty, 10 s), credentials `scan_solo.make.{scenario_url,secret,inbound_signing_secret}` | Inbound HMAC-SHA256 `X-Make-Signature` |
+| Gotenberg | `ScanSolo::Proposal::GotenbergClient`, `SCANSOLO_GOTENBERG_URL` | `POST /forms/libreoffice/convert`; open 5 s / read 60 s |
+| WhatsApp templates | `ScanSolo::Messaging::NativeTemplateSender`, `TemplateResolver`, `scan_solo_template_mappings` | Native Chatwoot WhatsApp channel |
+| E-mail | `ScanSolo::Quote::EmailThread` → native `SendReplyJob`; inbound via ActionMailbox | Quote inbox from published config |
+| Object storage | ActiveStorage (`ACTIVE_STORAGE_SERVICE`, MinIO in prod compose) | `SafeFetch` for Make `artifact_url` |
 
-### Macro flow: inbound message to AI reply
-
-```
-WhatsApp msg ──> native Message ──> AsyncDispatcher ──> ScanSolo::ConversationListener
-                                                         │ reconcile_delivery (scansolo_origin)
-                                                         │ route_quote_reply (quote inbox)
-                                                         │ Eligibility.for_message ── no ──> stop
-                                                         v yes
-                          OpportunityBootstrapService ── InboundMessageTransitionRule
-                          ReplyInterruptionService   ── OptOut::KeywordMatcher/MarkService
-                                                         │
-                                                         v
-                        ScanSolo::AiTurnJob (queue medium, Redis mutex per conversation)
-                                                         │
-                                                         v
-   TurnOrchestrator: AiTurn row ─> recheck ─> AttachmentReader ─> ContextAssembler (RAG)
-                     ─> InputGuardrail ─> [≤2x] PromptBuilder ─> ModelInvoker
-                     ─> lock ConversationExtension ─> AttemptRunner (savepoint):
-                          LeadState writes ─> Actions::Registry ─> CompletionService
-                          ─> OutputValidator ── blocked ──> rollback / regenerate once
-                          ─> ResponseSender (native message, scansolo_origin: ai)
-```
-
-### Macro flow: cadence dispatch
+### Macro flow: inbound WhatsApp message
 
 ```
-sidekiq-cron */5 ──> CadenceDueAttemptJob (scheduled_jobs)
-   for each scheduled attempt with scheduled_at <= now (≤1 per enrollment per run)
-     lock attempt ─> AttemptPrecheck ─┬─ cancel ─> record_blocked + LifecycleService.cancel!
-                                      ├─ defer  ─> record_blocked (stays scheduled)
-                                      └─ send   ─> SendingWindow? no ─> reschedule next 09:00
-                                                   yes ─> NativeTemplateSender ─> attempt dispatched
-   native status update ──> ConversationListener#message_updated ──> DeliveryReconciler ─> sent/failed
+WhatsApp msg -> Chatwoot Message (native)
+      |
+      v
+AsyncDispatcher -> ScanSolo::ConversationListener#message_created
+      |-- outgoing w/ scansolo_origin --> Messaging::DeliveryReconciler
+      |-- incoming on quote e-mail inbox --> QuoteReplyJob
+      v
+Eligibility.for_message  (flag, published config, allowlist, no bot)
+      | eligible + incoming
+      v
+OpportunityBootstrapService --(existing)--> record interaction
+      |                                     InboundMessageTransitionRule (novo_lead->em_contato)
+      |                                     Cadence::ReplyInterruptionService
+      v
+OptOut::KeywordMatcher --> OptOut::MarkService
+      v
+Quote::UpdateScheduler (attachment / map URL)
+      v
+AiTurnJob [queue medium, Redis mutex 3 min]
+      v
+TurnOrchestrator -> InputGuardrail -> ModelInvoker -> AttemptRunner
+                     (Actions::Registry -> LeadState::Writer -> CompletionService
+                      -> OutputValidator -> ResponseSender)
 ```
 
-### Macro flow: quote to proposal
+### Macro flow: quote → proposal
 
 ```
-CompletionService (next_action proposta) ─after commit─> QuoteRequestJob (retry 1/5/15 min)
-  ─> Quote::RequestService ─> RequestEmail::Snapshot ─> RequestEmail (CT-01, quote_request_email.v2)
-  ─> email thread to commercial recipient (lead attachments ≤ 15 MiB) + customer notice
-LeadState::Writer (field changed) / ConversationListener (attachment, location) ─after commit─> Quote::UpdateScheduler
-  ─ fixed 10 min window ─> QuoteRequestUpdateJob ─> Quote::UpdateService ─> CT-03 update e-mail (quote_request.update_sent)
-retries exhausted / native message failed ─> Quote::DeliveryFailureService ─> private note + quote_request.delivery_failed
-commercial reply (quote inbox) ─> ConversationListener ─> QuoteReplyJob ─> ReplyProcessor
-  ─ valid block (request open, incl. after a rejection) ─> GenerateService ─> Integration.provider!
-      local mode (SCANSOLO_GOTENBERG_URL set, precedence) ─> LocalProvider ─after commit─> ProposalLocalGenerationJob (medium,
-        retry 30 s / 2 min) ─> LocalGenerationService: recheck ─> account ProposalTemplate ─> TemplateValues + TemplateRenderer
-        ─> GotenbergClient ─> Gotenberg ─> PDF blob attached to ProposalVersion#document ─> CallbackHandler (same path as Make)
-      otherwise ─> MakeProvider ─> OutboundRequestService ─> Make
-  ─ invalid     ─> correction email
-  ─ request already replied ─> QuoteReply late_reply (never an approval)
-Make ─> POST /webhooks/scan_solo/make ─> CallbackVerifier ─> CallbackApplicationService (total_value check)
-  ─> CallbackHandler (value/currency/artifact_url, awaiting_approval) ─after commit─> ProposalApprovalRequestJob
-  ─> ApprovalRequestService (PDF to ActiveStorage, CT-05 e-mail on the quote thread)
-Proposals screen ─> POST approve ─> ApproveService ─after commit─> ProposalDeliveryJob
-  ─> DeliveryService (e-mail To lead, CC commercial, PDF; proposal thread)
-                 ─> POST reject ─> RejectService (request back to awaiting_reply)
-native SendReplyJob (source_id) ─> ConversationListener ─> DeliveryReconciler ─> sent
-  ─> SuccessHandler (stage proposta_enviada) ─after commit─> LeadNoticeService (WhatsApp, no PDF) ─> FollowUpService
-lead reply on the proposal thread ─> QuoteReplyJob ─> ReplyProcessor ─> LeadEmailReplyService ─> ReplyInterruptionService
+CompletionService --after commit--> QuoteRequestJob --> Quote::RequestService
+      --> e-mail to quote_recipient_email (quote inbox thread)
+commercial reply --> ActionMailbox --> Listener --> QuoteReplyJob --> Quote::ReplyProcessor
+      | valid CT-04 block                         | invalid block
+      v                                           v
+QuoteRequest replied                         correction_requested + correction e-mail
+      v
+Proposal::GenerateService --+-- SCANSOLO_GOTENBERG_URL set --> ProposalLocalGenerationJob --> Gotenberg
+                            +-- else --> Make::OutboundRequestService --> Make --> POST /webhooks/scan_solo/make
+      v
+Proposal::CallbackHandler --> awaiting_approval --> ProposalApprovalRequestJob (PDF e-mail to commercial)
+      v  POST .../proposals/:id/approve
+ProposalDeliveryJob --> Proposal::DeliveryService (e-mail to lead, CC commercial)
+      v  DeliveryReconciler sees source_id
+version sent --> stage proposta_enviada --> LeadNoticeService (WhatsApp) + cadence
 ```
 
-In local mode no `MakeRequest` is created and Make is never called; `ApprovalRequestService` finds the PDF already attached and downloads nothing. The template is uploaded per account through `POST .../scan_solo/proposal_template` (`TemplateUploadService`, admin only).
+### Macro flow: scheduled jobs
 
-Contracts of this flow: `.spec/features/scansolo-proposta-template-local/openapi.yaml` (local mode: template API, retry, `integration_state`), `.spec/features/scansolo-proposta-aprovacao-email/openapi.yaml` (HTTP) and `.spec/features/scansolo-proposta-aprovacao-email/asyncapi.yaml` (Make request/callback, e-mails, notice). Quote request and update e-mails: `.spec/features/scansolo-solicitacao-orcamento-email/openapi.yaml` (config field) and `.spec/features/scansolo-solicitacao-orcamento-email/asyncapi.yaml` (CT-01, CT-03, CT-06, failure note).
+```
+sidekiq-cron */5 (queue scheduled_jobs)
+  |-- CadenceDueAttemptJob --> row lock attempt --> AttemptPrecheck
+  |       send   --> NativeTemplateSender (09:00-20:00 America/Sao_Paulo)
+  |       cancel --> attempt cancelled (opt_out / conversation_resolved)
+  |       defer  --> last_block_reason, retried next cycle
+  `-- StaleTurnSweeperJob --> pending AiTurn older than 10 min --> failed (stale_pending)
+```
 
 ## Related documents
 
-- [`domain_rules.md`](domain_rules.md) — rules each service enforces
-- [`api_contracts.md`](api_contracts.md) — endpoint and message contracts
-- [`data_model.md`](data_model.md) — scan_solo_* tables and invariants
+- [`project_overview.md`](project_overview.md) — purpose, consumers, end-to-end flow
+- [`data_model.md`](data_model.md) — scan_solo_* tables and relationships
 - [`dependencies.md`](dependencies.md) — external services and shared infrastructure
+- [`coding_guidelines.md`](coding_guidelines.md) — enforced conventions

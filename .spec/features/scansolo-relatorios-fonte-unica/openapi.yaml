@@ -1,0 +1,781 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Relatórios e fonte única de "encaminhado" — REST contract delta (CT-01, CT-02, CT-03, CT-04)
+  version: "1.8.0"
+  description: >
+    Delta over `.spec/features/scansolo-operacao-centralizada/openapi.yaml` (v1.7.0), which is the
+    latest contract defining `PipelineOpportunity` / `PipelineOpportunityDetail`. Only operations and
+    schemas NEW or CHANGED by SPEC `scansolo-relatorios-fonte-unica` v1.3 are listed; every other
+    path of the prior contracts stays valid and unchanged. Base path verified at `config/routes.rb:462`
+    (`namespace :scan_solo`). Every endpoint keeps the `BaseController` 404 gate when
+    `Account#scansolo_enabled?` is false (runs before authentication) and the ScanSolo Pundit 403
+    `{ "error": "forbidden" }`.
+
+    CHANGES (all additive, flagged, never silent):
+    (1) NEW `GET /accounts/{account_id}/scan_solo/reports` (CT-01; RF-07..RF-12, RF-14). Read-only.
+    (2) `PipelineOpportunity` gains `commercial_status` and `commercial_forwarded_at` (CT-02; RF-01,
+    RF-02, RF-03). `quote_request_status` and `proposal_status` stay.
+    (3) `QuoteRequestStatus` gains the value `handled_manually` (CT-05; RF-16). Additive enum value in
+    a response field: the only client is the in-house dashboard, updated in the same delivery
+    (scansoloLabels.js gains the label).
+    (4) NEW `POST /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}/quote_request/handled_manually`
+    (CT-03; RF-15, RF-16, RF-17 single mode, RF-20).
+    (5) NEW `POST /accounts/{account_id}/scan_solo/quote_requests/handled_manually` (CT-04; RF-15..RF-18,
+    RF-17 bulk mode, RF-20).
+    No response body of this delta contains message content, phone number, e-mail address or a raw
+    `failure_reason` (RNF-01).
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: app.scansolo.local
+
+security:
+  - userApiKey: []
+
+paths:
+  /accounts/{account_id}/scan_solo/reports:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: showScanSoloReport
+      summary: Weekly or monthly report (CT-01; RF-07..RF-12, RF-14)
+      description: >
+        NEW (CT-01). Any authenticated member of the account (administrator or agent) — same policy as
+        the other read-only ScanSolo modules (RF-11). Never writes to the database (RF-11, RF-14).
+        A closed week (exclusive end <= now) with a stored snapshot returns the stored payload with
+        `source = "snapshot"`; the current week, any month and a closed week without snapshot are
+        computed live with `source = "live"` (RF-14). Periods are resolved in `America/Sao_Paulo`
+        as the half-open range `[starts_at, ends_at)` (RF-07).
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/ReportPeriod'
+          description: Anything other than `week`/`month` (including absent) → 422 `invalid_period` (RF-12).
+        - name: anchor
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+          description: >
+            Any date inside the requested period. Absent → today in `America/Sao_Paulo`. Present but not a
+            valid `YYYY-MM-DD` calendar date (e.g. `2026-02-30`) → 422 `invalid_anchor` (RF-12).
+      responses:
+        '200':
+          description: The report of the period.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid query parameters (RF-12).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportRejection'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listPipelineOpportunities
+      summary: Kanban list (CHANGED by CT-02 — additive fields)
+      description: >
+        CHANGED (CT-02). Same request, filters and preloads as before; each item gains
+        `commercial_status` and `commercial_forwarded_at`, computed from the preloaded `quote_request`
+        and `proposal.current_version` without extra queries per item (RNF-02).
+      responses:
+        '200':
+          description: Opportunities of the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PipelineOpportunity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    get:
+      operationId: showPipelineOpportunity
+      summary: Opportunity detail (CHANGED by CT-02 — additive fields)
+      description: >
+        CHANGED (CT-02). Same body as before plus `commercial_status` and `commercial_forwarded_at`.
+        The same shape is returned by update, stage_transitions, create and CT-03.
+      responses:
+        '200':
+          description: Opportunity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/pipeline_opportunities/{id}/quote_request/handled_manually:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    post:
+      operationId: markQuoteRequestHandledManually
+      summary: Mark the proposal as sent manually — single mode (CT-03; RF-15, RF-16, RF-17, RF-20)
+      description: >
+        NEW (CT-03). No request body. Policy: member of the account (`account_user.present?`).
+        Accepted only when the quote request is `awaiting_reply`/`correction_requested` and the stage is
+        `qualificado`/`proposta_enviada`, checked under the quote request row lock (RF-15, RF-20). In
+        one transaction: transition to `proposta_enviada` through `StageTransitionService` with the user
+        as actor (no transition when already there), quote request → `handled_manually` with
+        `handled_manually_at`/`handled_manually_by_id`, 1 audit `quote_request.handled_manually`
+        with `mode = "single"` (CT-07). The post-proposal cadence enrolled by the transition is kept
+        (RF-17 single). No message, e-mail, Make request or proposal version is created (RF-17).
+      responses:
+        '200':
+          description: The updated opportunity, same shape as the show (`commercial_status = proposta_enviada_manual`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineOpportunityDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Not eligible; nothing is written (RF-15, RF-20).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HandledManuallyRejection'
+
+  /accounts/{account_id}/scan_solo/quote_requests/handled_manually:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: bulkMarkQuoteRequestsHandledManually
+      summary: Mark selected proposals as sent manually — bulk mode (CT-04; RF-17, RF-18, RF-20)
+      description: >
+        NEW (CT-04). Same policy as CT-03. Each id is processed independently with the CT-03 rules and
+        effects, plus the bulk cadence handling: every `active`/`paused` post-proposal enrollment of the
+        opportunity (definition `stage = proposta_enviada`) is cancelled through
+        `Cadence::LifecycleService.cancel!` in the same transaction, and the audit payload carries
+        `mode = "bulk"` and `cadence_skipped = "legacy_bulk"` (RF-17 bulk, CT-07). A failure on one id
+        never rolls back the others. An id of another account or nonexistent yields `not_found` in its
+        item (RF-18).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkHandledManuallyRequest'
+      responses:
+        '200':
+          description: One result per requested id, in request order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkHandledManuallyResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: "`opportunity_ids` missing, empty, or not an array of integers."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkHandledManuallyInputRejection'
+
+components:
+  securitySchemes:
+    userApiKey:
+      type: apiKey
+      in: header
+      name: api_access_token
+      description: Existing Chatwoot session/API-token auth, unchanged.
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ResourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid authentication, or user of another account (native base behavior).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    Forbidden:
+      description: Authenticated but denied by the ScanSolo Pundit policy.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+    NotFound:
+      description: Resource not found in the account, or account not ScanSolo-enabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScanSoloError'
+
+  schemas:
+    ScanSoloError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    PipelineStage:
+      type: string
+      enum: [novo_lead, em_contato, em_qualificacao, qualificado, proposta_enviada, negociacao, ganho, perdido]
+
+    QuoteRequestStatus:
+      type: string
+      description: CHANGED (CT-05) — `handled_manually` (3) appended; existing values keep their integers.
+      enum: [awaiting_reply, correction_requested, replied, handled_manually]
+
+    CommercialStatus:
+      type: string
+      description: >
+        RF-01 — single rule in `ScanSolo::Reports::CommercialStatus` (first true row wins): no quote
+        request → `nao_encaminhado`; request `handled_manually` → `proposta_enviada_manual`; current
+        version `sent` → `proposta_enviada`; current version `awaiting_approval` →
+        `proposta_em_aprovacao`; request `awaiting_reply`/`correction_requested` → `aguardando_artur`;
+        request `replied` → `resposta_recebida`. `escalado_wa` is not produced by this feature.
+      enum: [nao_encaminhado, aguardando_artur, resposta_recebida, proposta_em_aprovacao, proposta_enviada, proposta_enviada_manual]
+
+    StallReason:
+      type: string
+      description: RF-05 — exactly one per stalled opportunity, fixed precedence 1..10.
+      enum:
+        - em_atendimento_humano
+        - aguardando_artur
+        - cadencia_bloqueada_template_meta
+        - followup_vencido_nao_enviado
+        - proposta_manual_sem_cadencia
+        - sem_followup_agendado
+        - cadencia_concluida_sem_resposta
+        - aguardando_resposta_do_lead
+        - qualificado_sem_encaminhamento
+        - outro
+
+    SuggestedAction:
+      type: string
+      description: RF-06 — static 1:1 i18n key per StallReason (`SCANSOLO.REPORTS.SUGGESTED_ACTIONS.<REASON>`).
+      enum:
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.EM_ATENDIMENTO_HUMANO
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.AGUARDANDO_ARTUR
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.CADENCIA_BLOQUEADA_TEMPLATE_META
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.FOLLOWUP_VENCIDO_NAO_ENVIADO
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.PROPOSTA_MANUAL_SEM_CADENCIA
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.SEM_FOLLOWUP_AGENDADO
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.CADENCIA_CONCLUIDA_SEM_RESPOSTA
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.AGUARDANDO_RESPOSTA_DO_LEAD
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.QUALIFICADO_SEM_ENCAMINHAMENTO
+        - SCANSOLO.REPORTS.SUGGESTED_ACTIONS.OUTRO
+
+    PipelineOpportunity:
+      type: object
+      description: >
+        CHANGED (CT-02). Redefined in full (an `allOf` over the v1.7.0 item could not widen
+        `quote_request_status`): the v1.7.0 list item fields unchanged, plus `commercial_status` and
+        `commercial_forwarded_at`, and `quote_request_status` widened with `handled_manually`.
+      required:
+        - id
+        - account_id
+        - contact_id
+        - contact_name
+        - conversation_id
+        - owner_id
+        - stage
+        - last_customer_interaction_at
+        - next_follow_up_at
+        - created_at
+        - updated_at
+        - stage_history
+        - lead_source
+        - company
+        - service
+        - city_uf
+        - ai_control_state
+        - quote_request_status
+        - proposal_status
+        - commercial_status
+        - commercial_forwarded_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        account_id:
+          type: integer
+          format: int64
+        contact_id:
+          type: integer
+          format: int64
+        contact_name:
+          type: [string, "null"]
+        conversation_id:
+          type: integer
+          format: int64
+        owner_id:
+          type: [integer, "null"]
+          format: int64
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        last_customer_interaction_at:
+          type: [string, "null"]
+          format: date-time
+        next_follow_up_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        stage_history:
+          type: array
+          items:
+            $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/StageHistoryEntry'
+        lead_source:
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/LeadSource'
+        company:
+          type: [string, "null"]
+        service:
+          type: [string, "null"]
+        city_uf:
+          type: [string, "null"]
+        ai_control_state:
+          $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/AiControlState'
+        quote_request_status:
+          oneOf:
+            - $ref: '#/components/schemas/QuoteRequestStatus'
+            - type: "null"
+        proposal_status:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalVersionStatus'
+            - type: "null"
+        commercial_status:
+          $ref: '#/components/schemas/CommercialStatus'
+        commercial_forwarded_at:
+          type: [string, "null"]
+          format: date-time
+          description: RF-02 — `scan_solo_quote_requests.sent_at`; null without request or with null `sent_at`.
+
+    ProposalVersionStatus:
+      type: string
+      description: Mirrors `ScanSolo::ProposalVersion.status` (verified at app/models/scan_solo/proposal_version.rb:91).
+      enum: [generating, generated, approved, sent, failed, awaiting_approval, rejected]
+
+    QuoteRequestSummary:
+      type: object
+      description: CHANGED — `status` widened with `handled_manually`; otherwise the v1.7.0 shape.
+      required: [id, status, sent_at, replied_at, email_conversation_id]
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/QuoteRequestStatus'
+        sent_at:
+          type: [string, "null"]
+          format: date-time
+        replied_at:
+          type: [string, "null"]
+          format: date-time
+        email_conversation_id:
+          type: [integer, "null"]
+          format: int64
+
+    PipelineOpportunityDetail:
+      description: >
+        CHANGED (CT-02). This delta's list item plus the v1.7.0 detail-only fields (`quote_request`
+        widened with `handled_manually`; `quote_request_resend_available` is false for a
+        `handled_manually` request, RF-19 b).
+      allOf:
+        - $ref: '#/components/schemas/PipelineOpportunity'
+        - type: object
+          required: [lead_state, quote_request, proposal, initial_template_failure, quote_request_resend_available]
+          properties:
+            lead_state:
+              $ref: '../scansolo-agent-lead-state/openapi.yaml#/components/schemas/LeadState'
+            quote_request:
+              oneOf:
+                - $ref: '#/components/schemas/QuoteRequestSummary'
+                - type: "null"
+            proposal:
+              oneOf:
+                - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/CurrentProposalSummary'
+                - type: "null"
+            initial_template_failure:
+              oneOf:
+                - $ref: '../scansolo-operacao-centralizada/openapi.yaml#/components/schemas/InitialTemplateFailure'
+                - type: "null"
+            quote_request_resend_available:
+              type: boolean
+
+    ReportPeriod:
+      type: string
+      enum: [week, month]
+
+    ReportRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_period, invalid_anchor]
+
+    Report:
+      type: object
+      description: >
+        CT-01 body. Identical to the `payload` stored in `scan_solo_report_snapshots` for `period=week`
+        (RF-13), which is stored with `source = "snapshot"`.
+      required: [period, anchor, timezone, starts_at, ends_at, source, generated_at, as_of, summary, previous, funnel, stalled]
+      properties:
+        period:
+          $ref: '#/components/schemas/ReportPeriod'
+        anchor:
+          type: string
+          format: date
+        timezone:
+          type: string
+          enum: [America/Sao_Paulo]
+        starts_at:
+          type: string
+          format: date-time
+          description: Inclusive start, ISO 8601 with the -03:00 offset (RF-07).
+        ends_at:
+          type: string
+          format: date-time
+          description: Exclusive end (start of the next period) (RF-07).
+        source:
+          type: string
+          enum: [live, snapshot]
+        generated_at:
+          type: string
+          format: date-time
+        as_of:
+          type: string
+          format: date-time
+          description: Instant the funnel and stalled list were evaluated (RF-10).
+        summary:
+          $ref: '#/components/schemas/ReportSummary'
+        previous:
+          $ref: '#/components/schemas/PreviousPeriod'
+        funnel:
+          type: array
+          minItems: 8
+          maxItems: 8
+          description: The 8 stages in enum order (RF-10); `ganho`/`perdido` always `stalled = 0`.
+          items:
+            $ref: '#/components/schemas/FunnelRow'
+        stalled:
+          type: array
+          items:
+            $ref: '#/components/schemas/StalledOpportunity'
+
+    PreviousPeriod:
+      type: object
+      description: RF-09 — the immediately preceding period of the same type.
+      required: [starts_at, ends_at, summary]
+      properties:
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: '#/components/schemas/ReportSummary'
+
+    ReportSummary:
+      type: object
+      description: RF-08 period indicators, each equal to its SQL reference query.
+      required: [new_leads, responded, first_response_minutes, ai_turns, inbound_without_turn, cadence_attempts, qualified, forwarded, proposals]
+      properties:
+        new_leads:
+          type: object
+          required: [total, by_source]
+          properties:
+            total:
+              type: integer
+              minimum: 0
+            by_source:
+              type: object
+              required: [website, manual, nao_informada]
+              additionalProperties: false
+              properties:
+                website:
+                  type: integer
+                  minimum: 0
+                manual:
+                  type: integer
+                  minimum: 0
+                nao_informada:
+                  type: integer
+                  minimum: 0
+                  description: "`lead_source IS NULL`."
+        responded:
+          $ref: '#/components/schemas/Total'
+        first_response_minutes:
+          type: object
+          required: [median, p90]
+          properties:
+            median:
+              type: [number, "null"]
+              description: percentile_cont(0.5); null when the sample is empty.
+            p90:
+              type: [number, "null"]
+              description: percentile_cont(0.9); null when the sample is empty.
+        ai_turns:
+          type: object
+          required: [by_status, by_reason]
+          properties:
+            by_status:
+              type: object
+              required: [pending, suppressed, succeeded, failed]
+              additionalProperties: false
+              properties:
+                pending:
+                  type: integer
+                  minimum: 0
+                suppressed:
+                  type: integer
+                  minimum: 0
+                succeeded:
+                  type: integer
+                  minimum: 0
+                failed:
+                  type: integer
+                  minimum: 0
+            by_reason:
+              type: array
+              items:
+                $ref: '#/components/schemas/AiTurnReasonCount'
+        inbound_without_turn:
+          $ref: '#/components/schemas/Total'
+        cadence_attempts:
+          type: object
+          required: [by_result, by_block_reason]
+          properties:
+            by_result:
+              type: object
+              required: [scheduled, dispatched, sent, skipped, failed, cancelled]
+              additionalProperties: false
+              properties:
+                scheduled:
+                  type: integer
+                  minimum: 0
+                dispatched:
+                  type: integer
+                  minimum: 0
+                sent:
+                  type: integer
+                  minimum: 0
+                skipped:
+                  type: integer
+                  minimum: 0
+                failed:
+                  type: integer
+                  minimum: 0
+                cancelled:
+                  type: integer
+                  minimum: 0
+            by_block_reason:
+              type: array
+              items:
+                $ref: '#/components/schemas/BlockReasonCount'
+        qualified:
+          $ref: '#/components/schemas/Total'
+        forwarded:
+          $ref: '#/components/schemas/Total'
+        proposals:
+          type: object
+          required: [by_status]
+          properties:
+            by_status:
+              type: object
+              required: [generating, generated, approved, sent, failed, awaiting_approval, rejected]
+              additionalProperties: false
+              properties:
+                generating:
+                  type: integer
+                  minimum: 0
+                generated:
+                  type: integer
+                  minimum: 0
+                approved:
+                  type: integer
+                  minimum: 0
+                sent:
+                  type: integer
+                  minimum: 0
+                failed:
+                  type: integer
+                  minimum: 0
+                awaiting_approval:
+                  type: integer
+                  minimum: 0
+                rejected:
+                  type: integer
+                  minimum: 0
+
+    Total:
+      type: object
+      required: [total]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+
+    AiTurnReasonCount:
+      type: object
+      required: [status, reason, count]
+      properties:
+        status:
+          type: string
+          enum: [suppressed, failed]
+        reason:
+          type: string
+          description: >
+            Normalized reason (RF-08): `failure_reason` up to the first ": " (exclusive), the whole value
+            when there is no ": ", or `nao_informado` when null. Never the raw redacted message.
+        count:
+          type: integer
+          minimum: 1
+
+    BlockReasonCount:
+      type: object
+      required: [reason, count]
+      properties:
+        reason:
+          type: string
+          description: "`scan_solo_cadence_attempts.last_block_reason` (e.g. `template_missing`, `params_mismatch`)."
+        count:
+          type: integer
+          minimum: 1
+
+    FunnelRow:
+      type: object
+      required: [stage, active, stalled]
+      properties:
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        active:
+          type: integer
+          minimum: 0
+          description: Stage total minus `stalled`.
+        stalled:
+          type: integer
+          minimum: 0
+          description: Stalled opportunities of the stage (RF-04).
+
+    StalledOpportunity:
+      type: object
+      description: RF-10 — one item per stalled opportunity; no phone, e-mail nor message content (RNF-01).
+      required: [opportunity_id, contact_name, stage, last_customer_interaction_at, commercial_status, stall_reason, suggested_action]
+      properties:
+        opportunity_id:
+          type: integer
+          format: int64
+        contact_name:
+          type: [string, "null"]
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        last_customer_interaction_at:
+          type: [string, "null"]
+          format: date-time
+          description: Null for a lead that never wrote; the UI then counts days from `created_at` (UI-05).
+        created_at:
+          type: string
+          format: date-time
+          description: >
+            Needed by UI-05 to count days without interaction when `last_customer_interaction_at` is null.
+            See PLAN Open Questions (OQ-01): not listed in the CT-01 example item.
+        commercial_status:
+          $ref: '#/components/schemas/CommercialStatus'
+        stall_reason:
+          $ref: '#/components/schemas/StallReason'
+        suggested_action:
+          $ref: '#/components/schemas/SuggestedAction'
+
+    HandledManuallyRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [quote_request_missing, quote_request_closed, invalid_stage]
+
+    BulkHandledManuallyRequest:
+      type: object
+      required: [opportunity_ids]
+      additionalProperties: false
+      properties:
+        opportunity_ids:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+            format: int64
+
+    BulkHandledManuallyInputRejection:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_opportunity_ids]
+
+    BulkHandledManuallyResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkHandledManuallyItem'
+
+    BulkHandledManuallyItem:
+      type: object
+      required: [opportunity_id, result]
+      properties:
+        opportunity_id:
+          type: integer
+          format: int64
+        result:
+          type: string
+          enum: [handled, quote_request_missing, quote_request_closed, invalid_stage, not_found]

@@ -1,0 +1,9 @@
+# Developer answers (questions: clarifier-questions.md)
+- Q-01 (M-04): Option A — COALESCE(last_customer_interaction_at, created_at) in ONE shared rule also used by Kanban "Inativo" badge (OpportunityQuery.stale? + pipelineConstants.js); ganho/perdido never parado (funnel stalled=0); add 9th reason `outro` → "Revisar manualmente".
+- Q-02 (M-02+M-03): Option A — cohort = leads created in period; responded = ≥1 non-private outgoing (AI or human, cadence/template included) after first non-private incoming; first-response = that outgoing − first incoming; leads without incoming excluded; qualified = distinct opps with PipelineStageEvent to_stage='qualificado' in period ∪ manual leads created in qualificado in period.
+- Q-03 (M-01): Option A — job Monday 06:00 America/Sao_Paulo ('0 9 * * 1' UTC) freezes previous full week; 2nd run for same (account, week_start) overwrites (upsert, last wins). Supersedes input's "sexta de manhã".
+- Q-04 (contradiction): Option A — single action enrolls post-proposal cadence; bulk legacy action cancels the StageEntryEnroller enrollment in the same transaction and records cadence_skipped: "legacy_bulk" in audit payload; rewrite RF-17 accordingly.
+
+# Round 2 (after resolve v1.1)
+- M-05: Cancel it too — in the BULK action, cancel any active/paused post-proposal enrollment of the opportunity (LifecycleService.cancel!) in the same transaction, including when the opp is already in proposta_enviada (no transition); audit payload cadence_skipped: "legacy_bulk". No legacy lead receives a follow-up.
+- Side effect: add a dedicated 10th stall reason `proposta_manual_sem_cadencia` → suggested action "Acompanhar com o Artur"; applies when commercial_status = proposta_enviada_manual and no active enrollment. Place it in precedence before `sem_followup_agendado` (so legacy leads never get "Reinscrever na cadência"). Update RF-05/06, UI-11, i18n enum keys, spec-case list, funnel/list consistency.

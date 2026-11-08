@@ -464,6 +464,7 @@ Rails.application.routes.draw do
               member do
                 post :stage_transitions
                 post 'quote_request/resend', to: 'quote_requests#resend'
+                post 'quote_request/handled_manually', to: 'pipeline_opportunities#handled_manually'
               end
 
               resources :proposals, only: [], controller: 'proposals' do
@@ -472,6 +473,8 @@ Rails.application.routes.draw do
                 end
               end
             end
+
+            post 'quote_requests/handled_manually', to: 'quote_requests#bulk_handled_manually'
 
             resources :quote_replies, only: [:index] do
               member do

@@ -19,11 +19,15 @@
 # CT-09 / RF-09: update also edits the lead e-mail; a malformed or empty
 # address is refused here with 422 `invalid_email`, the conflict with another
 # contact belongs to ScanSolo::Pipeline::LeadEmailService.
+#
+# CT-03 / RF-15..RF-17: handled_manually marks the proposal as sent outside the
+# system (single mode); eligibility belongs to ScanSolo::Quote::HandledManuallyService,
+# whose refusal codes are rendered as 422 `{ error: code }`.
 class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Accounts::ScanSolo::BaseController
   STAGE_TRANSITION_IDEMPOTENCY_WINDOW = 5.seconds
   E164_PHONE_REGEXP = /\A\+[1-9]\d{1,14}\z/
 
-  before_action :set_opportunity, only: [:show, :update, :stage_transitions]
+  before_action :set_opportunity, only: [:show, :update, :stage_transitions, :handled_manually]
 
   def index
     authorize(::ScanSolo::PipelineOpportunity)
@@ -83,6 +87,15 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
 
     project_lead_state
     render :show
+  end
+
+  def handled_manually
+    authorize(@opportunity)
+    ::ScanSolo::Quote::HandledManuallyService.call(opportunity: @opportunity, actor: Current.user, mode: 'single')
+    project_lead_state
+    render :show
+  rescue CustomExceptions::ScanSolo::HandledManuallyRejected => e
+    render json: { error: e.code }, status: :unprocessable_entity
   end
 
   private

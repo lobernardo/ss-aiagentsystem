@@ -18,4 +18,9 @@ class ScanSolo::PipelineOpportunityPolicy < ScanSolo::ApplicationPolicy
   def stage_transitions?
     true
   end
+
+  # CT-03 / RF-15: any member of the account marks a proposal as sent manually.
+  def handled_manually?
+    account_user.present?
+  end
 end

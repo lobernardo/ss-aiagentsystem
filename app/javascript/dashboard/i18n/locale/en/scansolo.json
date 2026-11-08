@@ -7,7 +7,8 @@
       "KNOWLEDGE": "Conhecimento",
       "FOLLOWUPS": "Follow-ups",
       "PROPOSALS": "Propostas",
-      "EXECUTIONS": "Execuções e auditoria"
+      "EXECUTIONS": "Execuções e auditoria",
+      "REPORTS": "Relatórios"
     },
     "MODULES": {
       "PIPELINE": {
@@ -33,6 +34,10 @@
       "EXECUTIONS": {
         "TITLE": "Execuções e auditoria",
         "DESCRIPTION": "O histórico de execuções e auditoria estará disponível em breve."
+      },
+      "REPORTS": {
+        "TITLE": "Relatórios",
+        "DESCRIPTION": "Indicadores da semana e do mês, funil e leads parados com o motivo e a ação sugerida."
       }
     },
     "PIPELINE_BOARD": {
@@ -116,7 +121,9 @@
             "INVALID_EMAIL": "Informe um e-mail válido.",
             "CONTACT_CONFLICT": "Este e-mail já pertence a outro contato da conta."
           }
-        }
+        },
+        "COMMERCIAL_STATUS_LABEL": "Situação comercial",
+        "COMMERCIAL_FORWARDED_AT": "Encaminhado ao Artur em {date}"
       },
       "EMPTY_STATE": "Nenhuma oportunidade no pipeline ainda.",
       "EMPTY_COLUMN": "Nenhuma oportunidade",
@@ -162,6 +169,10 @@
           "CONTACT_CONFLICT": "O telefone e o e-mail informados pertencem a contatos diferentes.",
           "OPPORTUNITY_EXISTS": "Este contato já tem uma oportunidade em andamento."
         }
+      },
+      "COMMERCIAL_FILTER": {
+        "LABEL": "Situação comercial",
+        "ALL": "Todas"
       }
     },
     "AGENT_CENTER": {
@@ -679,7 +690,8 @@
         "SENT": "Proposta enviada",
         "FAILED": "Falha na proposta",
         "AWAITING_APPROVAL": "Aguardando aprovação",
-        "REJECTED": "Proposta rejeitada"
+        "REJECTED": "Proposta rejeitada",
+        "HANDLED_MANUALLY": "Proposta enviada manualmente"
       }
     },
     "CONTACT_OPT_OUT": {
@@ -692,6 +704,116 @@
       "CANCEL": "Cancelar",
       "SUCCESS": "Opt-out removido.",
       "ERROR": "Não foi possível remover o opt-out."
+    },
+    "COMMERCIAL_STATUS": {
+      "NAO_ENCAMINHADO": "Não encaminhado",
+      "AGUARDANDO_ARTUR": "Aguardando o Artur",
+      "RESPOSTA_RECEBIDA": "Resposta recebida",
+      "PROPOSTA_EM_APROVACAO": "Proposta em aprovação",
+      "PROPOSTA_ENVIADA": "Proposta enviada",
+      "PROPOSTA_ENVIADA_MANUAL": "Proposta enviada manualmente"
+    },
+    "REPORTS": {
+      "TITLE": "Relatórios",
+      "TABS": {
+        "WEEK": "Semana",
+        "MONTH": "Mês"
+      },
+      "PERIOD_LABEL": "Período",
+      "PERIOD_RANGE": "{start} a {end}",
+      "SNAPSHOT_NOTICE": "Dados congelados em {date}",
+      "PREVIOUS_VALUE": "Período anterior: {value}",
+      "COHORT_HINT": "Considera os leads criados no período.",
+      "KPIS": {
+        "NEW_LEADS": "Leads novos",
+        "BY_SOURCE": {
+          "WEBSITE": "Site",
+          "MANUAL": "Manual",
+          "NAO_INFORMADA": "Não informada"
+        },
+        "RESPONDED": "Leads respondidos",
+        "FIRST_RESPONSE": "Tempo até a 1ª resposta",
+        "MEDIAN": "Mediana",
+        "P90": "P90",
+        "MINUTES": "{value} min",
+        "QUALIFIED": "Qualificados",
+        "FORWARDED": "Encaminhados ao Artur",
+        "AI_TURNS": "Turnos de IA por status",
+        "AI_TURN_REASONS": "Motivos de turnos não concluídos",
+        "INBOUND_WITHOUT_TURN": "Mensagens recebidas sem turno de IA",
+        "CADENCE_ATTEMPTS": "Cadências por resultado",
+        "CADENCE_BLOCK_REASONS": "Bloqueios de cadência",
+        "PROPOSALS": "Propostas por status",
+        "NOT_INFORMED_REASON": "Não informado"
+      },
+      "FUNNEL": {
+        "TITLE": "Funil",
+        "STAGE": "Etapa",
+        "ACTIVE": "Ativos",
+        "STALLED": "Parados"
+      },
+      "STALLED": {
+        "TITLE": "Leads parados",
+        "LEAD": "Lead",
+        "DAYS_WITHOUT_INTERACTION": "Dias sem interação",
+        "DAYS": "{count} dia | {count} dias",
+        "COMMERCIAL_STATUS": "Situação comercial",
+        "REASON": "Motivo",
+        "SUGGESTED_ACTION": "Ação sugerida",
+        "EMPTY": "Nenhum lead parado no momento."
+      },
+      "STATES": {
+        "LOADING": "Carregando relatório…",
+        "ERROR": "Não foi possível carregar o relatório.",
+        "RETRY": "Tentar novamente",
+        "EMPTY": "Sem dados para este período."
+      },
+      "STALL_REASONS": {
+        "EM_ATENDIMENTO_HUMANO": "Em atendimento humano",
+        "AGUARDANDO_ARTUR": "Aguardando o Artur",
+        "CADENCIA_BLOQUEADA_TEMPLATE_META": "Cadência bloqueada por template da Meta",
+        "FOLLOWUP_VENCIDO_NAO_ENVIADO": "Follow-up vencido não enviado",
+        "PROPOSTA_MANUAL_SEM_CADENCIA": "Proposta manual sem cadência",
+        "SEM_FOLLOWUP_AGENDADO": "Sem follow-up agendado",
+        "CADENCIA_CONCLUIDA_SEM_RESPOSTA": "Cadência concluída sem resposta",
+        "AGUARDANDO_RESPOSTA_DO_LEAD": "Aguardando resposta do lead",
+        "QUALIFICADO_SEM_ENCAMINHAMENTO": "Qualificado sem encaminhamento",
+        "OUTRO": "Outro"
+      },
+      "SUGGESTED_ACTIONS": {
+        "EM_ATENDIMENTO_HUMANO": "Assumir ou devolver à IA",
+        "AGUARDANDO_ARTUR": "Cobrar resposta do Artur",
+        "CADENCIA_BLOQUEADA_TEMPLATE_META": "Corrigir template na Meta",
+        "FOLLOWUP_VENCIDO_NAO_ENVIADO": "Verificar envio da cadência",
+        "PROPOSTA_MANUAL_SEM_CADENCIA": "Acompanhar com o Artur",
+        "SEM_FOLLOWUP_AGENDADO": "Reinscrever na cadência da etapa",
+        "CADENCIA_CONCLUIDA_SEM_RESPOSTA": "Decidir: novo contato ou perdido",
+        "AGUARDANDO_RESPOSTA_DO_LEAD": "Aguardar próximo follow-up",
+        "QUALIFICADO_SEM_ENCAMINHAMENTO": "Conferir pedido de orçamento",
+        "OUTRO": "Revisar manualmente"
+      }
+    },
+    "HANDLED_MANUALLY": {
+      "ACTION": "Marcar proposta enviada manualmente",
+      "CONFIRM_TITLE": "Marcar proposta enviada manualmente?",
+      "CONFIRM_MESSAGE": "Nenhuma mensagem será enviada agora. A cadência pós-proposta existente seguirá normalmente.",
+      "SUCCESS": "Proposta marcada como enviada manualmente.",
+      "BULK": {
+        "ACTION": "Marcar selecionados como proposta enviada manualmente",
+        "SELECT_ALL": "Selecionar todos",
+        "SELECT_ITEM": "Selecionar",
+        "CONFIRM_TITLE": "Marcar selecionados como proposta enviada manualmente?",
+        "CONFIRM_MESSAGE": "{count} pedido será marcado como proposta enviada manualmente. Nenhuma mensagem será enviada e nenhuma cadência pós-proposta será iniciada. | {count} pedidos serão marcados como proposta enviada manualmente. Nenhuma mensagem será enviada e nenhuma cadência pós-proposta será iniciada.",
+        "RESULTS_TITLE": "Resultado por pedido",
+        "RESULT_HANDLED": "Marcado como proposta enviada manualmente"
+      },
+      "ERRORS": {
+        "QUOTE_REQUEST_MISSING": "Esta oportunidade não tem pedido de orçamento.",
+        "QUOTE_REQUEST_CLOSED": "O pedido de orçamento desta oportunidade já foi encerrado.",
+        "INVALID_STAGE": "A oportunidade precisa estar em Qualificado ou Proposta enviada.",
+        "NOT_FOUND": "Oportunidade não encontrada.",
+        "INVALID_OPPORTUNITY_IDS": "Selecione ao menos uma oportunidade válida."
+      }
     }
   }
 }

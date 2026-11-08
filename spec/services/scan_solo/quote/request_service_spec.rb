@@ -118,7 +118,7 @@ RSpec.describe ScanSolo::Quote::RequestService do
       run_service
 
       request_message = email_inbox.messages.sole
-      expect(request_message.content).to include('Olá, Luciano.', 'DADOS DO CLIENTE', '- planta.pdf (PDF) — anexado a este e-mail.')
+      expect(request_message.content).to include('Olá, Artur.', 'DADOS DO CLIENTE', '- planta.pdf (PDF) — anexado a este e-mail.')
       expect(request_message.content).to end_with(ScanSolo::Quote::EmailComposer.empty_block)
       expect(request_message.additional_attributes).to include('scansolo_origin' => 'quote_request_email')
       expect(request_message.attachments.sole.file.blob.checksum).to eq(plan_blob.checksum)

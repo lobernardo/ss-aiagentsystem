@@ -70,6 +70,19 @@ export const useScansoloPipelineOpportunitiesStore = defineStore(
         return updated;
       },
 
+      // CT-03 / UI-08: the server answers with the show JSON, which replaces
+      // the card; a 422 (`quote_request_missing` / `quote_request_closed` /
+      // `invalid_stage`) propagates so the UI shows the reason.
+      async markHandledManually(opportunityId) {
+        const { data } =
+          await ScanSoloPipelineOpportunitiesAPI.markHandledManually(
+            opportunityId
+          );
+        const opportunity = camelizeOpportunity(data);
+        this.upsertOpportunity(opportunity);
+        return opportunity;
+      },
+
       // Moves the card immediately (optimistic) so drag-and-drop feels
       // responsive, then reverts it if the server rejects the transition
       // (RF-09) — the card's final resting stage always matches what the

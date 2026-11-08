@@ -18,6 +18,7 @@ vi.mock('dashboard/api/scansoloPipelineOpportunities', () => ({
     create: vi.fn(),
     stageTransition: vi.fn(),
     updateLeadEmail: vi.fn(),
+    markHandledManually: vi.fn(),
   },
 }));
 
@@ -127,6 +128,69 @@ describe('useScansoloPipelineOpportunitiesStore#updateLeadEmail (CT-09)', () => 
 
     await expect(store.updateLeadEmail(1, 'ana@')).rejects.toBe(error);
     expect(store.opportunities[0].leadEmail).toBeNull();
+  });
+});
+
+describe('useScansoloPipelineOpportunitiesStore#markHandledManually (CT-03)', () => {
+  let store;
+  const forwardedOpportunity = {
+    ...existingOpportunity,
+    stage: 'qualificado',
+    quote_request_status: 'awaiting_reply',
+    commercial_status: 'aguardando_artur',
+    commercial_forwarded_at: '2026-11-03T10:00:00-03:00',
+  };
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    store = useScansoloPipelineOpportunitiesStore();
+    ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValue({
+      data: [forwardedOpportunity, manualLead],
+    });
+    await store.fetchOpportunities();
+  });
+
+  it('replaces the card with the camelized show JSON', async () => {
+    ScanSoloPipelineOpportunitiesAPI.markHandledManually.mockResolvedValue({
+      data: {
+        ...forwardedOpportunity,
+        stage: 'proposta_enviada',
+        quote_request_status: 'handled_manually',
+        commercial_status: 'proposta_enviada_manual',
+      },
+    });
+
+    const updated = await store.markHandledManually(1);
+
+    expect(
+      ScanSoloPipelineOpportunitiesAPI.markHandledManually
+    ).toHaveBeenCalledWith(1);
+    expect(updated).toMatchObject({
+      id: 1,
+      stage: 'proposta_enviada',
+      quoteRequestStatus: 'handled_manually',
+      commercialStatus: 'proposta_enviada_manual',
+      commercialForwardedAt: '2026-11-03T10:00:00-03:00',
+    });
+    expect(store.opportunities).toHaveLength(2);
+    expect(store.opportunities[0]).toEqual(updated);
+    expect(store.byStage('proposta_enviada').map(o => o.id)).toEqual([1]);
+  });
+
+  it('propagates a 422 and keeps the card unchanged', async () => {
+    const error = {
+      response: { status: 422, data: { error: 'quote_request_closed' } },
+    };
+    ScanSoloPipelineOpportunitiesAPI.markHandledManually.mockRejectedValue(
+      error
+    );
+
+    await expect(store.markHandledManually(1)).rejects.toBe(error);
+    expect(store.opportunities[0]).toMatchObject({
+      stage: 'qualificado',
+      commercialStatus: 'aguardando_artur',
+    });
   });
 });
 

@@ -744,7 +744,7 @@ en:
       # e-mail (CT-01), its update (CT-03) and pending items (CT-07).
       request_email:
         subject_prefix: 'Solicitação de orçamento'
-        greeting: 'Olá, Luciano.'
+        greeting: 'Olá, Artur.'
         intro: 'Segue uma nova solicitação de orçamento recebida pelo atendimento comercial da ScanSolo.'
         validation_mode: 'Nesse primeiro momento estou aprendendo como automatizar a construção deste template, então você pode olhar como está ficando para irmos validando.'
         data_intro: 'No geral, seguem os dados coletados do lead:'

@@ -12,6 +12,7 @@ describe('scansolo i18n namespace', () => {
       FOLLOWUPS: 'Follow-ups',
       PROPOSALS: 'Propostas',
       EXECUTIONS: 'Execuções e auditoria',
+      REPORTS: 'Relatórios',
     });
   });
 

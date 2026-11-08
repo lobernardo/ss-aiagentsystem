@@ -229,6 +229,7 @@ const QUOTE_REQUEST_COMMERCIAL_STATUS_LABELS = {
   correction_requested:
     'SCANSOLO.LABELS.COMMERCIAL_STATUSES.CORRECTION_REQUESTED',
   replied: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.REPLIED',
+  handled_manually: 'SCANSOLO.LABELS.COMMERCIAL_STATUSES.HANDLED_MANUALLY',
 };
 
 // UI-02 / UI-04: one quote/proposal label per opportunity; the proposal
@@ -237,6 +238,76 @@ export const commercialStatusKey = (quoteRequestStatus, proposalStatus) =>
   PROPOSAL_COMMERCIAL_STATUS_LABELS[proposalStatus] ||
   QUOTE_REQUEST_COMMERCIAL_STATUS_LABELS[quoteRequestStatus] ||
   null;
+
+// Relatórios RF-01 / CT-02: `commercial_status`, mirrors
+// ScanSolo::Reports::CommercialStatus::VALUES.
+export const COMMERCIAL_STATUS_LABELS = {
+  nao_encaminhado: 'SCANSOLO.COMMERCIAL_STATUS.NAO_ENCAMINHADO',
+  aguardando_artur: 'SCANSOLO.COMMERCIAL_STATUS.AGUARDANDO_ARTUR',
+  resposta_recebida: 'SCANSOLO.COMMERCIAL_STATUS.RESPOSTA_RECEBIDA',
+  proposta_em_aprovacao: 'SCANSOLO.COMMERCIAL_STATUS.PROPOSTA_EM_APROVACAO',
+  proposta_enviada: 'SCANSOLO.COMMERCIAL_STATUS.PROPOSTA_ENVIADA',
+  proposta_enviada_manual: 'SCANSOLO.COMMERCIAL_STATUS.PROPOSTA_ENVIADA_MANUAL',
+};
+
+export const COMMERCIAL_STATUSES = Object.keys(COMMERCIAL_STATUS_LABELS);
+
+// Relatórios RF-05: `stall_reason`, mirrors ScanSolo::Reports::StallReason::REASONS.
+export const STALL_REASON_LABELS = {
+  em_atendimento_humano: 'SCANSOLO.REPORTS.STALL_REASONS.EM_ATENDIMENTO_HUMANO',
+  aguardando_artur: 'SCANSOLO.REPORTS.STALL_REASONS.AGUARDANDO_ARTUR',
+  cadencia_bloqueada_template_meta:
+    'SCANSOLO.REPORTS.STALL_REASONS.CADENCIA_BLOQUEADA_TEMPLATE_META',
+  followup_vencido_nao_enviado:
+    'SCANSOLO.REPORTS.STALL_REASONS.FOLLOWUP_VENCIDO_NAO_ENVIADO',
+  proposta_manual_sem_cadencia:
+    'SCANSOLO.REPORTS.STALL_REASONS.PROPOSTA_MANUAL_SEM_CADENCIA',
+  sem_followup_agendado: 'SCANSOLO.REPORTS.STALL_REASONS.SEM_FOLLOWUP_AGENDADO',
+  cadencia_concluida_sem_resposta:
+    'SCANSOLO.REPORTS.STALL_REASONS.CADENCIA_CONCLUIDA_SEM_RESPOSTA',
+  aguardando_resposta_do_lead:
+    'SCANSOLO.REPORTS.STALL_REASONS.AGUARDANDO_RESPOSTA_DO_LEAD',
+  qualificado_sem_encaminhamento:
+    'SCANSOLO.REPORTS.STALL_REASONS.QUALIFICADO_SEM_ENCAMINHAMENTO',
+  outro: 'SCANSOLO.REPORTS.STALL_REASONS.OUTRO',
+};
+
+export const STALL_REASONS = Object.keys(STALL_REASON_LABELS);
+
+// Relatórios RF-06: the backend sends `suggested_action` already as the i18n
+// key (ScanSolo::Reports::StallReason::SUGGESTED_ACTIONS); this map keys the
+// same strings by stall reason.
+export const SUGGESTED_ACTION_LABELS = {
+  em_atendimento_humano:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.EM_ATENDIMENTO_HUMANO',
+  aguardando_artur: 'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.AGUARDANDO_ARTUR',
+  cadencia_bloqueada_template_meta:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.CADENCIA_BLOQUEADA_TEMPLATE_META',
+  followup_vencido_nao_enviado:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.FOLLOWUP_VENCIDO_NAO_ENVIADO',
+  proposta_manual_sem_cadencia:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.PROPOSTA_MANUAL_SEM_CADENCIA',
+  sem_followup_agendado:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.SEM_FOLLOWUP_AGENDADO',
+  cadencia_concluida_sem_resposta:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.CADENCIA_CONCLUIDA_SEM_RESPOSTA',
+  aguardando_resposta_do_lead:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.AGUARDANDO_RESPOSTA_DO_LEAD',
+  qualificado_sem_encaminhamento:
+    'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.QUALIFICADO_SEM_ENCAMINHAMENTO',
+  outro: 'SCANSOLO.REPORTS.SUGGESTED_ACTIONS.OUTRO',
+};
+
+// CT-03 / CT-04 / UI-08 / UI-09: 422 code or per-item bulk result → message.
+export const HANDLED_MANUALLY_ERROR_LABELS = {
+  quote_request_missing:
+    'SCANSOLO.HANDLED_MANUALLY.ERRORS.QUOTE_REQUEST_MISSING',
+  quote_request_closed: 'SCANSOLO.HANDLED_MANUALLY.ERRORS.QUOTE_REQUEST_CLOSED',
+  invalid_stage: 'SCANSOLO.HANDLED_MANUALLY.ERRORS.INVALID_STAGE',
+  not_found: 'SCANSOLO.HANDLED_MANUALLY.ERRORS.NOT_FOUND',
+  invalid_opportunity_ids:
+    'SCANSOLO.HANDLED_MANUALLY.ERRORS.INVALID_OPPORTUNITY_IDS',
+};
 
 // CT-01 / UI-01: 422 reason → message.
 export const MANUAL_LEAD_ERROR_LABELS = {

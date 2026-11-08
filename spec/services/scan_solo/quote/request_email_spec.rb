@@ -59,7 +59,7 @@ RSpec.describe ScanSolo::Quote::RequestEmail do
     end
 
     it 'follows the CT-01 section order and ends with the CT-04 instructions and empty block (RF-05, RF-11)' do
-      titles = ['Olá, Luciano.', validation_paragraph, 'DADOS DO CLIENTE', 'LOCAL DO SERVIÇO', 'SERVIÇO SOLICITADO',
+      titles = ['Olá, Artur.', validation_paragraph, 'DADOS DO CLIENTE', 'LOCAL DO SERVIÇO', 'SERVIÇO SOLICITADO',
                 'OBJETIVO DO LEVANTAMENTO', 'DOCUMENTAÇÃO RECEBIDA', 'INFORMAÇÕES AINDA NÃO CONFIRMADAS', closing_with_pending,
                 "Conversa no ScanSOLO: #{conversation_url}", 'Atenciosamente,', 'Comercial ScanSolo', 'Instruções de resposta']
 
@@ -365,7 +365,7 @@ RSpec.describe ScanSolo::Quote::RequestEmail do
 
   describe 'validation mode (RF-12)' do
     it 'renders the paragraph right after the opening when on' do
-      expect(lines.take(5)).to eq(['Olá, Luciano.', '', I18n.t('scan_solo.quote.request_email.intro'), validation_paragraph,
+      expect(lines.take(5)).to eq(['Olá, Artur.', '', I18n.t('scan_solo.quote.request_email.intro'), validation_paragraph,
                                    'No geral, seguem os dados coletados do lead:'])
     end
 
@@ -399,7 +399,7 @@ RSpec.describe ScanSolo::Quote::RequestEmail do
 
       hrefs = email.html.scan(/href="([^"]*)"/).flatten
       expect(hrefs).to contain_exactly(map_link, conversation_url)
-      expect(email.html).to include('Olá, Luciano.<br><br>', 'ver https://evil.example/x')
+      expect(email.html).to include('Olá, Artur.<br><br>', 'ver https://evil.example/x')
     end
   end
 
@@ -417,7 +417,7 @@ RSpec.describe ScanSolo::Quote::RequestEmail do
       expect(update_lines).to include('Profundidade de interesse: não informado → 3 m', a_string_starting_with('INFORMAÇÕES AINDA NÃO CONFIRMADAS: '))
       expect(update_lines.index('DADOS DO CLIENTE')).to be > update_lines.index('Profundidade de interesse: não informado → 3 m')
       expect(update_lines).to include('Comercial ScanSolo', 'DETALHES TÉCNICOS INFORMADOS')
-      expect(update_lines).not_to include('Olá, Luciano.')
+      expect(update_lines).not_to include('Olá, Artur.')
       expect(update.email.text).to end_with(ScanSolo::Quote::EmailComposer.empty_block)
     end
 

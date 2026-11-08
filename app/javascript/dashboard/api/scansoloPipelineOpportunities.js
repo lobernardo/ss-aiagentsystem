@@ -21,6 +21,11 @@ class ScanSoloPipelineOpportunitiesAPI extends ApiClient {
   resendQuoteRequest(id) {
     return axios.post(`${this.url}/${id}/quote_request/resend`);
   }
+
+  // CT-03: no body; answers with the show JSON.
+  markHandledManually(id) {
+    return axios.post(`${this.url}/${id}/quote_request/handled_manually`);
+  }
 }
 
 export default new ScanSoloPipelineOpportunitiesAPI();

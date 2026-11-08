@@ -533,6 +533,8 @@ Rails.application.routes.draw do
 
             resources :executions, only: [:index]
 
+            get 'reports', to: 'reports#index'
+
             get 'status', to: 'status#show'
           end
         end

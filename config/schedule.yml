@@ -88,3 +88,10 @@ scan_solo_stale_turn_sweeper_job:
   cron: '*/5 * * * *'
   class: 'ScanSolo::StaleTurnSweeperJob'
   queue: scheduled_jobs
+
+# RF-13/CT-06: Monday 06:00 America/Sao_Paulo (UTC−3, server runs in UTC);
+# freezes the previous complete week of the Relatórios report per account
+scan_solo_weekly_report_snapshot_job:
+  cron: '0 9 * * 1'
+  class: 'ScanSolo::WeeklyReportSnapshotJob'
+  queue: scheduled_jobs

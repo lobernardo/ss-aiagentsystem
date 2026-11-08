@@ -241,6 +241,19 @@ RSpec.describe ScanSolo::Quote::ReplyProcessor do
     end
   end
 
+  describe 'request closed by hand (RF-19)' do
+    before { quote_request.update!(status: :handled_manually, handled_manually_at: Time.current) }
+
+    it 'turns a valid reply into a late_reply pending without changing the request nor generating' do
+      expect { process(reply(valid_block)) }.not_to(change { email_conversation.messages.outgoing.count })
+
+      expect(ScanSolo::QuoteReply.sole).to have_attributes(kind: 'late_reply', status: 'pending', quote_request_id: quote_request.id)
+      expect(quote_request.reload).to have_attributes(status: 'handled_manually', commercial: {}, reply_message_id: nil)
+      expect(ScanSolo::ProposalVersion.count).to eq(0)
+      expect(ScanSolo::MakeRequest.count).to eq(0)
+    end
+  end
+
   describe 'reply while the current version is not rejected (RF-03)' do
     let(:version) { ScanSolo::ProposalVersion.sole }
 

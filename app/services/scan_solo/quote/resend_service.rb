@@ -3,8 +3,8 @@
 #
 # 1. The published config must be valid; otherwise the RF-14 audit and
 #    exception are recorded and the resend is refused.
-# 2. Under the opportunity lock (shared with the request job): a `replied`
-#    request is closed; an open one is reused with its thread and correlation
+# 2. Under the opportunity lock (shared with the request job): a `replied` or
+#    `handled_manually` (RF-19) request is closed; an open one is reused with its thread and correlation
 #    id; with no request, only the RF-14 case (still `concluida` with next
 #    action `proposta` and a `quote_request.misconfigured` audit) creates the
 #    single request (RF-15); anything else is not eligible.
@@ -68,7 +68,7 @@ class ScanSolo::Quote::ResendService
     quote_request = ScanSolo::QuoteRequest.find_by(opportunity_id: opportunity.id)
     return if quote_request.nil?
 
-    reject!('quote_request_closed') if quote_request.replied?
+    reject!('quote_request_closed') if quote_request.replied? || quote_request.handled_manually?
     quote_request
   end
 

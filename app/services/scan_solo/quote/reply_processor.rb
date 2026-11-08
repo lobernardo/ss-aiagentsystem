@@ -6,7 +6,8 @@
 # - A reply in any other thread without a quote request becomes an
 #   `unmatched` pending reply (RF-19), listed for a manual link (CT-08).
 # - A reply to a request is read by `.apply`, also used by the manual link
-#   (RF-20): under the request lock, a request already `replied` turns the
+#   (RF-20): under the request lock, a request already `replied` or closed by
+#   hand (`handled_manually`, RF-19) turns the
 #   reply into a `late_reply` pending (RF-23, never read commercially, so an
 #   e-mail never approves a version, RF-03); after a rejection the request is
 #   open again and a valid block generates the next version (RF-06); a
@@ -41,7 +42,8 @@ class ScanSolo::Quote::ReplyProcessor
     )
 
     outcome = quote_request.with_lock do
-      next(quote_request.reply_message_id == message.id ? :retry : :late_reply) if quote_request.replied?
+      # RF-19: a `handled_manually` request has no reply message, so any reply is late.
+      next(quote_request.reply_message_id == message.id ? :retry : :late_reply) unless quote_request.open?
 
       result.valid? ? accept!(quote_request, message, result) : reject!(quote_request, result)
     end

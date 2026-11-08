@@ -107,6 +107,17 @@ RSpec.describe 'ScanSolo quote request resend API (CT-12, RF-56)', type: :reques
     expect(response.parsed_body).to eq('error' => 'quote_request_closed')
   end
 
+  it 'refuses a request handled manually with 0 messages (RF-19)' do
+    request_quote
+    quote_request.update!(status: :handled_manually, handled_manually_at: Time.current, handled_manually_by: admin)
+
+    expect { resend }.not_to change(Message, :count)
+
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(response.parsed_body).to eq('error' => 'quote_request_closed')
+    expect(quote_request.reload).to be_handled_manually
+  end
+
   it 'refuses an opportunity concluded before the deploy, with no request nor failure audit' do
     expect { resend }.not_to change(ScanSolo::QuoteRequest, :count)
 

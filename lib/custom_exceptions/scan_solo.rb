@@ -116,3 +116,15 @@ class CustomExceptions::ScanSolo::GotenbergUnavailable < StandardError; end
 class CustomExceptions::ScanSolo::GotenbergRejected < StandardError; end
 # 200 whose body is not a readable PDF with at least 1 page (template_render_failed).
 class CustomExceptions::ScanSolo::GotenbergInvalidPdf < StandardError; end
+
+# RF-15 / RF-20 / CT-03 / CT-04: "Marcar proposta enviada manualmente" refused;
+# the controller maps it to 422 `{ error: code }` (quote_request_missing,
+# quote_request_closed, invalid_stage).
+class CustomExceptions::ScanSolo::HandledManuallyRejected < StandardError
+  attr_reader :code
+
+  def initialize(code)
+    @code = code
+    super(code)
+  end
+end

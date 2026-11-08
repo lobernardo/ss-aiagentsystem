@@ -35,3 +35,8 @@ end
 json.ai_control_state resource.conversation_extension&.ai_control_state || 'ai_active'
 json.quote_request_status resource.quote_request&.status
 json.proposal_status resource.proposal&.current_version&.status
+# CT-02 / RF-01..RF-03: commercial situation from the single classifier; the
+# Kanban and lead detail render it as-is instead of deriving it client-side.
+json.commercial_status ScanSolo::Reports::CommercialStatus.call(quote_request: resource.quote_request,
+                                                                current_version: resource.proposal&.current_version)
+json.commercial_forwarded_at ScanSolo::Reports::CommercialStatus.forwarded_at(resource.quote_request)

@@ -25,8 +25,8 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API lead_state (CT-01)', type: :
       # quote_request_resend_available (RF-56) (RNF-11); CT-01/RF-09 add lead_email (RNF-10).
       expect(body.keys).to eq(%w[id account_id contact_id contact_name lead_email conversation_id owner_id stage last_customer_interaction_at
                                  next_follow_up_at created_at updated_at stage_history lead_source company service city_uf
-                                 ai_control_state quote_request_status proposal_status lead_state quote_request proposal
-                                 initial_template_failure quote_request_resend_available])
+                                 ai_control_state quote_request_status proposal_status commercial_status commercial_forwarded_at
+                                 lead_state quote_request proposal initial_template_failure quote_request_resend_available])
       expect(body['lead_state'].keys).to eq(%w[intent qualification next_action authorized_actions blocks status history])
       expect(body['lead_state']['blocks'].keys).to eq(%w[identificacao servico local escopo execucao comercial])
       expect(body['lead_state']['blocks'].values.flatten.size).to eq(34)

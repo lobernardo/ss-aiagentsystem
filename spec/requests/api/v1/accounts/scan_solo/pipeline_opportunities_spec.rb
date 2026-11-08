@@ -145,4 +145,71 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API', type: :request do
       expect(response.parsed_body['stage']).to eq('em_contato')
     end
   end
+
+  describe 'commercial_status and commercial_forwarded_at (CT-02)' do
+    let(:index_path) { "/api/v1/accounts/#{account.id}/scan_solo/pipeline_opportunities" }
+    let(:sent_at) { Time.zone.parse('2026-11-05T13:00:00Z') }
+    let!(:quote_request) do
+      ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid,
+                                     status: :replied, sent_at: sent_at)
+    end
+    let!(:current_version) do
+      proposal = ScanSolo::Proposal.create!(opportunity: opportunity)
+      proposal.versions.create!(status: :awaiting_approval, quote_request: quote_request).tap { |version| proposal.update!(current_version: version) }
+    end
+    let!(:unforwarded) do
+      other_contact = create(:contact, account: account)
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: other_contact, stage: :qualificado,
+                                            conversation: create(:conversation, account: account, contact: other_contact))
+    end
+
+    it 'exposes the classifier value and the request sent_at in show' do
+      get base_path, headers: agent.create_new_auth_token, as: :json
+
+      body = response.parsed_body
+      expect(body['commercial_status'])
+        .to eq(ScanSolo::Reports::CommercialStatus.call(quote_request: quote_request, current_version: current_version))
+      expect(body['commercial_status']).to eq('proposta_em_aprovacao')
+      expect(body['commercial_forwarded_at']).to eq(sent_at.iso8601(3))
+      expect(body).to include('quote_request_status' => 'replied', 'proposal_status' => 'awaiting_approval')
+    end
+
+    it 'exposes the same values in index, and nao_encaminhado with a null forwarded_at without a request' do
+      get index_path, headers: agent.create_new_auth_token, as: :json
+
+      by_id = response.parsed_body.index_by { |item| item['id'] }
+      expect(by_id[opportunity.id]).to include('commercial_status' => 'proposta_em_aprovacao', 'commercial_forwarded_at' => sent_at.iso8601(3))
+      expect(by_id[unforwarded.id]).to include('commercial_status' => 'nao_encaminhado', 'commercial_forwarded_at' => nil)
+    end
+
+    it 'keeps the index query count constant as opportunities with request and proposal grow (RNF-02)' do
+      headers = agent.create_new_auth_token
+      count_queries = lambda do
+        queries = 0
+        callback = ->(*, payload) { queries += 1 unless payload[:name] == 'SCHEMA' || payload[:cached] }
+        ActiveSupport::Notifications.subscribed(callback, 'sql.active_record') { get index_path, headers: headers, as: :json }
+        queries
+      end
+      add_forwarded_opportunities = lambda do |count|
+        count.times do
+          lead = create(:contact, account: account)
+          record = ScanSolo::PipelineOpportunity.create!(account: account, contact: lead, stage: :proposta_enviada,
+                                                         conversation: create(:conversation, account: account, contact: lead))
+          request = ScanSolo::QuoteRequest.create!(account: account, opportunity: record, correlation_id: SecureRandom.uuid,
+                                                   status: :replied, sent_at: sent_at)
+          proposal = ScanSolo::Proposal.create!(opportunity: record)
+          proposal.update!(current_version: proposal.versions.create!(status: :sent, quote_request: request))
+        end
+      end
+
+      add_forwarded_opportunities.call(1)
+      count_queries.call
+      with_two = count_queries.call
+      add_forwarded_opportunities.call(4)
+      with_six = count_queries.call
+
+      expect(response.parsed_body.count { |item| item['commercial_status'] == 'proposta_enviada' }).to eq(5)
+      expect(with_six).to eq(with_two)
+    end
+  end
 end

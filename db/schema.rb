@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_10_13_100002) do
+ActiveRecord::Schema[7.2].define(version: 2026_11_08_100002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1823,10 +1823,23 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_13_100002) do
     t.jsonb "rendered_snapshot"
     t.string "rendered_digest"
     t.datetime "update_window_ends_at"
+    t.datetime "handled_manually_at"
+    t.bigint "handled_manually_by_id"
     t.index ["account_id"], name: "index_scan_solo_quote_requests_on_account_id"
     t.index ["correlation_id"], name: "index_scan_solo_quote_requests_on_correlation_id", unique: true
     t.index ["email_conversation_id"], name: "index_scan_solo_quote_requests_on_email_conversation_id", unique: true
+    t.index ["handled_manually_by_id"], name: "index_scan_solo_quote_requests_on_handled_manually_by_id"
     t.index ["opportunity_id"], name: "index_scan_solo_quote_requests_on_opportunity_id", unique: true
+  end
+
+  create_table "scan_solo_report_snapshots", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.date "week_start", null: false
+    t.jsonb "payload", null: false
+    t.datetime "generated_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "week_start"], name: "index_scan_solo_report_snapshots_on_account_id_and_week_start", unique: true
   end
 
   create_table "scan_solo_template_mappings", force: :cascade do |t|
@@ -2038,6 +2051,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_10_13_100002) do
   add_foreign_key "scan_solo_quote_replies", "users", column: "resolved_by_id"
   add_foreign_key "scan_solo_quote_request_updates", "scan_solo_quote_requests", column: "quote_request_id"
   add_foreign_key "scan_solo_quote_requests", "scan_solo_pipeline_opportunities", column: "opportunity_id"
+  add_foreign_key "scan_solo_quote_requests", "users", column: "handled_manually_by_id"
+  add_foreign_key "scan_solo_report_snapshots", "accounts"
   add_foreign_key "scan_solo_template_mappings", "accounts"
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).

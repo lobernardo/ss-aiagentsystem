@@ -7,6 +7,7 @@
 #
 #  id                         :bigint           not null, primary key
 #  commercial                 :jsonb            not null
+#  handled_manually_at        :datetime
 #  rendered_digest            :string
 #  rendered_snapshot          :jsonb
 #  replied_at                 :datetime
@@ -19,19 +20,22 @@
 #  correlation_id             :string           not null
 #  customer_notice_message_id :bigint
 #  email_conversation_id      :bigint
+#  handled_manually_by_id     :bigint
 #  opportunity_id             :bigint           not null
 #  reply_message_id           :bigint
 #  request_message_id         :bigint
 #
 # Indexes
 #
-#  index_scan_solo_quote_requests_on_account_id             (account_id)
-#  index_scan_solo_quote_requests_on_correlation_id         (correlation_id) UNIQUE
-#  index_scan_solo_quote_requests_on_email_conversation_id  (email_conversation_id) UNIQUE
-#  index_scan_solo_quote_requests_on_opportunity_id         (opportunity_id) UNIQUE
+#  index_scan_solo_quote_requests_on_account_id              (account_id)
+#  index_scan_solo_quote_requests_on_correlation_id          (correlation_id) UNIQUE
+#  index_scan_solo_quote_requests_on_email_conversation_id   (email_conversation_id) UNIQUE
+#  index_scan_solo_quote_requests_on_handled_manually_by_id  (handled_manually_by_id)
+#  index_scan_solo_quote_requests_on_opportunity_id          (opportunity_id) UNIQUE
 #
 # Foreign Keys
 #
+#  fk_rails_...  (handled_manually_by_id => users.id)
 #  fk_rails_...  (opportunity_id => scan_solo_pipeline_opportunities.id)
 #
 class ScanSolo::QuoteRequest < ApplicationRecord
@@ -41,6 +45,8 @@ class ScanSolo::QuoteRequest < ApplicationRecord
   belongs_to :account
   belongs_to :email_conversation, class_name: 'Conversation', optional: true
   belongs_to :reply_message, class_name: 'Message', optional: true
+  # RF-16: the member who closed the request by marking the proposal as sent by hand.
+  belongs_to :handled_manually_by, class_name: 'User', optional: true
 
   # RF-06: a rejection reopens the request, so it can hold several versions.
   has_many :proposal_versions,
@@ -51,7 +57,8 @@ class ScanSolo::QuoteRequest < ApplicationRecord
   # RF-14: update e-mails sent in the request thread, one per qualification version.
   has_many :updates, class_name: 'ScanSolo::QuoteRequestUpdate', inverse_of: :quote_request, dependent: :destroy
 
-  enum status: { awaiting_reply: 0, correction_requested: 1, replied: 2 }
+  # RF-16: handled_manually (3) closes the request without a commercial reply.
+  enum status: { awaiting_reply: 0, correction_requested: 1, replied: 2, handled_manually: 3 }
 
   validates :correlation_id, presence: true
 

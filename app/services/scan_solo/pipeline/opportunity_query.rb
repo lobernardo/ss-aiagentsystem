@@ -1,12 +1,24 @@
 # RF-12/RF-13: computes the stale indicator from the fixed
 # ScanSolo::PIPELINE_STALE_THRESHOLD constant and applies Kanban/list filters
 # (stage, owner, stale) at the query level.
+# Relatórios RF-04/RF-10 (Q-01): the single "stalled" rule. An opportunity is
+# stalled when its stage is not terminal (ganho/perdido) and
+# COALESCE(last_customer_interaction_at, created_at) <= now - threshold.
+# `stale?` (Ruby) and `stalled_scope` (SQL) are the only places that apply it.
 class ScanSolo::Pipeline::OpportunityQuery
-  def self.stale?(opportunity)
-    last_interaction = opportunity.last_customer_interaction_at
-    return false if last_interaction.blank?
+  TERMINAL_STAGES = ScanSolo::Pipeline::StageTransitionService::TERMINAL_STAGES
+  LAST_ACTIVITY_SQL = 'COALESCE(scan_solo_pipeline_opportunities.last_customer_interaction_at, ' \
+                      'scan_solo_pipeline_opportunities.created_at)'.freeze
 
-    last_interaction <= ScanSolo::PIPELINE_STALE_THRESHOLD.ago
+  def self.stale?(opportunity, now: Time.current)
+    return false if TERMINAL_STAGES.include?(opportunity.stage)
+
+    (opportunity.last_customer_interaction_at || opportunity.created_at) <= now - ScanSolo::PIPELINE_STALE_THRESHOLD
+  end
+
+  def self.stalled_scope(scope, as_of:)
+    scope.where.not(stage: TERMINAL_STAGES)
+         .where("#{LAST_ACTIVITY_SQL} <= ?", as_of - ScanSolo::PIPELINE_STALE_THRESHOLD)
   end
 
   def initialize(scope: ScanSolo::PipelineOpportunity.all, stage: nil, owner_id: nil, stale: nil)
@@ -29,13 +41,12 @@ class ScanSolo::Pipeline::OpportunityQuery
   attr_reader :stale
 
   def filter_by_stale(scope)
-    threshold = ScanSolo::PIPELINE_STALE_THRESHOLD.ago
-    column = ScanSolo::PipelineOpportunity.arel_table[:last_customer_interaction_at]
+    stalled = self.class.stalled_scope(ScanSolo::PipelineOpportunity.all, as_of: Time.current)
 
     if ActiveModel::Type::Boolean.new.cast(stale)
-      scope.where(column.lteq(threshold))
+      scope.merge(stalled)
     else
-      scope.where(column.gt(threshold).or(column.eq(nil)))
+      scope.where.not(id: stalled.select(:id))
     end
   end
 end

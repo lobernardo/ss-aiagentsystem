@@ -11,8 +11,10 @@ RSpec.describe ScanSolo::QuoteRequest do
   end
   let(:quote_request) { described_class.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid) }
 
-  it 'exposes the CT-02 status vocabulary' do
-    expect(described_class.statuses).to eq('awaiting_reply' => 0, 'correction_requested' => 1, 'replied' => 2)
+  it 'exposes the CT-02 status vocabulary with handled_manually appended (RF-16)' do
+    expect(described_class.statuses).to eq(
+      'awaiting_reply' => 0, 'correction_requested' => 1, 'replied' => 2, 'handled_manually' => 3
+    )
   end
 
   it 'starts awaiting the commercial reply' do
@@ -38,6 +40,18 @@ RSpec.describe ScanSolo::QuoteRequest do
 
     quote_request.replied!
     expect(quote_request).not_to be_open
+  end
+
+  it 'is closed once handled manually and records who handled it (RF-16)' do
+    user = create(:user, account: account)
+    quote_request.update!(status: :handled_manually, handled_manually_at: Time.current, handled_manually_by: user)
+
+    reloaded = described_class.find(quote_request.id)
+
+    expect(reloaded).to be_handled_manually
+    expect(reloaded).not_to be_open
+    expect(reloaded.handled_manually_by).to eq(user)
+    expect(reloaded.handled_manually_at).to be_present
   end
 
   it 'links the opportunity, email conversation and reply message (RF-22)' do

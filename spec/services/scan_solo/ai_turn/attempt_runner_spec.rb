@@ -184,6 +184,195 @@ RSpec.describe ScanSolo::AiTurn::AttemptRunner do
     end
   end
 
+  describe 'escalação comercial: link, negotiation and validator inputs (RF-05, RF-06, RF-13..RF-15, RF-19, RF-23)' do
+    let(:pending_updates) { [] }
+    let(:reason) { 'pedido_humano' }
+    let(:actions) { [{ 'action_id' => 'escalate_to_commercial', 'params' => { 'reason' => reason } }] }
+    let(:content) { "Fale com o Artur pelo WhatsApp: #{ScanSolo::Commercial::WhatsappLink::PLACEHOLDER}" }
+    let(:result) do
+      ScanSolo::AiTurn::ModelInvoker::Result.new(content: content, actions: actions, asked_fields: [], summary: false,
+                                                 provider: 'scansolo_test_mode', model: 'scansolo-mock-llm')
+    end
+
+    before do
+      allow(ScanSolo::Notifications::EmailAdapter).to receive(:call)
+        .and_return(ScanSolo::Notifications::Publisher::Result.new(success: true, reason: nil))
+      allow(ScanSolo::Notifications::Publisher).to receive(:call).and_call_original
+      turn.update!(guardrail_outcome: { 'allowed_actions' => %w[escalate_to_commercial lead_state_update private_note] })
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(commercial_whatsapp_number: '+5511999999999',
+                                                          quote_recipient_email: 'vendas@example.com')
+      ScanSolo::AiAgent::PublishService.new(account: account).call
+    end
+
+    def sent_reply
+      ai_replies.sole.content
+    end
+
+    def escalation_events
+      ScanSolo::AuditEvent.where(subject: opportunity, event_type: 'commercial.escalated')
+    end
+
+    it 'sends 1 AI reply with the link exactly once in place of the placeholder' do
+      expect(run_attempt).to have_attributes(status: :sent, violation: nil)
+
+      expect(ai_replies.sole.additional_attributes).to include('scansolo_origin' => 'ai')
+      expect(sent_reply.scan('https://wa.me/5511999999999?text=').size).to eq(1)
+      expect(sent_reply).not_to include('{{')
+      expect(opportunity.reload).to have_attributes(escalation_reason: 'pedido_humano')
+      expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_ai_active
+    end
+
+    context 'when the model reply has no placeholder' do
+      let(:content) { 'Vou te passar o contato do nosso comercial.' }
+
+      it 'appends the link once' do
+        run_attempt
+
+        expect(sent_reply).to start_with('Vou te passar o contato do nosso comercial.')
+        expect(sent_reply.scan('https://wa.me/').size).to eq(1)
+      end
+    end
+
+    context 'when the model repeats the placeholder' do
+      let(:content) { "Link: #{ScanSolo::Commercial::WhatsappLink::PLACEHOLDER} de novo #{ScanSolo::Commercial::WhatsappLink::PLACEHOLDER}" }
+
+      it 'keeps only the first occurrence as the link' do
+        run_attempt
+
+        expect(sent_reply.scan('https://wa.me/').size).to eq(1)
+        expect(sent_reply).not_to include('{{')
+      end
+    end
+
+    it 'builds the link from the published number only, never the draft one' do
+      ScanSolo::AiAgentConfig.draft_for!(account).update!(commercial_whatsapp_number: '+5521888888888')
+
+      run_attempt
+
+      expect(sent_reply).to include('https://wa.me/5511999999999')
+      expect(sent_reply).not_to include('5521888888888')
+    end
+
+    context 'when the reply carries an unpublished contact' do
+      let(:content) { 'Fale com a gente em https://wa.me/5511000000000' }
+
+      it 'blocks it and rolls back the mark, the audit and the notice e-mail' do
+        ActiveRecord::Base.transaction do
+          expect(run_attempt).to have_attributes(status: :blocked, violation: :unpublished_contact)
+        end
+
+        expect(opportunity.reload.escalated_to_commercial_at).to be_nil
+        expect(escalation_events).to be_none
+        expect(ScanSolo::Notifications::Publisher).not_to have_received(:call)
+        expect(ai_replies).to be_none
+      end
+    end
+
+    it "accepts the contact's own phone and the lead state telefone" do
+      message.conversation.contact.update!(phone_number: '+5521977776666')
+      opportunity.lead_state.update!(fields: { 'telefone' => { 'value' => '(31) 98888-7777', 'status' => 'confirmado' } })
+      result.content = "Anotei seus telefones +5521977776666 e (31) 98888-7777. #{content}"
+
+      expect(run_attempt).to have_attributes(status: :sent, violation: nil)
+    end
+
+    describe 'negotiation' do
+      let(:actions) { [{ 'action_id' => 'lead_state_update', 'params' => { 'negotiation_requested' => true } }] }
+      let(:content) { 'Consigo fazer por R$ 11.000,00 à vista.' }
+
+      context 'when the opportunity is qualificado' do
+        before { opportunity.update!(stage: :qualificado) }
+
+        it 'keeps the stage, writes 1 mark and replies with the link and the published e-mail' do
+          ActiveRecord::Base.transaction { expect(run_attempt).to have_attributes(status: :sent, violation: nil) }
+
+          expect(opportunity.reload).to have_attributes(stage: 'qualificado', escalation_reason: 'negociacao')
+          expect([escalation_events.count, ScanSolo::PipelineStageEvent.where(opportunity: opportunity).count]).to eq([1, 0])
+          expect(sent_reply).to include('https://wa.me/', 'vendas@example.com')
+          expect(sent_reply).not_to include('comercial@scansolo.com.br', '{{')
+          expect(ScanSolo::Notifications::Publisher).to have_received(:call).once
+        end
+
+        it 'sends an escalation reply that passes the price claim check' do
+          expect(run_attempt).to have_attributes(status: :sent, violation: nil)
+
+          expect(sent_reply).not_to match(ScanSolo::AiTurn::OutputValidator::PRICE_PATTERN)
+        end
+      end
+
+      context 'when the opportunity is proposta_enviada' do
+        before { opportunity.update!(stage: :proposta_enviada) }
+
+        it 'moves it to negociacao and escalates with the escalation reply' do
+          run_attempt
+
+          expect(opportunity.reload).to be_negociacao
+          expect(opportunity.escalation_reason).to eq('negociacao')
+          expect(sent_reply.scan('https://wa.me/').size).to eq(1)
+          expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_ai_active
+        end
+      end
+
+      context 'when the opportunity was already escalated' do
+        before do
+          opportunity.update!(stage: :negociacao, escalated_to_commercial_at: 1.day.ago, escalation_reason: 'pedido_humano')
+        end
+
+        it 'sends no notice e-mail and still replies with the link and the published e-mail' do
+          ActiveRecord::Base.transaction { run_attempt }
+
+          expect(ScanSolo::Notifications::Publisher).not_to have_received(:call)
+          expect(sent_reply).to include('https://wa.me/', 'vendas@example.com')
+          expect(opportunity.reload.escalation_reason).to eq('negociacao')
+        end
+      end
+
+      context 'when no commercial number is published' do
+        let(:content) { "Vou te passar o contato: #{ScanSolo::Commercial::WhatsappLink::PLACEHOLDER}" }
+
+        before do
+          ScanSolo::AiAgentConfig.draft_for!(account).update!(commercial_whatsapp_number: nil)
+          ScanSolo::AiAgent::PublishService.new(account: account).call
+          opportunity.update!(stage: :proposta_enviada)
+        end
+
+        it 'sends the standard reply with no link or placeholder and writes no mark' do
+          expect(run_attempt).to have_attributes(status: :sent, violation: nil)
+
+          expect(sent_reply).to eq(I18n.t('scan_solo.negotiation.standard_reply'))
+          expect(sent_reply).not_to include('wa.me', '{{')
+          expect(opportunity.reload.escalated_to_commercial_at).to be_nil
+          expect(turn.reload).not_to be_failed
+        end
+      end
+    end
+
+    context 'when the model asks a proposal doubt' do
+      let(:reason) { 'duvida_proposta' }
+
+      it 'runs the negotiation request without moving the stage in qualificado (RF-14)' do
+        opportunity.update!(stage: :qualificado)
+
+        run_attempt
+
+        expect(opportunity.reload).to have_attributes(stage: 'qualificado', escalation_reason: 'duvida_proposta')
+        expect(ScanSolo::AuditEvent.where(event_type: 'negotiation.requested').sole.payload)
+          .to include('escalation_reason' => 'duvida_proposta')
+        expect(sent_reply.scan('https://wa.me/').size).to eq(1)
+      end
+
+      it 'escalates only through the action in proposta_enviada (RF-23)' do
+        opportunity.update!(stage: :proposta_enviada)
+
+        ActiveRecord::Base.transaction { run_attempt }
+
+        expect(opportunity.reload).to have_attributes(stage: 'proposta_enviada', escalation_reason: 'duvida_proposta')
+        expect(ScanSolo::AuditEvent.where(event_type: 'negotiation.requested')).to be_none
+        expect(ScanSolo::Notifications::Publisher).to have_received(:call).once
+      end
+    end
+  end
+
   describe 'bulk collection start (proposta-template-local RF-38 c, e)' do
     let(:relevant) { %w[area metragem profundidade integracao_seguranca] }
     let(:accept_bulk) { [{ 'action_id' => 'lead_state_update', 'params' => { 'collection_mode' => 'em_bloco' } }] }

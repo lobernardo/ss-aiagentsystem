@@ -15,17 +15,29 @@
 #    (blocked as `qualification_closed`, the turn ending with 0 messages), so
 #    the concluding attempt replaces it with the standard completion reply --
 #    an intent, never "sent": the quote e-mail only goes after the commit;
-#    a `lead_state_update` evidence with `negotiation_requested` on an
-#    opportunity in `proposta_enviada`/`negociacao` runs
-#    ScanSolo::Negotiation::RequestService and replaces the model's reply
-#    with the standard negotiation reply (RF-35); earlier stages ignore it;
-# 4. ScanSolo::AiTurn::OutputValidator checks the reply against the reloaded
+#    then the commercial requests (escalação comercial RF-13/RF-14/RF-15/
+#    RF-19): a negotiation (`lead_state_update` with `negotiation_requested`
+#    or `escalate_to_commercial` with reason `negociacao`), or a proposal
+#    doubt (`escalate_to_commercial` with `duvida_proposta`) in `qualificado`,
+#    on an opportunity in NEGOTIATION_STAGES runs
+#    ScanSolo::Negotiation::RequestService -- escalating when a commercial
+#    number is published. Any other escalation in `proposta_enviada`/
+#    `negociacao` already went through the action (RF-23). A negotiation
+#    with a published number gets the escalation reply (link placeholder +
+#    published `quote_recipient_email`) and is always escalated; without a
+#    number, the standard negotiation reply when RequestService ran;
+# 4. the commercial link (ScanSolo::Commercial::WhatsappLink, published
+#    number only) replaces the first placeholder and drops the others, or is
+#    appended once when this attempt escalated with no placeholder (RF-06).
+#    Without a number every placeholder is dropped (RF-19);
+# 5. ScanSolo::AiTurn::OutputValidator checks the reply against the reloaded
 #    lead state projection and the model's `asked_fields` (RF-11, RF-12,
-#    RF-22). A blocked reply rolls the savepoint back -- 0 changes of the
-#    attempt persist -- and returns the violation. The attempt whose actions
-#    recorded `em_bloco` for this message is the bulk start, so every relevant
-#    pending field must be asked (proposta-template-local RF-38 c);
-# 5. an approved reply is sent through ScanSolo::AiTurn::ResponseSender.
+#    RF-22), the commercial link and the allowed phones (RF-07). A blocked
+#    reply rolls the savepoint back -- 0 changes of the attempt persist, the
+#    escalation mark included -- and returns the violation. The attempt whose
+#    actions recorded `em_bloco` for this message is the bulk start, so every
+#    relevant pending field must be asked (proposta-template-local RF-38 c);
+# 6. an approved reply is sent through ScanSolo::AiTurn::ResponseSender.
 # An exception propagates, so the caller rolls the whole turn back.
 #
 # The fallback attempt (`fallback: true`), run by the orchestrator once the
@@ -39,7 +51,8 @@ class ScanSolo::AiTurn::AttemptRunner
   Result = Struct.new(:status, :violation, keyword_init: true)
 
   TURN_SCOPED_PARAMS = ScanSolo::AiTurn::PromptBuilder::TURN_SCOPED_PARAMS
-  NEGOTIATION_STAGES = %w[proposta_enviada negociacao].freeze
+  NEGOTIATION_STAGES = %w[qualificado proposta_enviada negociacao].freeze
+  PLACEHOLDER = ScanSolo::Commercial::WhatsappLink::PLACEHOLDER
   LEAD_STATE_LABELS = ScanSolo::AiTurn::LeadStatePrompt::CATALOG_LABELS
 
   # rubocop:disable Metrics/ParameterLists
@@ -65,12 +78,7 @@ class ScanSolo::AiTurn::AttemptRunner
     ActiveRecord::Base.transaction(requires_new: true) do
       apply_pending_updates! if opportunity
       evidence = execute_actions
-      if opportunity && ScanSolo::LeadState::CompletionService.call(opportunity: opportunity, turn: turn)
-        reply_completion!
-      elsif fallback
-        reply_fallback!
-      end
-      request_negotiation! if negotiation_requested?(evidence)
+      build_reply!(evidence)
 
       validation = validate_reply
       if validation[:blocked]
@@ -87,7 +95,7 @@ class ScanSolo::AiTurn::AttemptRunner
 
   private
 
-  attr_reader :turn, :message, :config, :result, :opportunity, :pending_updates, :fallback
+  attr_reader :turn, :message, :config, :result, :opportunity, :pending_updates, :fallback, :commercial_link
 
   def apply_pending_updates!
     writer = ScanSolo::LeadState::Writer.new(lead_state: opportunity.lead_state)
@@ -114,25 +122,81 @@ class ScanSolo::AiTurn::AttemptRunner
     end
   end
 
-  def negotiation_requested?(evidence)
-    return false unless opportunity && NEGOTIATION_STAGES.include?(opportunity.reload.stage)
-
-    evidence.any? { |item| item in { action_id: 'lead_state_update', result: { negotiation_requested: true } } }
+  def build_reply!(evidence)
+    if opportunity && ScanSolo::LeadState::CompletionService.call(opportunity: opportunity, turn: turn)
+      reply_completion!
+    elsif fallback
+      reply_fallback!
+    end
+    handle_commercial_request!(evidence) if opportunity
+    resolve_commercial_link!
   end
 
-  def request_negotiation!
-    ScanSolo::Negotiation::RequestService.call(opportunity: opportunity, turn: turn, message: message, escalation_reason: nil)
+  def handle_commercial_request!(evidence)
+    stage = opportunity.reload.stage
+    reason = commercial_request_reason(evidence, stage)
+    return unless reason
+
+    number_published = config.commercial_whatsapp_number.present?
+    requested = NEGOTIATION_STAGES.include?(stage)
+    if requested
+      ScanSolo::Negotiation::RequestService.call(opportunity: opportunity, turn: turn, message: message,
+                                                 escalation_reason: number_published ? reason : nil)
+    end
+
+    if number_published
+      escalate_negotiation! if reason == 'negociacao'
+    elsif requested
+      replace_reply!(I18n.t('scan_solo.negotiation.standard_reply'))
+    end
+  end
+
+  # RF-15: no-op on the mark when this attempt already escalated.
+  def escalate_negotiation!
+    ScanSolo::Commercial::EscalationService.call(opportunity: opportunity, reason: 'negociacao', turn: turn)
+    replace_reply!(I18n.t('scan_solo.negotiation.escalation_reply', link: PLACEHOLDER, email: config.quote_recipient_email))
+  end
+
+  def commercial_request_reason(evidence, stage)
+    negotiation = evidence.any? do |item|
+      (item in { action_id: 'lead_state_update', result: { negotiation_requested: true } }) ||
+        (item in { action_id: 'escalate_to_commercial', result: { reason: 'negociacao' } })
+    end
+    return 'negociacao' if negotiation
+
+    proposal_doubt = evidence.any? { |item| item in { action_id: 'escalate_to_commercial', result: { reason: 'duvida_proposta' } } }
+    'duvida_proposta' if proposal_doubt && stage == 'qualificado'
+  end
+
+  def replace_reply!(content)
     @result = result.dup.tap do |reply|
-      reply.content = I18n.t('scan_solo.negotiation.standard_reply')
+      reply.content = content
       reply.asked_fields = []
     end
+  end
+
+  def resolve_commercial_link!
+    @commercial_link = ScanSolo::Commercial::WhatsappLink.build(config: config, opportunity: opportunity) if opportunity
+    content = result.content.to_s
+    content = if commercial_link.nil?
+                content.gsub(PLACEHOLDER, '')
+              elsif content.include?(PLACEHOLDER)
+                content.sub(PLACEHOLDER) { commercial_link }.gsub(PLACEHOLDER, '')
+              elsif escalated_in_attempt?
+                "#{content}\n\n#{commercial_link}"
+              else
+                content
+              end
+    @result = result.dup.tap { |reply| reply.content = content }
+  end
+
+  def escalated_in_attempt?
+    ScanSolo::AuditEvent.exists?(subject: opportunity, event_type: ScanSolo::Commercial::EscalationService::EVENT,
+                                 correlation_id: turn.correlation_id)
   end
 
   def reply_completion!
-    @result = result.dup.tap do |reply|
-      reply.content = I18n.t('scan_solo.qualification.completed_reply')
-      reply.asked_fields = []
-    end
+    replace_reply!(I18n.t('scan_solo.qualification.completed_reply'))
   end
 
   def reply_fallback!
@@ -171,6 +235,12 @@ class ScanSolo::AiTurn::AttemptRunner
     lead_state = ScanSolo::LeadState::Projection.call(opportunity: opportunity.reload, config: config) if opportunity
     ScanSolo::AiTurn::OutputValidator.call(content: result.content, restricted_information: config.restricted_information,
                                            asked_fields: result.asked_fields, lead_state: lead_state,
-                                           bulk_started: lead_state.present? && lead_state.collection[:mode_source_message_id] == message.id)
+                                           bulk_started: lead_state.present? && lead_state.collection[:mode_source_message_id] == message.id,
+                                           commercial_link: commercial_link, allowed_phone_numbers: allowed_phone_numbers)
+  end
+
+  def allowed_phone_numbers
+    [config.commercial_whatsapp_number, message.conversation.contact.phone_number,
+     opportunity&.lead_state&.fields.to_h.dig('telefone', 'value')].compact_blank
   end
 end

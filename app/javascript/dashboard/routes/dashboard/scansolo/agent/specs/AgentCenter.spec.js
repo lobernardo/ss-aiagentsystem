@@ -50,6 +50,7 @@ const draftFixture = {
   commercial_user_id: null,
   quote_recipient_email: 'comercial@example.com',
   quote_email_validation_mode: true,
+  commercial_whatsapp_number: null,
   updated_at: '2026-01-01T09:00:00Z',
 };
 
@@ -688,6 +689,120 @@ describe('AgentCenter', () => {
           '[data-testid="field-quoteEmailValidationMode"]'
         ).element.checked
       ).toBe(false);
+    });
+
+    describe('UI-01: commercial WhatsApp number', () => {
+      const phoneField = wrapper =>
+        commercial(wrapper).find(
+          '[data-testid="field-commercialWhatsappNumber"]'
+        );
+      const saveButton = wrapper =>
+        wrapper.find('[data-testid="save-draft-button"]');
+
+      it('renders the labelled field empty when the draft has null', async () => {
+        const wrapper = mountAgentCenter();
+        await flushPromises();
+
+        expect(commercial(wrapper).text()).toContain(
+          'WhatsApp do Artur (comercial)'
+        );
+        expect(phoneField(wrapper).element.value).toBe('');
+        expect(commercial(wrapper).text()).not.toMatch(/\d/);
+      });
+
+      it('shows the inline error and disables saving for a local number', async () => {
+        const wrapper = mountAgentCenter();
+        await flushPromises();
+
+        await phoneField(wrapper).setValue('11999999999');
+
+        expect(
+          wrapper
+            .find('[data-testid="field-error-commercialWhatsappNumber"]')
+            .text()
+        ).toBe(
+          'Informe o número no formato internacional, começando com + e o código do país.'
+        );
+        expect(saveButton(wrapper).attributes('disabled')).toBeDefined();
+      });
+
+      it('sends an E.164 number when saving', async () => {
+        ScanSoloAiAgentConfigAPI.updateDraft.mockResolvedValue({
+          data: {
+            ...draftFixture,
+            commercial_whatsapp_number: '+5511999999999',
+          },
+        });
+        const wrapper = mountAgentCenter();
+        await flushPromises();
+
+        await phoneField(wrapper).setValue(' +5511999999999 ');
+        expect(
+          wrapper
+            .find('[data-testid="field-error-commercialWhatsappNumber"]')
+            .exists()
+        ).toBe(false);
+        expect(saveButton(wrapper).attributes('disabled')).toBeUndefined();
+        await wrapper.find('form').trigger('submit');
+        await flushPromises();
+
+        expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledWith(
+          expect.objectContaining({
+            commercial_whatsapp_number: '+5511999999999',
+          })
+        );
+        expect(phoneField(wrapper).element.value).toBe('+5511999999999');
+      });
+
+      it('sends null when the field is cleared', async () => {
+        ScanSoloAiAgentConfigAPI.get.mockResolvedValue({
+          data: {
+            draft: {
+              ...draftFixture,
+              commercial_whatsapp_number: '+5511999999999',
+            },
+            published: null,
+            available_models: AVAILABLE_MODELS,
+          },
+        });
+        ScanSoloAiAgentConfigAPI.updateDraft.mockResolvedValue({
+          data: draftFixture,
+        });
+        const wrapper = mountAgentCenter();
+        await flushPromises();
+        expect(phoneField(wrapper).element.value).toBe('+5511999999999');
+
+        await phoneField(wrapper).setValue('');
+        await wrapper.find('form').trigger('submit');
+        await flushPromises();
+
+        expect(ScanSoloAiAgentConfigAPI.updateDraft).toHaveBeenCalledWith(
+          expect.objectContaining({ commercial_whatsapp_number: null })
+        );
+      });
+
+      it('shows the server message when the server answers 422', async () => {
+        ScanSoloAiAgentConfigAPI.updateDraft.mockRejectedValue({
+          response: {
+            status: 422,
+            data: {
+              message:
+                'Commercial whatsapp number must be an E.164 phone number',
+              attributes: ['commercial_whatsapp_number'],
+            },
+          },
+        });
+        const wrapper = mountAgentCenter();
+        await flushPromises();
+
+        await phoneField(wrapper).setValue('+5511999999999');
+        await wrapper.find('form').trigger('submit');
+        await flushPromises();
+
+        expect(useAlert).toHaveBeenCalledWith(
+          'Commercial whatsapp number must be an E.164 phone number'
+        );
+      });
     });
 
     it('leaves the ScanSolo menu items unchanged', () => {

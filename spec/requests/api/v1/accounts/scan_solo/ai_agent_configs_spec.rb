@@ -18,7 +18,8 @@ RSpec.describe 'ScanSolo AI Agent Config API', type: :request do
     end
 
     it 'returns the published config distinctly from the draft once published' do
-      put "#{base_path}/draft", params: { name: 'Agente v1', enabled: true }, headers: agent.create_new_auth_token, as: :json
+      put "#{base_path}/draft", params: { name: 'Agente v1', enabled: true, commercial_whatsapp_number: '+5511999999999' },
+                                headers: agent.create_new_auth_token, as: :json
       post "#{base_path}/publish", headers: agent.create_new_auth_token, as: :json
 
       get base_path, headers: agent.create_new_auth_token, as: :json
@@ -272,6 +273,84 @@ RSpec.describe 'ScanSolo AI Agent Config API', type: :request do
 
       expect(response).to have_http_status(:forbidden)
       expect(ScanSolo::AiAgentConfig.draft_for!(account).quote_email_validation_mode).to be(true)
+    end
+  end
+
+  describe 'commercial WhatsApp number (RF-01, RF-21, CT-01)' do
+    let(:headers) { agent.create_new_auth_token }
+    let(:number) { '+5511999999999' }
+
+    it 'saves an E.164 number in the draft' do
+      put "#{base_path}/draft", params: { commercial_whatsapp_number: number }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['commercial_whatsapp_number']).to eq(number)
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).commercial_whatsapp_number).to eq(number)
+    end
+
+    it 'rejects local formats, separators, integers and empty strings without touching the draft' do
+      put "#{base_path}/draft", params: { commercial_whatsapp_number: number }, headers: headers, as: :json
+      draft = ScanSolo::AiAgentConfig.draft_for!(account)
+      updated_at = draft.updated_at
+
+      ['11999999999', '+55 11 99999-9999', 5_511_999_999_999, ''].each do |value|
+        put "#{base_path}/draft", params: { commercial_whatsapp_number: value }, headers: headers, as: :json
+
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(response.parsed_body['attributes']).to include('commercial_whatsapp_number')
+      end
+      draft.reload
+      expect(draft.commercial_whatsapp_number).to eq(number)
+      expect(draft.updated_at).to eq(updated_at)
+    end
+
+    it 'clears the number with null' do
+      put "#{base_path}/draft", params: { commercial_whatsapp_number: number }, headers: headers, as: :json
+      put "#{base_path}/draft", params: { commercial_whatsapp_number: nil }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['commercial_whatsapp_number']).to be_nil
+      expect(ScanSolo::AiAgentConfig.draft_for!(account).commercial_whatsapp_number).to be_nil
+    end
+
+    it 'refuses to publish an enabled agent without the number, with no snapshot and no audit' do
+      put "#{base_path}/draft", params: { enabled: true }, headers: headers, as: :json
+
+      expect do
+        post "#{base_path}/publish", headers: headers, as: :json
+      end.to not_change(ScanSolo::AiAgentConfig.published.where(account: account), :count)
+        .and(not_change { ScanSolo::AuditEvent.where(event_type: 'ai_agent_config.published').count })
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response.parsed_body['attributes']).to include('commercial_whatsapp_number')
+    end
+
+    it 'publishes a disabled agent without the number' do
+      put "#{base_path}/draft", params: { enabled: false }, headers: headers, as: :json
+      post "#{base_path}/publish", headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['commercial_whatsapp_number']).to be_nil
+    end
+
+    it 'publishes an enabled agent with the number and carries it in the snapshot' do
+      put "#{base_path}/draft", params: { enabled: true, commercial_whatsapp_number: number }, headers: headers, as: :json
+      post "#{base_path}/publish", headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body['commercial_whatsapp_number']).to eq(number)
+      expect(ScanSolo::AiAgentConfig.published_for(account).commercial_whatsapp_number).to eq(number)
+    end
+
+    it 'exposes the field in the draft and the published config' do
+      put "#{base_path}/draft", params: { commercial_whatsapp_number: number }, headers: headers, as: :json
+      post "#{base_path}/publish", headers: headers, as: :json
+      put "#{base_path}/draft", params: { commercial_whatsapp_number: nil }, headers: headers, as: :json
+
+      get base_path, headers: headers, as: :json
+
+      expect(response.parsed_body['draft']).to include('commercial_whatsapp_number' => nil)
+      expect(response.parsed_body['published']).to include('commercial_whatsapp_number' => number)
     end
   end
 end

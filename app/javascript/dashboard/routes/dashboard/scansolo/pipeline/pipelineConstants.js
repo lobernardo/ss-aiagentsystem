@@ -49,5 +49,5 @@ export const isStaleOpportunity = (opportunity, now = new Date()) => {
   );
 };
 
-// CT-01: mirrors the controller's E164_PHONE_REGEXP.
+// CT-01: mirrors ScanSolo::Commercial::Rules::E164_PHONE_REGEXP.
 export const E164_PHONE_PATTERN = /^\+[1-9]\d{1,14}$/;

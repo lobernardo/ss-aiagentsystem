@@ -25,3 +25,4 @@ json.quote_inbox_id resource.quote_inbox_id
 json.commercial_user_id resource.commercial_user_id
 json.quote_recipient_email resource.quote_recipient_email
 json.quote_email_validation_mode resource.quote_email_validation_mode
+json.commercial_whatsapp_number resource.commercial_whatsapp_number

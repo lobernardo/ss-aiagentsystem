@@ -105,6 +105,42 @@ RSpec.describe ScanSolo::Knowledge::IngestionService do
     end
   end
 
+  describe 'RF-22: internal commercial contact name' do
+    let(:embedding_provider) { class_spy(ScanSolo::TestMode::MockEmbeddingProvider) }
+
+    it 'fails the source without calling the embedding provider' do
+      source.update_columns(content: 'Para fechar, fale com o luciano.') # rubocop:disable Rails/SkipsModelValidations
+
+      described_class.call(source: source, embedding_provider: embedding_provider)
+
+      expect(source.reload).to have_attributes(index_status: 'failed', index_error: described_class::INTERNAL_NAME_ERROR, chunk_count: 0)
+      expect(embedding_provider).not_to have_received(:call)
+      expect(ScanSolo::KnowledgeChunk.where(source: source).count).to eq(0)
+    end
+
+    it 'removes the chunks of a previous successful indexation and leaves nothing to retrieve' do
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+      expect(source.reload).to have_attributes(index_status: 'indexed', chunk_count: 2)
+
+      source.update_columns(content: "Qual o horário de atendimento?\n\nFale com o Luciano.") # rubocop:disable Rails/SkipsModelValidations
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+
+      expect(source.reload).to have_attributes(index_status: 'failed', chunk_count: 0)
+      expect(source.index_error).to be_present
+      expect(ScanSolo::KnowledgeChunk.where(source: source).count).to eq(0)
+      retrieval = ScanSolo::Knowledge::RetrievalService.call(
+        account: account, query: 'horário de atendimento', embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider
+      )
+      expect(retrieval[:results].map(&:source_id)).not_to include(source.id)
+    end
+
+    it 'keeps indexing content without the name' do
+      described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+
+      expect(source.reload).to have_attributes(index_status: 'indexed', index_error: nil)
+    end
+  end
+
   describe 'idempotent re-ingestion' do
     it 'replaces rather than duplicates chunks when called twice for unchanged content' do
       described_class.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)

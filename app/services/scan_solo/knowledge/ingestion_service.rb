@@ -9,12 +9,17 @@
 # previous chunks searchable and re-running ingestion never duplicates rows.
 # A source that yields no chunk (empty content, attachment without
 # extractable text) is `failed`, never `indexed` (RF-45).
+#
+# Escalação comercial RF-22: content carrying the internal commercial contact
+# name is `failed` and loses every chunk (including a previous indexation),
+# with no embedding call, because retrieval does not filter on index_status.
 class ScanSolo::Knowledge::IngestionService
   CHUNK_SIZE = 500
   WRAP_PATTERN = /.{1,#{CHUNK_SIZE}}(?:\s|\z)/m
   EMPTY_CONTENT_ERROR = 'A fonte não tem texto para indexar.'.freeze
   ATTACHMENT_ONLY_ERROR = 'O anexo não tem texto extraível; cole o conteúdo do documento no campo de conteúdo.'.freeze
   INDEXING_ERROR = 'Não foi possível indexar a fonte (%<error>s). Tente reindexar mais tarde.'.freeze
+  INTERNAL_NAME_ERROR = 'A fonte contém o nome interno do contato comercial; remova-o e reindexe.'.freeze
 
   def self.call(source:, embedding_provider: ScanSolo::Knowledge::EmbeddingService)
     new(source: source, embedding_provider: embedding_provider).call
@@ -27,6 +32,7 @@ class ScanSolo::Knowledge::IngestionService
 
   def call
     source.update!(index_status: :indexing, index_error: nil)
+    return reject_internal_name! if ScanSolo::Commercial::Rules.internal_name?(source.content)
 
     chunk_texts = chunk(source.content.to_s)
     return fail!(source.file.attached? ? ATTACHMENT_ONLY_ERROR : EMPTY_CONTENT_ERROR) if chunk_texts.empty?
@@ -53,6 +59,14 @@ class ScanSolo::Knowledge::IngestionService
       end
       source.update!(index_status: :indexed, indexed_at: Time.current, chunk_count: embedded.size)
     end
+  end
+
+  def reject_internal_name!
+    ActiveRecord::Base.transaction do
+      source.knowledge_chunks.destroy_all
+      source.update!(index_status: :failed, index_error: INTERNAL_NAME_ERROR, chunk_count: 0)
+    end
+    source
   end
 
   def fail!(message)

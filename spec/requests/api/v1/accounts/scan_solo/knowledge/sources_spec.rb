@@ -150,6 +150,52 @@ RSpec.describe 'ScanSolo Knowledge Sources API', type: :request do
     end
   end
 
+  describe 'internal commercial contact name (RF-20, CT-06)' do
+    let(:headers) { agent.create_new_auth_token }
+    let!(:source) do
+      ScanSolo::KnowledgeSource.create!(account: account, added_by: agent, source_type: :faq, origin: 'manual',
+                                        title: 'Garantia', content: 'Garantia de 90 dias.')
+    end
+
+    it 'rejects a create whose content or title carries the name, writing nothing' do
+      base_params = { source_type: 'faq', origin: 'manual' }
+      [{ content: 'fale com o Luciano' }, { title: 'LUCIANO', content: 'Garantia de 90 dias.' }].each do |payload|
+        expect do
+          post base_path, params: base_params.merge(payload), headers: headers, as: :json
+        end.to not_change(ScanSolo::KnowledgeSource, :count).and(not_change(ScanSolo::AuditEvent, :count))
+
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(response.parsed_body['attributes']).to include(payload.keys.first.to_s)
+      end
+    end
+
+    it 'accepts the same create without the name' do
+      post base_path, params: { source_type: 'faq', origin: 'manual', title: 'Contato', content: 'fale com o Artur' }, headers: headers, as: :json
+
+      expect(response).to have_http_status(:success)
+    end
+
+    it 'rejects PATCH and PUT carrying the name and leaves the source untouched' do
+      updated_at = source.updated_at
+
+      patch "#{base_path}/#{source.id}", params: { content: 'fale com o Luciano' }, headers: headers, as: :json
+      expect(response).to have_http_status(:unprocessable_entity)
+      put "#{base_path}/#{source.id}", params: { title: 'Lucíano' }, headers: headers, as: :json
+      expect(response).to have_http_status(:unprocessable_entity)
+
+      expect(source.reload).to have_attributes(title: 'Garantia', content: 'Garantia de 90 dias.', updated_at: updated_at)
+    end
+
+    it 'accepts PATCH and PUT without the name' do
+      patch "#{base_path}/#{source.id}", params: { content: 'fale com o Artur' }, headers: headers, as: :json
+      expect(response).to have_http_status(:success)
+      put "#{base_path}/#{source.id}", params: { title: 'Contato' }, headers: headers, as: :json
+      expect(response).to have_http_status(:success)
+
+      expect(source.reload).to have_attributes(title: 'Contato', content: 'fale com o Artur')
+    end
+  end
+
   describe 'account without ScanSolo enabled' do
     let(:disabled_account) { create(:account, scansolo_enabled: false) }
     let(:disabled_agent) { create(:user, account: disabled_account, role: :agent) }

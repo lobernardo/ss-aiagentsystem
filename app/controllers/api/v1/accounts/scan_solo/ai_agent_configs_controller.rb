@@ -6,6 +6,10 @@
 # of the publish snapshot. RF-14/RF-16: the quote inbox must be an email inbox
 # of the account kept outside the effective allowlist, rejected here (422).
 # RF-21 / CT-05 (1): `quote_email_validation_mode` only accepts a JSON boolean.
+#
+# Escalação comercial RF-01/RF-21/CT-01: `commercial_whatsapp_number` only
+# accepts null or an E.164 string, and an enabled draft cannot be published
+# without it (422 before PublishService, so no snapshot and no audit).
 class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts::ScanSolo::BaseController
   before_action :set_draft
 
@@ -22,6 +26,11 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
 
   def publish
     authorize(@draft, :publish?)
+    if @draft.enabled && @draft.commercial_whatsapp_number.blank?
+      @draft.errors.add(:commercial_whatsapp_number, 'is required to publish an enabled agent')
+      raise ActiveRecord::RecordInvalid, @draft
+    end
+
     @published = ::ScanSolo::AiAgent::PublishService.new(account: Current.account, actor: Current.user).call
   end
 
@@ -52,7 +61,12 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
     validate_quote_inbox if params.key?(:quote_inbox_id) || params.key?(:allowed_inbox_ids)
     validate_commercial_user if params.key?(:commercial_user_id)
     validate_quote_recipient_email if params.key?(:quote_recipient_email)
-    return if !params.key?(:quote_email_validation_mode) || [true, false].include?(params[:quote_email_validation_mode])
+    validate_commercial_whatsapp_number if params.key?(:commercial_whatsapp_number)
+    validate_quote_email_validation_mode if params.key?(:quote_email_validation_mode)
+  end
+
+  def validate_quote_email_validation_mode
+    return if [true, false].include?(params[:quote_email_validation_mode])
 
     @draft.errors.add(:quote_email_validation_mode, 'must be a boolean')
   end
@@ -93,6 +107,13 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
     @draft.errors.add(:quote_recipient_email, 'must be a valid email address')
   end
 
+  def validate_commercial_whatsapp_number
+    number = params[:commercial_whatsapp_number]
+    return if number.nil? || (number.is_a?(String) && number.match?(::ScanSolo::Commercial::Rules::E164_PHONE_REGEXP))
+
+    @draft.errors.add(:commercial_whatsapp_number, 'must be an E.164 phone number')
+  end
+
   def array_of?(value, type)
     value.is_a?(Array) && value.all?(type)
   end
@@ -102,7 +123,7 @@ class Api::V1::Accounts::ScanSolo::AiAgentConfigsController < Api::V1::Accounts:
       :name, :enabled, :model_provider, :model_selection, :role, :objective, :persona, :tone,
       :instructions, :service_rules, :transfer_criteria, :response_limits, :service_hours,
       :require_proposal_approval, :quote_inbox_id, :commercial_user_id, :quote_recipient_email,
-      :quote_email_validation_mode,
+      :quote_email_validation_mode, :commercial_whatsapp_number,
       allowed_inbox_ids: [],
       opt_out_keywords: [],
       qualification_playbook: [],

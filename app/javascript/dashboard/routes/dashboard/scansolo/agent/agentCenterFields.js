@@ -26,6 +26,8 @@ export const AGENT_CENTER_FIELD_LABELS = {
   quoteRecipientEmail: 'SCANSOLO.AGENT_CENTER.FIELDS.QUOTE_RECIPIENT_EMAIL',
   quoteEmailValidationMode:
     'SCANSOLO.AGENT_CENTER.FIELDS.QUOTE_EMAIL_VALIDATION_MODE',
+  commercialWhatsappNumber:
+    'SCANSOLO.AGENT_CENTER.FIELDS.COMMERCIAL_WHATSAPP_NUMBER',
 };
 
 export const FIELD_TYPES = {
@@ -37,6 +39,7 @@ export const FIELD_TYPES = {
   SELECT: 'select',
   KEYWORDS: 'keywords',
   EMAIL: 'email',
+  PHONE: 'phone',
 };
 
 // UI-08 / RF-54: sources of the form selects.
@@ -128,6 +131,7 @@ export const AGENT_CENTER_SECTIONS = [
   // RF-54: the approval toggle left the screen (RF-55 Etapa 1, UI-06); the
   // commercial routing fields take its place. `nullable` selects may be
   // left empty. RF-21 / UI-01: the quote e-mail validation mode toggle.
+  // Escalação comercial UI-01: Artur's WhatsApp number, used in the wa.me link.
   {
     key: 'commercial',
     title: 'SCANSOLO.AGENT_CENTER.SECTIONS.COMMERCIAL',
@@ -145,6 +149,7 @@ export const AGENT_CENTER_SECTIONS = [
         nullable: true,
       },
       { name: 'quoteRecipientEmail', type: FIELD_TYPES.EMAIL },
+      { name: 'commercialWhatsappNumber', type: FIELD_TYPES.PHONE },
       { name: 'quoteEmailValidationMode', type: FIELD_TYPES.CHECKBOX },
     ],
   },

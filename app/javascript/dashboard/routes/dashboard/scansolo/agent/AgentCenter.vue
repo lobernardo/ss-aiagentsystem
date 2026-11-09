@@ -14,6 +14,7 @@ import Spinner from 'dashboard/components-next/spinner/Spinner.vue';
 import { useScanSoloRole } from '../composables/useScanSoloRole';
 import { PROVIDER_LABELS } from '../scansoloLabels';
 import { serverErrorMessage } from '../scansoloErrors';
+import { E164_PHONE_PATTERN } from '../pipeline/pipelineConstants';
 import {
   AGENT_CENTER_FIELD_LABELS,
   AGENT_CENTER_SECTIONS,
@@ -78,6 +79,7 @@ const emptyForm = () => ({
   commercialUserId: null,
   quoteRecipientEmail: '',
   quoteEmailValidationMode: true,
+  commercialWhatsappNumber: '',
 });
 
 const form = reactive(emptyForm());
@@ -88,6 +90,16 @@ const newKeyword = ref('');
 const pendingLeave = ref(null);
 const fieldErrors = reactive({ quoteRecipientEmail: '' });
 
+// UI-01 / CT-01: an empty number is valid (saved as null); anything else
+// must be E.164, the same rule the server applies.
+const commercialWhatsappNumberError = computed(() => {
+  const number = form.commercialWhatsappNumber.trim();
+  return number && !E164_PHONE_PATTERN.test(number)
+    ? t('SCANSOLO.AGENT_CENTER.COMMERCIAL_WHATSAPP_NUMBER_ERROR')
+    : '';
+});
+const hasFieldErrors = computed(() => !!commercialWhatsappNumberError.value);
+
 const isDirty = computed(() => JSON.stringify(form) !== savedSnapshot.value);
 const isBusy = computed(
   () => store.uiFlags.updatingDraft || store.uiFlags.publishing
@@ -95,7 +107,9 @@ const isBusy = computed(
 
 const applyDraftToForm = draft => {
   if (!draft) return;
-  Object.assign(form, emptyForm(), draft);
+  Object.assign(form, emptyForm(), draft, {
+    commercialWhatsappNumber: draft.commercialWhatsappNumber || '',
+  });
   savedSnapshot.value = JSON.stringify(form);
 };
 
@@ -185,6 +199,7 @@ const draftPayload = () => ({
   commercial_user_id: form.commercialUserId,
   quote_recipient_email: form.quoteRecipientEmail.trim(),
   quote_email_validation_mode: form.quoteEmailValidationMode,
+  commercial_whatsapp_number: form.commercialWhatsappNumber.trim() || null,
 });
 
 const saveDraft = async () => {
@@ -193,7 +208,7 @@ const saveDraft = async () => {
   )
     ? ''
     : t('SCANSOLO.AGENT_CENTER.QUOTE_RECIPIENT_EMAIL_ERROR');
-  if (fieldErrors.quoteRecipientEmail) return;
+  if (fieldErrors.quoteRecipientEmail || hasFieldErrors.value) return;
 
   try {
     const draft = await store.updateDraft(draftPayload());
@@ -348,6 +363,33 @@ defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
                       {{ fieldErrors[field.name] }}
                     </p>
                   </template>
+                  <template v-else-if="field.type === FIELD_TYPES.PHONE">
+                    <input
+                      v-model="form[field.name]"
+                      type="tel"
+                      :data-testid="`field-${field.name}`"
+                      class="w-full rounded-lg border px-3 py-2 text-sm"
+                      :class="
+                        commercialWhatsappNumberError
+                          ? 'border-n-ruby-8'
+                          : 'border-n-weak'
+                      "
+                    />
+                    <p
+                      v-if="commercialWhatsappNumberError"
+                      :data-testid="`field-error-${field.name}`"
+                      class="mt-1 text-sm text-n-ruby-9"
+                    >
+                      {{ commercialWhatsappNumberError }}
+                    </p>
+                    <p v-else class="mt-1 text-xs text-n-slate-10">
+                      {{
+                        t(
+                          'SCANSOLO.AGENT_CENTER.COMMERCIAL_WHATSAPP_NUMBER_HINT'
+                        )
+                      }}
+                    </p>
+                  </template>
                   <textarea
                     v-else-if="field.type === FIELD_TYPES.TEXTAREA"
                     v-model="form[field.name]"
@@ -437,7 +479,7 @@ defineExpose({ saveDraft, requestPublish, confirmPublish, cancelPublish });
             <button
               type="submit"
               data-testid="save-draft-button"
-              :disabled="isBusy"
+              :disabled="isBusy || hasFieldErrors"
               class="flex items-center gap-2 rounded-lg bg-n-slate-12 text-n-slate-1 px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Spinner v-if="store.uiFlags.updatingDraft" :size="14" />

@@ -642,6 +642,14 @@ describe('OpportunityDetail', () => {
       );
     });
 
+    it('labels escalado_wa as forwarded to Artur over WhatsApp', async () => {
+      const wrapper = await mountWith({ commercial_status: 'escalado_wa' });
+
+      expect(commercialStatus(wrapper).text()).toBe(
+        'Encaminhado ao Artur (WhatsApp)'
+      );
+    });
+
     it('shows "Encaminhado ao Artur em <data>" only when commercial_forwarded_at is set', async () => {
       const forwarded = await mountWith({
         commercial_status: 'aguardando_artur',

@@ -3,7 +3,9 @@ import { SCANSOLO_MODULES } from '../scansoloModules';
 import { SCANSOLO_PIPELINE_STAGES } from '../pipeline/pipelineConstants';
 import { AGENT_CENTER_FIELD_LABELS } from '../agent/agentCenterFields';
 import {
+  AI_ACTION_LABELS,
   COMMERCIAL_STATUS_LABELS,
+  REASON_LABELS,
   STALL_REASON_LABELS,
   SUGGESTED_ACTION_LABELS,
 } from '../scansoloLabels';
@@ -53,7 +55,7 @@ const enumKeys = [
   ...KNOWLEDGE_SOURCE_TYPES.map(
     type => `SCANSOLO.KNOWLEDGE_CENTER.SOURCE_TYPES.${type.toUpperCase()}`
   ),
-  // Relatórios: API enums rendered through these maps (6 / 10 / 10).
+  // Relatórios: API enums rendered through these maps (7 / 10 / 10).
   ...Object.values(COMMERCIAL_STATUS_LABELS),
   ...Object.values(STALL_REASON_LABELS),
   ...Object.values(SUGGESTED_ACTION_LABELS),
@@ -84,7 +86,7 @@ describe('ScanSolo i18n completeness', () => {
   });
 
   it('covers every Relatórios enum value', () => {
-    expect(Object.keys(COMMERCIAL_STATUS_LABELS)).toHaveLength(6);
+    expect(Object.keys(COMMERCIAL_STATUS_LABELS)).toHaveLength(7);
     expect(Object.keys(STALL_REASON_LABELS)).toHaveLength(10);
     expect(Object.keys(SUGGESTED_ACTION_LABELS)).toEqual(
       Object.keys(STALL_REASON_LABELS)
@@ -101,6 +103,17 @@ describe('ScanSolo i18n completeness', () => {
       'Acompanhar com o Artur'
     );
     expect(resolve(SUGGESTED_ACTION_LABELS.outro)).toBe('Revisar manualmente');
+  });
+
+  it('resolves the escalação comercial labels naming Artur', () => {
+    [
+      COMMERCIAL_STATUS_LABELS.escalado_wa,
+      REASON_LABELS.commercial_escalated,
+      AI_ACTION_LABELS.escalate_to_commercial,
+    ].forEach(key => expect(resolve(key)).toMatch(/Artur/));
+    expect(resolve(COMMERCIAL_STATUS_LABELS.escalado_wa)).toBe(
+      'Encaminhado ao Artur (WhatsApp)'
+    );
   });
 
   it('never shows the internal commercial contact name or a phone number', () => {

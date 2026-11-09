@@ -602,6 +602,7 @@
         "INBOX_NOT_ALLOWLISTED": "Caixa de entrada fora da lista da IA",
         "INBOX_HAS_ACTIVE_BOT": "Caixa de entrada com outro bot ativo",
         "HUMAN_CONTROLLED": "Conversa em atendimento humano",
+        "COMMERCIAL_ESCALATED": "Lead encaminhado ao Artur",
         "OPT_OUT": "Contato pediu opt-out",
         "CONVERSATION_RESOLVED": "Conversa resolvida",
         "TIMEOUT": "Tempo de resposta do Make esgotado",
@@ -667,7 +668,8 @@
         "PRIVATE_NOTE": "Nota privada",
         "CADENCE_SIGNAL": "Sinal de follow-up",
         "HUMAN_HANDOFF": "Transferência para humano",
-        "PROPOSAL_GENERATE": "Geração de proposta"
+        "PROPOSAL_GENERATE": "Geração de proposta",
+        "ESCALATE_TO_COMMERCIAL": "Encaminhamento ao Artur (WhatsApp)"
       },
       "LEAD_SOURCE_TAGS": {
         "WEBSITE": "SITE",
@@ -714,7 +716,8 @@
       "RESPOSTA_RECEBIDA": "Resposta recebida",
       "PROPOSTA_EM_APROVACAO": "Proposta em aprovação",
       "PROPOSTA_ENVIADA": "Proposta enviada",
-      "PROPOSTA_ENVIADA_MANUAL": "Proposta enviada manualmente"
+      "PROPOSTA_ENVIADA_MANUAL": "Proposta enviada manualmente",
+      "ESCALADO_WA": "Encaminhado ao Artur (WhatsApp)"
     },
     "REPORTS": {
       "TITLE": "Relatórios",

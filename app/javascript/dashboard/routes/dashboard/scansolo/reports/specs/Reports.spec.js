@@ -357,6 +357,28 @@ describe('Reports', () => {
       );
     });
 
+    it('labels an escalado_wa lead with the Artur commercial status', async () => {
+      ScanSoloReportsAPI.get.mockResolvedValue({
+        data: buildReport({
+          stalled: [
+            {
+              ...stalledItems[0],
+              opportunity_id: 14,
+              stage: 'negociacao',
+              commercial_status: 'escalado_wa',
+            },
+          ],
+        }),
+      });
+      const wrapper = await mountReports();
+
+      expect(
+        row(wrapper, 14)
+          .find('[data-testid="stalled-commercial-status"]')
+          .text()
+      ).toBe('Encaminhado ao Artur (WhatsApp)');
+    });
+
     it('counts days from the last interaction, or from created_at when it is null', async () => {
       const wrapper = await mountReports();
 

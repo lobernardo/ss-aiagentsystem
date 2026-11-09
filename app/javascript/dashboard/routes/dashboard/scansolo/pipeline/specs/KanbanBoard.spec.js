@@ -314,6 +314,7 @@ describe('KanbanBoard', () => {
       ['proposta_em_aprovacao', 'Proposta em aprovação'],
       ['proposta_enviada', 'Proposta enviada'],
       ['proposta_enviada_manual', 'Proposta enviada manualmente'],
+      ['escalado_wa', 'Encaminhado ao Artur (WhatsApp)'],
     ])(
       'labels the card from commercial_status %s (RF-03 / UI-07)',
       async (commercialStatus, label) => {
@@ -480,7 +481,7 @@ describe('KanbanBoard', () => {
       });
     });
 
-    it('defaults to "Todas" and lists the 6 commercial statuses', async () => {
+    it('defaults to "Todas" and lists the 7 commercial statuses', async () => {
       const wrapper = mountBoard();
       await flushPromises();
 
@@ -497,8 +498,39 @@ describe('KanbanBoard', () => {
         'Proposta em aprovação',
         'Proposta enviada',
         'Proposta enviada manualmente',
+        'Encaminhado ao Artur (WhatsApp)',
       ]);
       expect(wrapper.findAll('[data-testid="pipeline-card"]')).toHaveLength(3);
+    });
+
+    it('has 1 escalado_wa option that shows only the escalated cards', async () => {
+      ScanSoloPipelineOpportunitiesAPI.get.mockResolvedValue({
+        data: [
+          ...threeOpportunities,
+          {
+            ...seededOpportunity,
+            id: 4,
+            stage: 'negociacao',
+            commercial_status: 'escalado_wa',
+          },
+        ],
+      });
+      const wrapper = mountBoard();
+      await flushPromises();
+
+      const escalatedOptions = wrapper.findAll(
+        '[data-testid="commercial-status-filter"] option[value="escalado_wa"]'
+      );
+      expect(escalatedOptions).toHaveLength(1);
+      expect(escalatedOptions[0].text()).toContain('Artur');
+
+      await filterSelect(wrapper).setValue('escalado_wa');
+      const filtered = wrapper.findAll('[data-testid="pipeline-card"]');
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].attributes('data-opportunity-id')).toBe('4');
+      expect(
+        filtered[0].find('[data-testid="card-commercial-status"]').text()
+      ).toBe('Encaminhado ao Artur (WhatsApp)');
     });
 
     it('shows only the matching cards, and all of them again in "Todas"', async () => {

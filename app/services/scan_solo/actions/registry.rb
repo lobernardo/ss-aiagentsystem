@@ -4,6 +4,8 @@
 # (T38), so classification, schema validation, idempotency, confirmation
 # gating, and the audit trail apply uniformly regardless of which action is
 # invoked. Action ids here match ScanSolo::AiTurn::InputGuardrail::ALL_ACTIONS.
+# `human_handoff` and `proposal_generate` are never offered to the model and
+# stay registered only so past executions in the audit trail still resolve.
 class ScanSolo::Actions::Registry
   HANDLERS = {
     'qualification_field' => ScanSolo::Actions::QualificationFieldAction,
@@ -14,7 +16,8 @@ class ScanSolo::Actions::Registry
     'proposal_send' => ScanSolo::Actions::ProposalActions::Send,
     'cadence_signal' => ScanSolo::Actions::CadenceSignalAction,
     'human_handoff' => ScanSolo::Actions::HandoffAction,
-    'lead_state_update' => ScanSolo::Actions::LeadStateUpdateAction
+    'lead_state_update' => ScanSolo::Actions::LeadStateUpdateAction,
+    'escalate_to_commercial' => ScanSolo::Actions::EscalateToCommercialAction
   }.freeze
 
   # Idempotent bulk sync of every handler's classification/schema into

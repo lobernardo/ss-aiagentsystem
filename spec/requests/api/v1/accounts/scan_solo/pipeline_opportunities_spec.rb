@@ -168,7 +168,7 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API', type: :request do
 
       body = response.parsed_body
       expect(body['commercial_status'])
-        .to eq(ScanSolo::Reports::CommercialStatus.call(quote_request: quote_request, current_version: current_version))
+        .to eq(ScanSolo::Reports::CommercialStatus.call(quote_request: quote_request, current_version: current_version, escalated: false))
       expect(body['commercial_status']).to eq('proposta_em_aprovacao')
       expect(body['commercial_forwarded_at']).to eq(sent_at.iso8601(3))
       expect(body).to include('quote_request_status' => 'replied', 'proposal_status' => 'awaiting_approval')
@@ -180,6 +180,19 @@ RSpec.describe 'ScanSolo Pipeline Opportunities API', type: :request do
       by_id = response.parsed_body.index_by { |item| item['id'] }
       expect(by_id[opportunity.id]).to include('commercial_status' => 'proposta_em_aprovacao', 'commercial_forwarded_at' => sent_at.iso8601(3))
       expect(by_id[unforwarded.id]).to include('commercial_status' => 'nao_encaminhado', 'commercial_forwarded_at' => nil)
+    end
+
+    # Escalação comercial RF-17/CT-04.
+    it 'exposes escalado_wa for an escalated opportunity, and not once it is perdido' do
+      unforwarded.update!(escalated_to_commercial_at: Time.current, escalation_reason: 'pedido_humano')
+      path = "#{index_path}/#{unforwarded.id}"
+
+      get path, headers: agent.create_new_auth_token, as: :json
+      expect(response.parsed_body['commercial_status']).to eq('escalado_wa')
+
+      unforwarded.update!(stage: :perdido)
+      get path, headers: agent.create_new_auth_token, as: :json
+      expect(response.parsed_body['commercial_status']).to eq('nao_encaminhado')
     end
 
     it 'keeps the index query count constant as opportunities with request and proposal grow (RNF-02)' do

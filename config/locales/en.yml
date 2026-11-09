@@ -834,8 +834,24 @@ en:
       location_not_informed: 'localidade não informada'
       address_in_city: '%{address}, em %{city}'
       depth_excerpt: ', com foco até %{value} de profundidade'
+    commercial:
+      whatsapp_text:
+        greeting: 'Olá, Artur! Vim pelo atendimento da ScanSolo e gostaria de falar com o comercial.'
+        name: 'Nome: %{value}'
+        company: 'Empresa: %{value}'
+        service: 'Serviço: %{value}'
+        proposal: 'Proposta: %{value}'
+      escalation_email:
+        subjects:
+          duvida_sem_resposta: 'Dúvida sem resposta encaminhada ao Artur #%{opportunity_id} — %{name}'
+          sem_informacao_base: 'Pergunta sem informação na base #%{opportunity_id} — %{name}'
+          negociacao: 'Negociação encaminhada ao Artur #%{opportunity_id} — %{name}'
+          duvida_proposta: 'Dúvida sobre a proposta #%{opportunity_id} — %{name}'
+          assunto_orcamento: 'Assunto de orçamento encaminhado ao Artur #%{opportunity_id} — %{name}'
+          pedido_humano: 'Lead pediu atendimento humano #%{opportunity_id} — %{name}'
     negotiation:
       standard_reply: 'Vou verificar isso com nosso comercial. Só um momento.'
+      escalation_reply: 'Para tratar valores, prazos ou condições, fale direto com o Artur, do nosso comercial, pelo WhatsApp: %{link} ou pelo e-mail %{email}.'
       email:
         subject: 'Pedido de negociação #%{opportunity_id} — %{name}'
         labels:

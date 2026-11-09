@@ -92,6 +92,54 @@ RSpec.describe ScanSolo::Quote::EmailComposer do
 
       expect(email.text).to include('Proposta vigente: sem proposta', 'Valor vigente: sem proposta')
     end
+
+    # Escalação comercial RF-23: the escalation notice subject by reason.
+    context 'with an escalation_reason' do
+      let(:reasons) { ScanSolo::PipelineOpportunity::ESCALATION_REASONS }
+      let(:subjects) { reasons.map { |reason| described_class.negotiation(payload: payload.merge(escalation_reason: reason)).subject } }
+
+      it 'uses the per-reason subject with the opportunity reference' do
+        reasons.zip(subjects).each do |reason, subject|
+          expect(subject).to eq(I18n.t("scan_solo.commercial.escalation_email.subjects.#{reason}", opportunity_id: 42, name: 'Solar Ltda'))
+          expect(subject).to include('#42')
+        end
+      end
+
+      it 'has 6 distinct subjects, none equal to the negotiation subject' do
+        expect(subjects.uniq.size).to eq(6)
+        expect(subjects).not_to include('Pedido de negociação #42 — Solar Ltda')
+      end
+
+      it 'never names the internal contact in the subjects' do
+        raw = I18n.t('scan_solo.commercial.escalation_email.subjects').values
+
+        expect(raw.size).to eq(6)
+        expect(subjects + raw).to all(satisfy { |subject| !subject.match?(/luciano/i) })
+      end
+
+      it 'keeps the body identical to the negotiation e-mail' do
+        email = described_class.negotiation(payload: payload.merge(escalation_reason: 'pedido_humano'))
+        plain = described_class.negotiation(payload: payload)
+
+        expect([email.text, email.html]).to eq([plain.text, plain.html])
+      end
+
+      it 'fails loudly for a reason without a subject' do
+        expect { described_class.negotiation(payload: payload.merge(escalation_reason: 'outro')) }.to raise_error(I18n::MissingTranslationData)
+      end
+    end
+
+    it 'keeps the negotiation subject without an escalation_reason (RF-19)' do
+      expect(described_class.negotiation(payload: payload).subject).to eq('Pedido de negociação #42 — Solar Ltda')
+    end
+  end
+
+  it 'has no internal contact name nor phone in the scan_solo locale scope' do
+    flat = ->(value) { value.is_a?(Hash) ? value.values.flat_map(&flat) : [value.to_s] }
+    strings = flat.call(I18n.t('scan_solo'))
+
+    expect(strings.grep(/luciano/i)).to be_empty
+    expect(strings.grep(/\+?\d{2}\s?\(?\d{2}\)?\s?9?\d{4}-?\d{4}/)).to be_empty
   end
 
   describe 'proposal e-mails (CT-05, CT-06)' do

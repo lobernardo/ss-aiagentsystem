@@ -20,8 +20,8 @@ RSpec.describe ScanSolo::Reports::CommercialStatus do
     proposal.versions.create!(status: status, quote_request: quote_request)
   end
 
-  def classify(quote_request:, current_version: nil)
-    described_class.call(quote_request: quote_request, current_version: current_version)
+  def classify(quote_request:, current_version: nil, escalated: false)
+    described_class.call(quote_request: quote_request, current_version: current_version, escalated: escalated)
   end
 
   describe '.call (RF-01 table, first true row wins)' do
@@ -74,11 +74,46 @@ RSpec.describe ScanSolo::Reports::CommercialStatus do
       expect(classify(quote_request: quote_request, current_version: version_with(:rejected))).to eq('aguardando_artur')
     end
 
-    it 'only ever returns one of the 6 VALUES and never escalado_wa' do
+    it 'has the 7 VALUES, including escalado_wa (escalação comercial CT-04)' do
       expect(described_class::VALUES).to eq(
-        %w[nao_encaminhado aguardando_artur resposta_recebida proposta_em_aprovacao proposta_enviada proposta_enviada_manual]
+        %w[nao_encaminhado aguardando_artur resposta_recebida proposta_em_aprovacao proposta_enviada proposta_enviada_manual escalado_wa]
       )
-      expect(described_class::VALUES).not_to include('escalado_wa')
+    end
+
+    it 'requires the escalation input' do
+      expect { described_class.call(quote_request: nil, current_version: nil) }.to raise_error(ArgumentError, /escalated/)
+    end
+  end
+
+  # Escalação comercial RF-17: escalado_wa sits below the 3 proposal states.
+  describe '.call for an escalated opportunity' do
+    it 'is escalado_wa without a request, with an open request and with an answered request' do
+      expect(classify(quote_request: nil, escalated: true)).to eq('escalado_wa')
+      expect(classify(quote_request: quote_request, escalated: true)).to eq('escalado_wa')
+
+      quote_request.update!(status: :replied)
+      expect(classify(quote_request: quote_request, escalated: true)).to eq('escalado_wa')
+    end
+
+    it 'keeps proposta_enviada_manual for a request handled manually' do
+      quote_request.update!(status: :handled_manually)
+
+      expect(classify(quote_request: quote_request, escalated: true)).to eq('proposta_enviada_manual')
+    end
+
+    it 'keeps proposta_enviada for a sent current version' do
+      expect(classify(quote_request: quote_request, current_version: version_with(:sent), escalated: true)).to eq('proposta_enviada')
+    end
+
+    it 'keeps proposta_em_aprovacao for a current version awaiting approval' do
+      expect(classify(quote_request: quote_request, current_version: version_with(:awaiting_approval), escalated: true))
+        .to eq('proposta_em_aprovacao')
+    end
+
+    it 'never returns escalado_wa when not escalated' do
+      quote_request.update!(status: :replied)
+
+      expect([classify(quote_request: nil), classify(quote_request: quote_request)]).to eq(%w[nao_encaminhado resposta_recebida])
     end
   end
 

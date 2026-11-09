@@ -10,6 +10,17 @@
 # RF-06: any entry of the published config's `restricted_information` found
 # in the output (case-insensitively) blocks it as well.
 #
+# Escalação comercial RF-07/RF-08, right after it and in this order:
+# - `internal_name`: the internal commercial contact name
+#   (ScanSolo::Commercial::Rules.internal_name?);
+# - `unpublished_contact`: with every `commercial_link` occurrence removed,
+#   the output still has a `wa.me/`/`api.whatsapp.com` link, or a phone
+#   (E.164, or Brazilian with DDD, with or without separators) whose
+#   normalized digits are not in `allowed_phone_numbers` (the published
+#   number and the lead's own phones). The lookarounds keep CNPJ, CPF, CEP,
+#   values, dates and proposal numbers out of the phone candidates.
+# Both regenerate once, like the lead state violations below.
+#
 # Lead state (RF-11, RF-12, RF-17, RF-22, RNF-02): given the projection of
 # the state already changed by this attempt (ScanSolo::LeadState::Projection)
 # and the model's `asked_fields`, after the checks above, in order:
@@ -40,17 +51,28 @@ class ScanSolo::AiTurn::OutputValidator
     delivery_status: DELIVERY_STATUS_PATTERN
   }.freeze
 
-  REGENERABLE_VIOLATIONS = %i[confirmed_field_question question_limit field_not_missing qualification_closed bulk_out_of_scope bulk_incomplete].freeze
+  WHATSAPP_LINK_PATTERN = %r{wa\.me/|api\.whatsapp\.com}i
+  PHONE_PATTERN = %r{\+\d{10,15}|(?<![\d./])(?:\+?55[\s-]?)?\(?\d{2}\)?[\s-]?9?\d{4}[\s-]?\d{4}(?![\d/]|[.,]\d)}
+
+  REGENERABLE_VIOLATIONS = %i[
+    confirmed_field_question question_limit field_not_missing qualification_closed bulk_out_of_scope bulk_incomplete
+    internal_name unpublished_contact
+  ].freeze
   QUESTION_LIMIT = 2
 
   # rubocop:disable Metrics/ParameterLists
-  def self.call(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false)
+  def self.call(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false,
+                commercial_link: nil, allowed_phone_numbers: [])
     new(content: content, validated_claims: validated_claims, restricted_information: restricted_information, asked_fields: asked_fields,
-        lead_state: lead_state, bulk_started: bulk_started).call
+        lead_state: lead_state, bulk_started: bulk_started, commercial_link: commercial_link,
+        allowed_phone_numbers: allowed_phone_numbers).call
   end
 
-  def initialize(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false)
+  def initialize(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false,
+                 commercial_link: nil, allowed_phone_numbers: [])
     @content = content.to_s
+    @commercial_link = commercial_link
+    @allowed_phone_numbers = Array(allowed_phone_numbers).compact_blank
     @validated_claims = validated_claims
     @restricted_information = Array(restricted_information).compact_blank
     @asked_fields = asked_fields
@@ -66,16 +88,38 @@ class ScanSolo::AiTurn::OutputValidator
 
   private
 
-  attr_reader :content, :validated_claims, :restricted_information, :asked_fields, :lead_state, :bulk_started
+  attr_reader :content, :validated_claims, :restricted_information, :asked_fields, :lead_state, :bulk_started,
+              :commercial_link, :allowed_phone_numbers
 
   def detect_violation
-    return :restricted_information if restricted_information.any? { |entry| content.downcase.include?(entry.to_s.downcase) }
+    disclosure = disclosure_violation
+    return disclosure if disclosure
 
     CLAIM_PATTERNS.each do |claim, pattern|
       return claim if pattern.match?(content) && !validated_claims[claim]
     end
 
     lead_state_violation if lead_state
+  end
+
+  def disclosure_violation
+    return :restricted_information if restricted_information.any? { |entry| content.downcase.include?(entry.to_s.downcase) }
+    return :internal_name if ScanSolo::Commercial::Rules.internal_name?(content)
+
+    :unpublished_contact if unpublished_contact?
+  end
+
+  def unpublished_contact?
+    text = commercial_link.present? ? content.gsub(commercial_link, ' ') : content
+    return true if WHATSAPP_LINK_PATTERN.match?(text)
+
+    allowed = allowed_phone_numbers.map { |phone| normalize_phone(phone) }
+    text.scan(PHONE_PATTERN).any? { |phone| allowed.exclude?(normalize_phone(phone)) }
+  end
+
+  def normalize_phone(phone)
+    digits = phone.to_s.gsub(/\D/, '')
+    digits.length.between?(10, 11) ? "55#{digits}" : digits
   end
 
   def lead_state_violation

@@ -6,14 +6,19 @@
 # returned list is always a strict subset of the full registered-action
 # vocabulary, never "all registered actions" (RF-38 AC). `proposal_generate`
 # is never offered: generation follows the validated commercial reply
-# (RF-25), and its handler stays registered only for the audit trail.
+# (RF-25). `human_handoff` is never offered either (escalação comercial RF-04):
+# a request for a person escalates with `escalate_to_commercial`, which is
+# offered only when the published config has the commercial WhatsApp number
+# (RF-19). Both handlers stay registered only for the audit trail.
 class ScanSolo::AiTurn::InputGuardrail
   ALL_ACTIONS = %w[
     qualification_field stage_transition private_note proposal_generate
     proposal_approve proposal_send cadence_signal human_handoff lead_state_update
+    escalate_to_commercial
   ].freeze
 
   CONFIRMATION_ONLY_ACTIONS = %w[proposal_approve proposal_send].freeze
+  NEVER_OFFERED_ACTIONS = %w[proposal_generate human_handoff].freeze
 
   def self.call(config:, content:)
     new(config: config, content: content).call
@@ -43,6 +48,7 @@ class ScanSolo::AiTurn::InputGuardrail
   end
 
   def allowed_actions
-    ALL_ACTIONS - CONFIRMATION_ONLY_ACTIONS - ['proposal_generate']
+    actions = ALL_ACTIONS - CONFIRMATION_ONLY_ACTIONS - NEVER_OFFERED_ACTIONS
+    config.commercial_whatsapp_number.present? ? actions : actions - ['escalate_to_commercial']
   end
 end

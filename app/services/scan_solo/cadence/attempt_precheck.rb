@@ -10,6 +10,9 @@
 # - (3) published config / inbox eligibility (ScanSolo::Eligibility, the
 #   single definition shared with the listener) or AI not in control ->
 #   defer without consuming the attempt;
+# - (3c) opportunity escalated to the commercial contact (escalação comercial
+#   RF-11, until ganho/perdido) -> defer (`commercial_escalated`); the
+#   enrollment status is untouched and nothing is paused or resumed;
 # - (4) template unavailable (ScanSolo::Cadence::TemplateAvailabilityGuard)
 #   -> defer.
 class ScanSolo::Cadence::AttemptPrecheck
@@ -41,6 +44,7 @@ class ScanSolo::Cadence::AttemptPrecheck
     eligibility = ScanSolo::Eligibility.for_inbox(account: opportunity.account, inbox: conversation.inbox)
     return defer(eligibility.reason) unless eligibility.eligible?
     return defer('human_controlled') unless ai_active?
+    return defer('commercial_escalated') if opportunity.escalated_to_commercial?
 
     template_check
   end

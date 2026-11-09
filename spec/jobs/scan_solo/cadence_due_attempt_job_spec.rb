@@ -123,6 +123,61 @@ RSpec.describe ScanSolo::CadenceDueAttemptJob do
       expect(enrollment.reload.current_step).to eq(0)
     end
 
+    # Escalação comercial RF-11: the hold lasts until ganho/perdido, with no handoff trigger.
+    context 'with (3c) an opportunity escalated to the commercial contact' do
+      let(:message) { create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming) }
+      let(:turn) { ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid) }
+
+      def escalate!
+        ScanSolo::Commercial::EscalationService.call(opportunity: opportunity.reload, reason: 'negociacao', turn: turn)
+      end
+
+      it 'sends 0 messages and keeps the enrollment active and the attempt scheduled, without a handoff pause' do
+        expect(ScanSolo::Cadence::StopRecalculatePolicy).not_to receive(:call).with(hash_including(trigger: 'handoff'))
+        escalate!
+
+        travel_to(morning + 1.minute) do
+          expect { described_class.perform_now }.not_to change(conversation_messages.outgoing, :count)
+        end
+
+        expect(attempt.reload).to have_attributes(result: 'scheduled', last_block_reason: 'commercial_escalated')
+        expect(enrollment.reload).to be_active
+      end
+
+      it 'sends 0 messages for an enrollment created after the escalation' do
+        ScanSolo::CadenceDefinition.create!(stage: 'em_contato', version: 1, offsets: [2])
+        enrollment.cancelled!
+        escalate!
+        ScanSolo::Pipeline::StageTransitionService.new(opportunity: opportunity.reload, target_stage: 'em_contato').call
+        new_attempt = opportunity.cadence_enrollments.active.sole.attempts.order(:step).first
+        new_attempt.update!(scheduled_at: morning)
+
+        travel_to(morning + 1.minute) do
+          expect { described_class.perform_now }.not_to change(conversation_messages.outgoing, :count)
+        end
+
+        expect(new_attempt.reload).to have_attributes(result: 'scheduled', last_block_reason: 'commercial_escalated')
+      end
+
+      it 'sends 0 follow-ups of a proposal sent after the escalation' do
+        ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24])
+        enrollment.cancelled!
+        escalate!
+        version = ScanSolo::Proposal.create!(opportunity: opportunity).versions.create!(generate_correlation_id: SecureRandom.uuid)
+        version.update!(status: :sent)
+        ScanSolo::Pipeline::StageTransitionService.new(opportunity: opportunity.reload, target_stage: 'proposta_enviada').call
+        follow_up = opportunity.cadence_enrollments.active.sole.attempts.order(:step).first
+        follow_up.update!(scheduled_at: morning)
+
+        travel_to(morning + 1.minute) do
+          expect { described_class.perform_now }.not_to change(conversation_messages.outgoing, :count)
+        end
+
+        expect(opportunity.reload).to be_escalated_to_commercial
+        expect(follow_up.reload).to have_attributes(result: 'scheduled', last_block_reason: 'commercial_escalated')
+      end
+    end
+
     context 'with (4) an unavailable WhatsApp template' do
       let(:channel) { create(:channel_whatsapp, account: account, sync_templates: false, message_templates: []) }
       let(:inbox) { channel.inbox }

@@ -34,7 +34,11 @@ class ScanSolo::Quote::EmailComposer
       build(nil, lines)
     end
 
-    # RF-37: the 9 items of the CT-07 payload, in their own thread.
+    # RF-37: the 9 items of the CT-07 payload, in their own thread. Escalação
+    # comercial RF-23: a payload with `escalation_reason` (the escalation
+    # notice) gets the per-reason subject; without it (negotiation with no
+    # published commercial number, RF-19) the subject stays "Pedido de
+    # negociação". The body is the same for both.
     def negotiation(payload:)
       contact = payload[:contact]
       items = {
@@ -44,7 +48,7 @@ class ScanSolo::Quote::EmailComposer
       }
       lines = [*items.map { |key, value| line(t("negotiation.email.labels.#{key}"), value) }, *recent_message_lines(payload[:recent_messages])]
 
-      build(t('negotiation.email.subject', opportunity_id: payload[:opportunity_id], name: contact[:company].presence || contact[:name]), lines)
+      build(negotiation_subject(payload), lines)
     end
 
     # CT-05: posted in the quote request thread, whose `mail_subject` is the
@@ -151,6 +155,13 @@ class ScanSolo::Quote::EmailComposer
 
     def stage_label(stage)
       ScanSolo::Handoff::HandoffService::STAGE_LABELS.fetch(stage.to_s)
+    end
+
+    def negotiation_subject(payload)
+      values = { opportunity_id: payload[:opportunity_id], name: payload[:contact][:company].presence || payload[:contact][:name] }
+      return t('negotiation.email.subject', **values) if payload[:escalation_reason].blank?
+
+      t("commercial.escalation_email.subjects.#{payload[:escalation_reason]}", **values, raise: true)
     end
 
     def t(key, **)

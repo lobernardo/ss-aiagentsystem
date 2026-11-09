@@ -17,6 +17,7 @@ RSpec.describe ScanSolo::Actions::Registry do
       %w[
         qualification_field stage_transition private_note proposal_generate
         proposal_approve proposal_send cadence_signal human_handoff lead_state_update
+        escalate_to_commercial
       ].each do |action_id|
         action = ScanSolo::AgentAction.find_by(action_id: action_id)
 
@@ -24,6 +25,11 @@ RSpec.describe ScanSolo::Actions::Registry do
         expect(action.classification).to be_present
       end
     end
+  end
+
+  it 'maps escalate_to_commercial to its handler and keeps human_handoff registered for the audit trail' do
+    expect(described_class::HANDLERS).to include('escalate_to_commercial' => ScanSolo::Actions::EscalateToCommercialAction,
+                                                 'human_handoff' => ScanSolo::Actions::HandoffAction)
   end
 
   describe '.call' do

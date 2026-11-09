@@ -61,6 +61,34 @@ RSpec.describe ScanSolo::Pipeline::StageTransitionService do
     end
   end
 
+  # Escalação comercial RF-11/RF-23: ganho/perdido end the escalated state.
+  describe 'escalation mark' do
+    let(:opportunity) do
+      ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :proposta_enviada,
+                                            escalated_to_commercial_at: 1.hour.ago, escalation_reason: 'negociacao')
+    end
+
+    before do
+      ScanSolo::AuditLogger.record!(subject: opportunity, event_type: 'commercial.escalated', correlation_id: SecureRandom.uuid,
+                                    payload: { reason: 'negociacao' })
+    end
+
+    %w[ganho perdido].each do |terminal|
+      it "clears the mark on #{terminal} and keeps the commercial.escalated events" do
+        call(target_stage: terminal)
+
+        expect(opportunity.reload).to have_attributes(escalated_to_commercial_at: nil, escalation_reason: nil)
+        expect(ScanSolo::AuditEvent.where(subject: opportunity, event_type: 'commercial.escalated').count).to eq(1)
+      end
+    end
+
+    it 'keeps the mark on a non-terminal move' do
+      call(target_stage: :negociacao, authorized: true)
+
+      expect(opportunity.reload).to have_attributes(escalation_reason: 'negociacao', escalated_to_commercial_at: be_present)
+    end
+  end
+
   describe 'terminal stages (RF-19)' do
     %w[ganho perdido].each do |terminal_stage|
       it "rejects any further transition once the opportunity is #{terminal_stage}" do

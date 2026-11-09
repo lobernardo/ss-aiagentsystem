@@ -20,13 +20,13 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
   end
 
   # RF-25 (RNF-11): `proposal_generate` is no longer offered, so it left the one-of-each turn.
+  # Escalação comercial RF-04: neither is `human_handoff`.
   let(:one_of_each) do
     [
       { 'action_id' => 'qualification_field', 'params' => { 'fields' => { 'metragem' => '5000' } } },
       { 'action_id' => 'stage_transition', 'params' => { 'target_stage' => 'qualificado' } },
       { 'action_id' => 'private_note', 'params' => { 'content' => 'Cliente com orçamento definido' } },
-      { 'action_id' => 'cadence_signal', 'params' => { 'signal' => 'partial_reply' } },
-      { 'action_id' => 'human_handoff', 'params' => { 'reason' => 'pronto para negociar' } }
+      { 'action_id' => 'cadence_signal', 'params' => { 'signal' => 'partial_reply' } }
     ]
   end
 
@@ -68,16 +68,16 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     end
 
     # RF-25 (RNF-11): `proposal_generate` is never offered, with or without the proposal integration.
-    it 'offers the six base ids, never proposal_generate, whether or not the proposal integration is configured' do
+    it 'offers the five base ids, never proposal_generate nor human_handoff, whether or not the proposal integration is configured' do
       run_turn([])
       offered = ScanSolo::TestMode::MockLlmProvider.last_payload[:schema][:schema][:properties][:actions][:items][:properties][:action_id][:enum]
-      expect(offered).to eq(%w[qualification_field stage_transition private_note cadence_signal human_handoff lead_state_update])
+      expect(offered).to eq(%w[qualification_field stage_transition private_note cadence_signal lead_state_update])
 
       allow(ScanSolo::Proposal::Integration).to receive(:configured?).and_return(false)
       next_message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, sender: contact)
       run_turn([], target: next_message)
       offered = ScanSolo::TestMode::MockLlmProvider.last_payload[:schema][:schema][:properties][:actions][:items][:properties][:action_id][:enum]
-      expect(offered).to eq(%w[qualification_field stage_transition private_note cadence_signal human_handoff lead_state_update])
+      expect(offered).to eq(%w[qualification_field stage_transition private_note cadence_signal lead_state_update])
     end
 
     it 'always acts on the turn conversation, ignoring ids chosen by the model' do
@@ -130,22 +130,15 @@ RSpec.describe ScanSolo::AiTurn::TurnOrchestrator do
     end
   end
 
+  # Escalação comercial RF-04: replaces "AI handoff" -- the model can no longer hand off; human takeover is unchanged.
   describe 'RF-15: AI handoff' do
-    it 'sends the turn reply, leaves 1 note, awaiting_human, paused enrollments and 0 replies to the next message' do
-      definition = ScanSolo::CadenceDefinition.create!(stage: 'em_contato', version: 1, offsets: [24, 48])
-      enrollment = travel_to(1.hour.ago) { ScanSolo::Cadence::EnrollmentService.call(opportunity: opportunity, cadence_definition: definition) }
-
+    it 'fails the turn on a model-requested human_handoff, which is not offered, keeping the AI active' do
       turn = run_turn([{ 'action_id' => 'human_handoff', 'params' => { 'reason' => 'cliente pediu humano' } }])
 
-      expect(turn).to be_succeeded
-      expect(ai_replies.count).to eq(1)
-      expect(conversation.messages.where(private: true).count).to eq(1)
-      expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_awaiting_human
-      expect(enrollment.reload).to be_paused
-
-      next_message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, sender: contact)
-      expect(run_turn([], target: next_message)).to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
-      expect(ai_replies.count).to eq(1)
+      expect(turn).to be_failed
+      expect(turn.failure_reason).to start_with('ScanSolo::Actions::Executor::UnregisteredActionError')
+      expect(ai_replies.count).to eq(0)
+      expect(ScanSolo::ConversationExtension.resolve_for(conversation)).to be_ai_active
     end
   end
 

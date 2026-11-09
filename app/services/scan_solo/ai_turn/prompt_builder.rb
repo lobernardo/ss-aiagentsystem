@@ -72,6 +72,8 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'human_handoff' => 'transferir a conversa para um atendente humano, somente por pedido explícito de pessoa/humano ou por um ' \
                        'critério de transferência; pedir um especialista não é motivo',
     'proposal_generate' => 'solicitar a geração da proposta comercial',
+    'escalate_to_commercial' => 'encaminhar o lead ao Artur, do comercial; reason é um de duvida_sem_resposta, ' \
+                                'sem_informacao_base, negociacao, duvida_proposta, assunto_orcamento ou pedido_humano',
     'lead_state_update' => 'registrar a intenção do cliente, a próxima ação, uma ação que o cliente pediu ou autorizou ' \
                            'e se há risco de interpretação; negotiation_requested quando o cliente pedir preço, desconto, ' \
                            'condição, prazo comercial, forma de pagamento ou decisão comercial humana; collection_mode quando ' \

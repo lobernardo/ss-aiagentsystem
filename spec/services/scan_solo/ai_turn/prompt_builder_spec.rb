@@ -258,7 +258,8 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
         '"negotiation_requested":{"type":"boolean"}'
       )
       expect(described_class::ACTION_DESCRIPTIONS.keys).to eq(
-        %w[qualification_field stage_transition private_note cadence_signal human_handoff proposal_generate lead_state_update]
+        %w[qualification_field stage_transition private_note cadence_signal human_handoff proposal_generate escalate_to_commercial
+           lead_state_update]
       )
     end
   end

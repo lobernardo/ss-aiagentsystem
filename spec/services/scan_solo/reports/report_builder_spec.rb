@@ -52,7 +52,8 @@ RSpec.describe ScanSolo::Reports::ReportBuilder do
                                                                                                 cadence_enrollments: %i[cadence_definition attempts])
                                              .find(opportunity.id)
     commercial_status = ScanSolo::Reports::CommercialStatus.call(quote_request: preloaded.quote_request,
-                                                                 current_version: preloaded.proposal&.current_version)
+                                                                 current_version: preloaded.proposal&.current_version,
+                                                                 escalated: preloaded.escalated_to_commercial?)
     ScanSolo::Reports::StallReason.call(opportunity: preloaded, now: now, commercial_status: commercial_status,
                                         legacy_bulk: legacy_bulk)[:stall_reason]
   end
@@ -177,6 +178,16 @@ RSpec.describe ScanSolo::Reports::ReportBuilder do
       expect(statements).not_to be_empty
       expect(statements).to all(match(/\A\s*SELECT/i))
     end
+  end
+
+  # Escalação comercial RF-17: the stalled item reads the escalation mark.
+  it 'reports escalado_wa for a stalled escalated opportunity' do
+    escalated = opportunity_with(stage: :qualificado, last_interaction: stalled_at)
+    escalated.update!(escalated_to_commercial_at: stalled_at, escalation_reason: 'negociacao')
+
+    item = build_report[:stalled].find { |entry| entry[:opportunity_id] == escalated.id }
+
+    expect(item).to include(commercial_status: 'escalado_wa')
   end
 
   it 'returns the CT-01 envelope with ISO 8601 São Paulo instants' do

@@ -78,6 +78,27 @@ RSpec.describe ScanSolo::Cadence::AttemptPrecheck do
     end
   end
 
+  # Escalação comercial RF-11.
+  describe '(3c) commercial escalation' do
+    it 'defers an escalated opportunity in a non-terminal stage' do
+      attempt
+      opportunity.update!(stage: :proposta_enviada, escalated_to_commercial_at: Time.current, escalation_reason: 'duvida_proposta')
+
+      expect(precheck).to have_attributes(decision: :defer, reason: 'commercial_escalated')
+    end
+
+    it 'does not defer for this reason once the opportunity is ganho' do
+      attempt
+      opportunity.update!(stage: :ganho, escalated_to_commercial_at: Time.current, escalation_reason: 'negociacao')
+
+      expect(precheck.reason).not_to eq('commercial_escalated')
+    end
+
+    it 'does not defer for this reason without the mark' do
+      expect(precheck).to be_send
+    end
+  end
+
   describe '(4) template availability' do
     let(:channel) do
       create(:channel_whatsapp, account: account, sync_templates: false, message_templates: [

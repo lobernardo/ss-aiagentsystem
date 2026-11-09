@@ -8,6 +8,10 @@
 # to the generic `stage_changed` trigger. Once the previous cadence work is
 # stopped, the new stage's cadence is enrolled through
 # ScanSolo::Cadence::StageEntryEnroller (RF-24).
+#
+# Escalação comercial RF-11/RF-23: reaching ganho/perdido ends the escalated
+# state, so the escalation mark is cleared in the same transaction as the
+# stage event; the `commercial.escalated` events stay as history.
 class ScanSolo::Pipeline::StageTransitionService
   TERMINAL_STAGES = %w[ganho perdido].freeze
   GUARDED_STAGES = %w[negociacao].freeze
@@ -28,7 +32,7 @@ class ScanSolo::Pipeline::StageTransitionService
     previous_stage = opportunity.stage
 
     ActiveRecord::Base.transaction do
-      opportunity.update!(stage: target_stage)
+      opportunity.update!(stage: target_stage, **escalation_reset)
       ScanSolo::PipelineStageEvent.create!(
         opportunity: opportunity,
         from_stage: previous_stage,
@@ -46,6 +50,10 @@ class ScanSolo::Pipeline::StageTransitionService
   private
 
   attr_reader :opportunity, :target_stage, :actor, :authorized
+
+  def escalation_reset
+    TERMINAL_STAGES.include?(target_stage) ? { escalated_to_commercial_at: nil, escalation_reason: nil } : {}
+  end
 
   def cadence_trigger
     CADENCE_TRIGGERS.fetch(target_stage, 'stage_changed')

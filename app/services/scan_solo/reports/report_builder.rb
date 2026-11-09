@@ -91,7 +91,8 @@ class ScanSolo::Reports::ReportBuilder
 
   def stalled_item(opportunity, legacy_bulk)
     commercial_status = ScanSolo::Reports::CommercialStatus.call(quote_request: opportunity.quote_request,
-                                                                 current_version: opportunity.proposal&.current_version)
+                                                                 current_version: opportunity.proposal&.current_version,
+                                                                 escalated: opportunity.escalated_to_commercial?)
     reason = ScanSolo::Reports::StallReason.call(opportunity: opportunity, now: now, commercial_status: commercial_status,
                                                  legacy_bulk: legacy_bulk)
 

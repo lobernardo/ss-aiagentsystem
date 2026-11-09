@@ -45,9 +45,25 @@ RSpec.describe ScanSolo::AiTurn::InputGuardrail do
 
       outcome = described_class.call(config: config, content: 'ola')
 
-      expect(outcome[:allowed_actions]).to eq(%w[qualification_field stage_transition private_note cadence_signal human_handoff lead_state_update])
+      expect(outcome[:allowed_actions]).to eq(%w[qualification_field stage_transition private_note cadence_signal lead_state_update])
       expect(described_class::ALL_ACTIONS).to include('proposal_generate')
       expect(ScanSolo::Actions::Registry::HANDLERS).to include('proposal_generate' => ScanSolo::Actions::ProposalActions::Generate)
+    end
+
+    it 'offers escalate_to_commercial and never human_handoff when the commercial number is published (RF-03, RF-04)' do
+      config.update!(commercial_whatsapp_number: '+5511999999999')
+
+      allowed = described_class.call(config: config, content: 'ola')[:allowed_actions]
+
+      expect(described_class::ALL_ACTIONS).to include('escalate_to_commercial')
+      expect(allowed).to include('escalate_to_commercial')
+      expect(allowed).not_to include('human_handoff', 'proposal_generate')
+    end
+
+    it 'offers neither escalate_to_commercial nor human_handoff without the commercial number (RF-19)' do
+      allowed = described_class.call(config: config, content: 'ola')[:allowed_actions]
+
+      expect(allowed).not_to include('escalate_to_commercial', 'human_handoff')
     end
   end
 end

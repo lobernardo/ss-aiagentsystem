@@ -51,6 +51,65 @@ RSpec.describe ScanSolo::AiTurn::OutputValidator do
     end
   end
 
+  # Escalação comercial RF-07/RF-08.
+  describe 'commercial contact violations' do
+    let(:published) { '+5511999999999' }
+    let(:commercial_link) { 'https://wa.me/5511999999999?text=Ol%C3%A1%2C%20Artur%21%0ANome%3A%20Ana' }
+
+    def violation(content, allowed: [published], link: commercial_link)
+      described_class.call(content: content, commercial_link: link, allowed_phone_numbers: allowed)[:violation]
+    end
+
+    {
+      'another wa.me link' => 'Fale com o comercial: https://wa.me/5511000000000',
+      'an api.whatsapp.com link' => 'Chame em api.whatsapp.com/send?phone=5511000000000',
+      'an unpublished Brazilian phone' => 'Ligue para (11) 98888-7777.',
+      'an unpublished E.164 phone' => 'Ligue para +5511988887777.',
+      'an unpublished phone without separators' => 'Ligue para 11988887777.'
+    }.each do |kind, content|
+      it "blocks #{kind} as unpublished_contact" do
+        expect(violation(content)).to eq(:unpublished_contact)
+      end
+    end
+
+    it 'blocks another wa.me link next to the commercial link' do
+      expect(violation("#{commercial_link} ou https://wa.me/5511000000000")).to eq(:unpublished_contact)
+    end
+
+    {
+      'the commercial link as the only link' => 'Fale direto com o Artur pelo WhatsApp: %<link>s',
+      'the published number with separators' => 'O WhatsApp do Artur é (11) 99999-9999.',
+      'the published number in E.164' => 'O WhatsApp do Artur é +55 11 99999-9999.',
+      'a CNPJ' => 'CNPJ 12.345.678/0001-90 registrado.',
+      'a CPF' => 'CPF 123.456.789-09 registrado.',
+      'a CEP' => 'CEP 01310-100 registrado.',
+      'a proposal number' => 'Sua proposta é a SS-2026-000123.',
+      'a date' => 'A visita fica para 09/11/2026.',
+      'a plain reply' => 'Posso te ajudar com mais alguma coisa?'
+    }.each do |kind, content|
+      it "does not block #{kind}" do
+        expect(violation(format(content, link: commercial_link))).to be_nil
+      end
+    end
+
+    it 'does not block a lead phone in the allowed list' do
+      expect(violation('Vamos ligar no (21) 97777-6666.', allowed: [published, '+5521977776666'])).to be_nil
+    end
+
+    it 'keeps a value as a price claim, not an unpublished contact' do
+      expect(violation('O total fica R$ 1.234,56.')).to eq(:price)
+    end
+
+    it 'blocks the internal contact name in any case' do
+      expect(violation('Pode falar com o Luciano.')).to eq(:internal_name)
+      expect(violation('fale com o LUCIANO')).to eq(:internal_name)
+    end
+
+    it 'checks the internal name before the unpublished contact' do
+      expect(violation('fale com o Luciano em https://wa.me/5511000000000')).to eq(:internal_name)
+    end
+  end
+
   describe 'lead state violations (RF-11, RF-12, RF-17, RF-22)' do
     let(:account) { create(:account) }
     let(:contact) { create(:contact, account: account) }
@@ -147,9 +206,10 @@ RSpec.describe ScanSolo::AiTurn::OutputValidator do
       expect(validate('O plano custa R$ 199,90. Qual a data desejada?', ['data_desejada'])).to eq(blocked: true, violation: :price)
     end
 
-    it 'lists the regenerable violations, including the 2 bulk ones (proposta-template-local RF-38 e)' do
+    it 'lists the regenerable violations, including the 2 bulk and the 2 commercial contact ones (proposta-template-local RF-38 e)' do
       expect(described_class::REGENERABLE_VIOLATIONS).to contain_exactly(:confirmed_field_question, :question_limit, :field_not_missing,
-                                                                         :qualification_closed, :bulk_out_of_scope, :bulk_incomplete)
+                                                                         :qualification_closed, :bulk_out_of_scope, :bulk_incomplete,
+                                                                         :internal_name, :unpublished_contact)
     end
 
     it 'rejects asking a nao_informado field while another required one is faltante (proposta-template-local RF-29)' do

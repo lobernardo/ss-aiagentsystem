@@ -6,50 +6,49 @@
 
 ### Purpose
 
-ScanSolo AI Agent System runs ScanSolo's WhatsApp sales service on Chatwoot Community 4.17.1: an AI agent qualifies leads, the commercial team quotes by e-mail, and the system generates, approves and delivers proposals while a Kanban pipeline and follow-up cadences track every lead (`README.md`, `app/services/scan_solo/`).
+ScanSolo AI Agent System runs ScanSolo's WhatsApp sales operation on a Chatwoot Community 4.17.1 fork. An AI agent qualifies leads, a commercial Kanban tracks them, quote and proposal emails go out, and follow-up cadences send approved Meta templates (README `# ScanSolo AI Agent System`, `package.json` version `4.17.1`).
 
 ### Business problem
 
-- Leads on the Meta WhatsApp inbox get no qualification outside business hours without the AI turn (`ScanSolo::AiTurn::TurnOrchestrator`).
-- Qualification data stays scattered in chat history without the per-opportunity lead state (`ScanSolo::LeadState`, 34-field catalog in `ScanSolo::Qualification::FieldResolver::CATALOG`).
-- The commercial team gets no structured quote request without the deterministic e-mail (`ScanSolo::Quote::RequestService`, template `quote_request_email.v2`).
-- Proposals get no approval gate or audit trail without `ScanSolo::Proposal::ApproveService` and `ScanSolo::AuditEvent`.
-- Silent leads get no follow-up without the cadence engine (`ScanSolo::CadenceDueAttemptJob`, cron `*/5`).
+- Without it, the lead qualification state does not exist. `ScanSolo::LeadState` holds `intent`, required fields (`confirmado`/`inferido`/`faltante`/`nao_informado`) and `next_action` per opportunity.
+- Without it, no step forwards a qualified lead to the commercial team. `ScanSolo::LeadState::CompletionService` enqueues `ScanSolo::QuoteRequestJob`, which emails the commercial recipient.
+- Without it, follow-ups to silent leads stop. `ScanSolo::CadenceDefinition` offsets and `ScanSolo::CadenceDueAttemptJob` (cron `*/5 * * * *`) send the templates.
+- Without it, the commercial pipeline is not visible. `ScanSolo::PipelineOpportunity` has 8 stages and drives the Kanban UI under `app/javascript/dashboard/routes/dashboard/scansolo/pipeline/`.
+- Without it, AI actions and proposal operations leave no audit trail. `ScanSolo::AuditEvent` is read-only once persisted and keyed by `correlation_id`.
 
 ### Consumers and integrations
 
 | System | Role |
 |---|---|
-| Meta WhatsApp Cloud API (Chatwoot `Channel::Whatsapp`) | Inbound lead messages; outbound AI replies and approved Meta templates (cadence, manual lead, proposal notice) |
-| Chatwoot dashboard (Vue 3, `app/javascript/dashboard/routes/dashboard/scansolo/`) | Operators: Kanban, AI Agent Center, Proposals, Follow-ups, Knowledge, Executions |
-| Native e-mail inbox (quote inbox, `quote_inbox_id`) | Sends quote request / approval / proposal e-mails; receives commercial replies via ActionMailbox |
-| LLM provider via `Llm::FeatureRouter` (`config/llm.yml` `scansolo_agent_response`, `scansolo_knowledge_embedding`) | Agent reply generation; knowledge embeddings |
-| Make (`POST /webhooks/scan_solo/make`, `ScanSolo::Make::OutboundRequestService`) | Proposal generation provider when `SCANSOLO_GOTENBERG_URL` is unset |
-| Gotenberg 8.37.0 (`ScanSolo::Proposal::GotenbergClient`) | Local `.docx` → PDF conversion when `SCANSOLO_GOTENBERG_URL` is set |
-| MinIO / S3 (ActiveStorage) | Proposal PDFs, proposal templates, knowledge files |
+| Meta WhatsApp Cloud API (`Channel::Whatsapp`) | Inbound lead messages; outbound replies and approved templates (`ScanSolo::Messaging::NativeTemplateSender`) |
+| Agents/administrators (Vue dashboard) | Use the Kanban, Agent Center, Knowledge, Follow-ups, Proposals, Executions and Reports screens (`dashboard/routes/dashboard/scansolo/`) |
+| Commercial team (email inbox) | Receives quote requests and replies with a structured block (`ScanSolo::Quote::ResponseBlockParser`) |
+| LLM provider via RubyLLM 1.15.0 | AI turn replies (`ScanSolo::AiTurn::ModelInvoker`) and embeddings (`ScanSolo::Knowledge::EmbeddingService`) |
+| Make (make.com) | Remote proposal generate/send (`ScanSolo::Make::OutboundRequestService`); signed callbacks to `POST /webhooks/scan_solo/make` |
+| Gotenberg | Local `.docx`→PDF proposal rendering when `SCANSOLO_GOTENBERG_URL` is set (`ScanSolo::Proposal::GotenbergClient`) |
+| Lead email | Receives the proposal PDF (`ScanSolo::Proposal::DeliveryService`) |
 
 ### Macro flow
 
-1. Lead sends a WhatsApp message → Chatwoot persists a native `Message` → `ScanSolo::ConversationListener#message_created` (wisper, `app/dispatchers/async_dispatcher.rb`).
-2. `ScanSolo::Eligibility` gates: `scansolo_enabled`, published+enabled config, inbox in `allowed_inbox_ids`, no active bot.
-3. `ScanSolo::Pipeline::OpportunityBootstrapService` creates the conversation's `PipelineOpportunity` in `novo_lead` (+ lead state, + `novo_lead` cadence); later messages move it to `em_contato`, interrupt the pending cadence attempt and check opt-out keywords.
-4. `ScanSolo::AiTurnJob` (Redis mutex per conversation) → `TurnOrchestrator`: context + RAG retrieval → `InputGuardrail` → model call → actions via `ScanSolo::Actions::Registry` → `OutputValidator` → `ResponseSender`.
-5. All required fields `confirmado`/`nao_informado` → `ScanSolo::LeadState::CompletionService`: qualification `concluida`, stage `qualificado`, next action `proposta`, enqueue `ScanSolo::QuoteRequestJob`.
-6. `ScanSolo::Quote::RequestService` e-mails the commercial recipient (`quote_recipient_email`, default `comercial@scansolo.com.br`) with a CT-04 reply block; the lead gets a one-time notice.
-7. Commercial reply e-mail → `ScanSolo::QuoteReplyJob` → `ScanSolo::Quote::ReplyProcessor` parses the block deterministically → `replied` → `ScanSolo::Proposal::GenerateService`.
-8. Provider (local Gotenberg or Make callback) fills the version → `awaiting_approval` → approval e-mail with PDF to the commercial team.
-9. Admin or published `commercial_user_id` approves → `ScanSolo::Proposal::DeliveryService` e-mails the PDF to the lead (CC commercial) → `sent` on native `source_id` → stage `proposta_enviada`, WhatsApp notice, `proposta_enviada` cadence.
-10. Operator moves the card to `negociacao` / `ganho` / `perdido`; terminal stages stop all cadence work.
+1. A lead message reaches a WhatsApp inbox. Chatwoot persists the `Message`, and `AsyncDispatcher` fires `message_created`.
+2. `ScanSolo::ConversationListener` checks `ScanSolo::Eligibility`: account flag, published+enabled config, inbox allowlist, no active bot.
+3. `ScanSolo::Pipeline::OpportunityBootstrapService` creates the opportunity (`novo_lead`) and its `LeadState`. A later message moves the opportunity to `em_contato` and interrupts the pending cadence.
+4. The listener applies the opt-out keyword check, then enqueues `ScanSolo::AiTurnJob`, which holds a per-conversation Redis mutex.
+5. `ScanSolo::AiTurn::TurnOrchestrator` assembles context and RAG, applies the input guardrail, calls the model up to 2 times, runs the registered actions, validates the output and sends the reply.
+6. Once all required fields are `confirmado`, the qualification completes. The stage moves to `qualificado` and `QuoteRequestJob` emails the commercial team.
+7. The commercial reply is parsed, `QuoteRequest` becomes `replied`, and `Proposal::GenerateService` creates a `ProposalVersion` with the local, Make or mock provider.
+8. The version moves to `awaiting_approval`. An administrator or commercial user approves it, the PDF goes to the lead by email, a WhatsApp notice follows, and the stage moves to `proposta_enviada`.
+9. The stage then moves to `negociacao` and on to `ganho` or `perdido` (terminal). Each stage change stops or re-enrolls cadences.
 
 ### Out of scope
 
-- Proprietary `enterprise/` code: README "Licensing boundary" forbids copying it; `grep scan_solo enterprise/` returns nothing.
-- The previous Lexus CRM: README states it is a reference source, not a runtime dependency.
-- Tenant-specific downstream integrations beyond proposal generation: README delegates them to Make.
+- Code under `enterprise/` has a separate proprietary LICENSE. The README forbids copying it into ScanSolo, and CI (`run_foss_spec.yml`) deletes `enterprise/` before the backend specs.
+- The README treats the previous Lexus CRM as a reference only, not a runtime dependency after cutover.
+- Proposal values are never set by validations or callbacks. The commercial reply provides them, and the provider callback writes them (`ScanSolo::ProposalVersion` header comment).
 
 ## Related documents
 
-- [`architecture.md`](architecture.md) — layers, directory layout, async flows
-- [`domain_rules.md`](domain_rules.md) — pipeline, qualification, quote, proposal, cadence rules
-- [`api_contracts.md`](api_contracts.md) — ScanSolo REST endpoints and Make callback contract
-- [`tech_stack.md`](tech_stack.md) — languages, frameworks, test tooling
+- [`architecture.md`](architecture.md): layers, directory layout, async flows
+- [`domain_rules.md`](domain_rules.md): stage, lead-state, cadence and proposal rules
+- [`api_contracts.md`](api_contracts.md): ScanSolo HTTP endpoints and Make webhook
+- [`data_model.md`](data_model.md): `scan_solo_*` tables and invariants

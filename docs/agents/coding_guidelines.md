@@ -4,82 +4,64 @@
 
 ## AS IS — Current state
 
-### 1. RuboCop limits and custom cops
+### 1. Compact class definitions, one class per file
 
-- Keep Ruby lines ≤150 chars, classes ≤175 lines, methods ≤19 lines. Enforced by `.rubocop.yml` (`Layout/LineLength` Max 150, `Metrics/ClassLength` Max 175, `Metrics/MethodLength` Max 19) with rubocop-performance/rails/rspec/factory_bot.
-- One class per file; single-line exception classes excepted. Enforced by `rubocop/one_class_per_file.rb`; see `lib/custom_exceptions/scan_solo.rb`.
-- Silence a cop only inline with justification, e.g. `# rubocop:disable Rails/SkipsModelValidations` around `update_column` in `ScanSolo::ProposalVersion`, `ScanSolo::KnowledgeSource`.
-- Pre-commit runs `rubocop --force-exclusion -a` on staged `.rb` files and `lint-staged` ESLint. Enforced by `.husky/pre-commit`; CI runs `bundle exec rubocop --parallel` (`.github/workflows/run_foss_spec.yml`).
+- Write `class ScanSolo::Pipeline::StageTransitionService`, not nested `module` blocks. This keeps the namespace flat and greppable.
+- Enforced by `.rubocop.yml` `Style/ClassAndModuleChildren: EnforcedStyle: compact` and `Style/OneClassPerFile: Enabled: true`.
 
-### 2. Compact namespaced class definitions
+### 2. Line and method size limits
 
-- Declare `class ScanSolo::Area::Name` in one line, never nested `module` blocks — keeps the `ScanSolo` namespace flat. Observed in all 123 files under `app/services/scan_solo/` and all 25 models (`class ScanSolo::PipelineOpportunity < ApplicationRecord`).
-- Tables use the `scan_solo_` prefix via `self.table_name = 'scan_solo_…'` in every model.
+- Lines are at most 150 chars, methods at most 19 lines, ABC size at most 26.
+- Enforced by `.rubocop.yml` `Layout/LineLength Max: 150`, `Metrics/MethodLength Max: 19` and `Metrics/AbcSize Max: 26`. Exceptions use an inline `# rubocop:disable` with the cop name, as in `Actions::Registry.call` (`Metrics/ParameterLists`) and `ProposalVersion#assign_proposal_number` (`Rails/SkipsModelValidations`).
 
-### 3. Service objects with `.call` and a header contract
+### 3. Service objects with a class-level `call`
 
-- Put each state change in a service whose `def self.call(...)` delegates to `new(...).call`; 95 `def self.call` definitions under `app/services/scan_solo/`.
-- Open each service with a comment block naming the requirement ids (RF-/CT-/RNF-) and the invariants it guarantees (`ScanSolo::Pipeline::StageTransitionService`, `ScanSolo::Quote::RequestService`).
-- Return a `Struct` result with predicate methods instead of booleans (`ScanSolo::Eligibility::Result`, `Cadence::AttemptPrecheck::Result`, `Pipeline::OpportunityBootstrapService::Result`).
+- Give each service a `self.call(**kwargs)` that delegates to `new(...).call`, plus a private `attr_reader`. Callers then never handle the instances.
+- Seen in `Pipeline::InboundMessageTransitionRule`, `Cadence::AttemptPrecheck`, `Cadence::StopRecalculatePolicy`, `Cadence::StageEntryEnroller` and `Handoff::TakeoverService`.
 
-### 4. Sole-path services for each invariant
+### 4. Single writer per state transition
 
-- Route each kind of write through 1 service; never write the column elsewhere.
+- Route each state change through 1 service: stage changes through `StageTransitionService` ("Sole call path"), cadence stops through `StopRecalculatePolicy`, terminal attempt results through `AttemptEvidenceRecorder`, outbound Make calls through `Make::OutboundRequestService`, and lead-state collection fields through `LeadState::Writer`.
+- Rejections raise `ActiveRecord::RecordInvalid`, which maps to the global 422 handler (`StageTransitionService#reject!`).
 
-| Write | Sole path |
-|---|---|
-| `PipelineOpportunity#stage` | `ScanSolo::Pipeline::StageTransitionService` |
-| `LeadState` / `LeadStateEvent` | `ScanSolo::LeadState::Writer` |
-| Action side effects requested by the model | `ScanSolo::Actions::Registry` → `Executor` |
-| `ProposalVersion` creation | `ScanSolo::Proposal::GenerateService` |
-| Version `value`/`currency`/`artifact_url` | `ScanSolo::Proposal::CallbackHandler` |
-| Outbound Make HTTP | `ScanSolo::Make::OutboundRequestService` |
-| Cadence stop/pause | `ScanSolo::Cadence::StopRecalculatePolicy` |
-| `ai_control_state` → `ai_active` | `ScanSolo::Handoff::ReturnToAiService` |
-| AI agent config publish | `ScanSolo::AiAgent::PublishService` |
+### 5. Uniqueness owned by DB indexes, converged with `create_or_find_by!`
 
-### 5. Append-only audit and event rows
+- Concurrent creators converge on 1 row: one opportunity per conversation, one lead state per opportunity, one open enrollment per opportunity+definition, one current version per proposal.
+- Implemented with partial or unique indexes, as documented in the comments of `PipelineOpportunity`, `LeadState`, `CadenceEnrollment` and `ProposalVersion`.
 
-- Record every significant transition with `ScanSolo::AuditLogger.record!(subject:, event_type:, correlation_id:, payload:)` (44 calls in `app/services/scan_solo/`).
-- Make history rows immutable with `def readonly? = persisted?`: `ScanSolo::AuditEvent`, `LeadStateEvent`, `PipelineStageEvent`, `MakeCallback`.
-- Carry one `correlation_id` across a chain (quote request → versions → delivery, `ProposalVersion#audit_correlation_id`).
+### 6. Append-only evidence rows
 
-### 6. Concurrency via unique indexes, row locks, after-commit side effects
+- Audit and history rows cannot change after insert: `def readonly?; persisted?; end` in `AuditEvent`, `PipelineStageEvent`, `MakeCallback` and `LeadStateEvent`.
 
-- Converge concurrent creators with `create_or_find_by!` on a unique index (`OpportunityBootstrapService`, `LeadState::InitializeService`) instead of model uniqueness validations.
-- Serialize with `with_lock` / `.lock.find` (24 occurrences), e.g. `CadenceDueAttemptJob`, `StaleTurnSweeperJob`.
-- Enqueue jobs and send messages only after commit (`LeadState::CompletionService`, `Proposal::ApproveService`, `Proposal::CallbackHandler`); e-mail services raise `CustomExceptions::ScanSolo::DeliveryInsideTransaction` when called inside a joinable transaction (`Proposal::DeliveryService`, `Proposal::ApprovalRequestService`, `Quote::DeliveryFailureService`).
-- Key repeatable side effects by `idempotency_key` (`AgentActionExecution`, `MakeRequest`).
+### 7. Domain refusals as coded custom exceptions → 422 `{ error: code }`
 
-### 7. Controller boundary: 404 gate, 403 policies, 422 error codes
+- Clients get a stable machine code instead of a free-form message.
+- Exceptions live in `lib/custom_exceptions/scan_solo.rb` (`ManualLeadRejected`, `ProposalActionRejected`, `QuoteReplyRejected`, `LeadEmailRejected`, `ProposalTemplateInvalid`). Controllers map them with `rescue_from`, as in `ProposalsController`, `QuoteRepliesController` and `ProposalTemplatesController`.
+- `ScanSolo::BaseController` turns `Pundit::NotAuthorizedError` into 403 `{ error: 'forbidden' }`. A disabled account gets 404 through `prepend_before_action :ensure_scansolo_enabled`.
 
-- Inherit `Api::V1::Accounts::ScanSolo::BaseController`: `prepend_before_action :ensure_scansolo_enabled` → 404; Pundit denial → `{ "error": "forbidden" }` 403.
-- Authorize every action with a `ScanSolo::*Policy`; `ScanSolo::ApplicationPolicy` denies by default.
-- Validate shape in the controller, return `{ "error": "<code>" }` 422 before any write (`PipelineOpportunitiesController#manual_lead_input_error`, `ProposalsController#reject` → `reason_required`).
-- Raise `CustomExceptions::ScanSolo::*` with a `code` from services; controllers `rescue_from` → 422 (`ProposalActionRejected`, `QuoteReplyRejected`, `QuoteRequestResendRejected`).
-- Permit params explicitly with `params.permit(...)`.
+### 8. Explicit table names and closed vocabularies in models
 
-### 8. Fail loudly on misconfiguration
+- Every ScanSolo model sets `self.table_name = 'scan_solo_*'`. String vocabularies are frozen constants plus an `inclusion` validation: `PipelineOpportunity::LEAD_SOURCES`, `LeadState::INTENTS`, `TemplateMapping::PARAM_SOURCES`. States are integer `enum`s.
 
-- Raise or report instead of skipping silently: missing cadence definition → `CustomExceptions::ScanSolo::CadenceDefinitionMissing` + `ChatwootExceptionTracker` (`Cadence::StageEntryEnroller`); missing Make credential → `OutboundRequestService::NotConfiguredError`; misconfigured quote inbox → `CustomExceptions::ScanSolo::QuoteInboxMisconfigured` (`Quote::Mailbox`).
-- Use `ENV.fetch` for required env (`ENV.fetch('FRONTEND_URL')` in `ProposalVersion#document_url`).
+### 9. Requirement-traced header comments
 
-### 9. Deterministic logic outside the model
+- Each ScanSolo class opens with a comment citing requirement ids (`RF-xx`, `CT-xx`, `RNF-xx`) and its invariants. Examples: `ConversationListener`, `RetryPolicy`, `CallbackVerifier`, every `app/models/scan_solo/*.rb`.
+- Model headers also carry the annotaterb `== Schema Information` block (`annotaterb` dev gem).
 
-- Keep keyword matching, reply parsing, amount-in-words and eligibility deterministic — never an LLM call (`OptOut::KeywordMatcher`, `Quote::ResponseBlockParser`, `Quote::AmountInWords`, `Qualification::FieldResolver`).
-- Mark messages ScanSolo sends with `additional_attributes['scansolo_origin']` (9 service files) so the listener skips implicit takeover and routes delivery reconciliation.
+### 10. Frontend: Pinia + camelized payloads, `<script setup>`, i18n strings
 
-### 10. Frontend: Composition API, Pinia, i18n, Tailwind
+- All 10 stores in `dashboard/store/scansolo/` use `defineStore` and `camelcase-keys`. 23 of the 24 `.vue` files under `routes/dashboard/scansolo/` use `<script setup>`.
+- Enforced by `.eslintrc.js` rules `vue/no-bare-strings-in-template` (error), `vue/no-static-inline-styles`, `vue/component-name-in-template-casing`, `vue/custom-event-name-casing: camelCase` and `@intlify/vue-i18n/recommended`.
+- Prettier sets `printWidth 80`, `singleQuote` and `trailingComma es5` (`.prettierrc`).
 
-- Use `<script setup>` in every ScanSolo Vue component with a script block (all 19 `.vue` files under `routes/dashboard/scansolo/`; `ScanSoloPageLayout.vue` is template-only).
-- Keep module state in Pinia `defineStore` stores under `app/javascript/dashboard/store/scansolo/` (9 stores).
-- Wrap HTTP in `ApiClient` subclasses with `accountScoped: true` (`app/javascript/dashboard/api/scansolo*.js`).
-- No bare strings: `SCANSOLO.*` keys in `en.json`; enforced by `routes/dashboard/scansolo/specs/i18nCompleteness.spec.js`. Backend strings under `scan_solo:` in `config/locales/en.yml`.
-- ESLint airbnb-base + vue + prettier + vue-i18n (`.eslintrc.js`); Prettier (`.prettierrc`); 2-space indent, LF, final newline (`.editorconfig`).
-- Colocate specs in `specs/` next to components/stores.
+### 11. Pre-commit autofix
+
+- Fixes run before each commit. `.husky/pre-commit` runs `lint-staged` (ESLint/Prettier), then `bundle exec rubocop --force-exclusion -a` on staged `.rb` files and re-stages them.
+- `.husky/pre-push` → `bin/validate_push` blocks pushes to `master` and `develop`.
+- `.editorconfig` sets LF, UTF-8, 2-space indent and a final newline.
 
 ## Related documents
 
-- [`architecture.md`](architecture.md) — where each layer lives
-- [`domain_rules.md`](domain_rules.md) — rules the sole-path services implement
-- [`tech_stack.md`](tech_stack.md) — lint and test tool versions
+- [`architecture.md`](architecture.md): where each layer lives
+- [`domain_rules.md`](domain_rules.md): the rules these single-writer services enforce
+- [`tech_stack.md`](tech_stack.md): lint/test tool versions

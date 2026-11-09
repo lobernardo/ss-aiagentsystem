@@ -8,6 +8,7 @@
 #
 #  id                            :bigint           not null, primary key
 #  allowed_inbox_ids             :jsonb            not null
+#  commercial_whatsapp_number    :string
 #  enabled                       :boolean          default(FALSE), not null
 #  forbidden_subjects            :jsonb            not null
 #  instructions                  :text
@@ -53,6 +54,7 @@ class ScanSolo::AiAgentConfig < ApplicationRecord
     restricted_information forbidden_subjects transfer_criteria response_limits service_hours
     require_proposal_approval allowed_inbox_ids opt_out_keywords
     quote_inbox_id commercial_user_id quote_recipient_email quote_email_validation_mode
+    commercial_whatsapp_number
   ].freeze
 
   belongs_to :account

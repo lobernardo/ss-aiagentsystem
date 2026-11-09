@@ -25,7 +25,6 @@
 # whose refusal codes are rendered as 422 `{ error: code }`.
 class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Accounts::ScanSolo::BaseController
   STAGE_TRANSITION_IDEMPOTENCY_WINDOW = 5.seconds
-  E164_PHONE_REGEXP = /\A\+[1-9]\d{1,14}\z/
 
   before_action :set_opportunity, only: [:show, :update, :stage_transitions, :handled_manually]
 
@@ -129,7 +128,7 @@ class Api::V1::Accounts::ScanSolo::PipelineOpportunitiesController < Api::V1::Ac
   def manual_lead_input_error
     input = create_params
     return 'missing_name' if input[:name].blank?
-    return 'invalid_phone' unless input[:phone_number].to_s.match?(E164_PHONE_REGEXP)
+    return 'invalid_phone' unless input[:phone_number].to_s.match?(::ScanSolo::Commercial::Rules::E164_PHONE_REGEXP)
     return 'invalid_email' if input[:email].present? && !input[:email].match?(URI::MailTo::EMAIL_REGEXP)
     return 'invalid_initial_stage' unless ::ScanSolo::Pipeline::ManualLeadService::INITIAL_STAGES.include?(input.fetch(:initial_stage, 'novo_lead'))
 

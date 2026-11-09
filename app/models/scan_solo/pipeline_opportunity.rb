@@ -3,6 +3,8 @@
 # Table name: scan_solo_pipeline_opportunities
 #
 #  id                           :bigint           not null, primary key
+#  escalated_to_commercial_at   :datetime
+#  escalation_reason            :string
 #  last_customer_interaction_at :datetime
 #  lead_source                  :string
 #  stage                        :integer          default("novo_lead"), not null
@@ -29,6 +31,9 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
 
   # RF-01: structured lead origin; nil is the "Não informada" state.
   LEAD_SOURCES = %w[website manual].freeze
+
+  # RF-03/RF-09: closed vocabulary of the latest commercial escalation reason.
+  ESCALATION_REASONS = %w[duvida_sem_resposta sem_informacao_base negociacao duvida_proposta assunto_orcamento pedido_humano].freeze
 
   belongs_to :account
   belongs_to :contact
@@ -86,6 +91,7 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
   }
 
   validates :lead_source, inclusion: { in: LEAD_SOURCES }, allow_nil: true
+  validates :escalation_reason, inclusion: { in: ESCALATION_REASONS }, allow_nil: true
 
   # Lead state RF-01: every opportunity has its lead state from creation on.
   after_create { ScanSolo::LeadState::InitializeService.call(opportunity: self) }
@@ -93,6 +99,9 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
   # One opportunity per conversation is enforced by the unique index only, so
   # ScanSolo::Pipeline::OpportunityBootstrapService's create_or_find_by! can
   # converge concurrent creators on the same row (RF-22).
+
+  # RF-11/RF-17: the single definition of "escalated"; the state ends at ganho/perdido.
+  def escalated_to_commercial? = escalated_to_commercial_at.present? && !ganho? && !perdido?
 
   def record_customer_interaction!(at:)
     update!(last_customer_interaction_at: at)

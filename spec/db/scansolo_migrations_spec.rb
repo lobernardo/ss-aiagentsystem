@@ -59,7 +59,40 @@ RSpec.describe 'ScanSolo migrations' do
     # scan_solo_proposal_templates and the lead state collection columns.
     # scansolo-relatorios-fonte-unica added 2 more: quote request handled_manually
     # column and scan_solo_report_snapshots.
-    expect(scansolo_migration_files.length).to eq(44)
+    # scansolo-escalacao-comercial-wame T01 (RNF-02) added 2 more: the published
+    # commercial WhatsApp number and the opportunity's commercial escalation mark.
+    expect(scansolo_migration_files.length).to eq(46)
+  end
+
+  it 'adds the commercial WhatsApp number and escalation mark with add_column only, as nullable columns (RNF-02)' do
+    connection = ActiveRecord::Base.connection
+
+    %w[
+      add_commercial_whatsapp_number_to_scan_solo_ai_agent_configs
+      add_commercial_escalation_to_scan_solo_pipeline_opportunities
+    ].each do |name|
+      migration = scansolo_migration_files.find { |path| path.include?(name) }
+      expect(migration).to be_present
+
+      statements = File.read(migration).scan(/^\s*(\w+)\s+:scan_solo_/).flatten
+      expect(statements).to all(eq('add_column'))
+      expect(statements).not_to be_empty
+    end
+
+    {
+      scan_solo_ai_agent_configs: %w[commercial_whatsapp_number],
+      scan_solo_pipeline_opportunities: %w[escalated_to_commercial_at escalation_reason]
+    }.each do |table, columns|
+      columns.each do |column_name|
+        column = connection.columns(table).find { |c| c.name == column_name }
+        expect(column).to be_present, "#{table}.#{column_name} is missing"
+        expect(column.null).to be true
+        expect(column.default).to be_nil
+      end
+    end
+
+    # RF-02: the published snapshot copies FIELDS, so the number reaches it through PublishService.
+    expect(ScanSolo::AiAgentConfig::FIELDS).to include(:commercial_whatsapp_number)
   end
 
   it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do

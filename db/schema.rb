@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_11_08_100002) do
+ActiveRecord::Schema[7.2].define(version: 2026_11_09_100002) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1486,6 +1486,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_11_08_100002) do
     t.bigint "commercial_user_id"
     t.string "quote_recipient_email", default: "comercial@scansolo.com.br", null: false
     t.boolean "quote_email_validation_mode", default: true, null: false
+    t.string "commercial_whatsapp_number"
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_draft", unique: true, where: "(status = 0)"
     t.index ["account_id"], name: "index_scan_solo_ai_agent_configs_on_account_id"
     t.index ["published_version_id"], name: "index_scan_solo_ai_agent_configs_on_published_version_id"
@@ -1687,6 +1688,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_11_08_100002) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.string "lead_source"
+    t.datetime "escalated_to_commercial_at"
+    t.string "escalation_reason"
     t.index ["account_id"], name: "index_scan_solo_pipeline_opportunities_on_account_id"
     t.index ["contact_id"], name: "index_scan_solo_pipeline_opportunities_on_contact_id"
     t.index ["conversation_id"], name: "index_scan_solo_pipeline_opportunities_on_conversation_id", unique: true

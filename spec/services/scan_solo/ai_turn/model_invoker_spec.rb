@@ -15,7 +15,7 @@ RSpec.describe ScanSolo::AiTurn::ModelInvoker do
 
   describe 'structured output through the injected provider' do
     it 'returns the reply, the requested actions and the measured latency' do
-      actions = [{ 'action_id' => 'human_handoff', 'params' => { 'reason' => 'pediu humano' } }]
+      actions = [{ 'action_id' => 'lead_state_update', 'params' => { 'negotiation_requested' => true } }]
       provider = ->(**kwargs) { ScanSolo::TestMode::MockLlmProvider.call(**kwargs, fixture_response: 'Olá!', fixture_actions: actions) }
 
       result = described_class.call(config: config, payload: payload, llm_provider: provider)

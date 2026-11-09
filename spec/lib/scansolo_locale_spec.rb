@@ -38,6 +38,12 @@ RSpec.describe 'ScanSolo backend locale' do
     expect(I18n.t('scan_solo.quote.email.subject', opportunity_id: 42, name: 'Solar Ltda')).to eq('Solicitação de orçamento #42 — Solar Ltda')
   end
 
+  it 'never names Luciano anywhere in the scan_solo scope (RF-08)' do
+    scope = YAML.load_file(Rails.root.join('config/locales/en.yml')).dig('en', 'scan_solo')
+
+    expect(I18n.transliterate(scope.to_json)).not_to match(/luciano/i)
+  end
+
   it 'names the lead origins shown in the quote email' do
     expect(I18n.t('scan_solo.quote.email.origin')).to eq(website: 'Site/WhatsApp', manual: 'Comercial', none: 'Não informada')
   end

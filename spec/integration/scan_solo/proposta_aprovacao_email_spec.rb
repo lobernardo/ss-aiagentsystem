@@ -356,6 +356,8 @@ RSpec.describe 'ScanSolo proposta com aprovação e entrega por e-mail', type: :
   it '(f) schedules no cron for the approval and the delivery (RNF-03)' do
     scheduled_classes = YAML.load_file(Rails.root.join('config/schedule.yml')).values.pluck('class')
 
-    expect(scheduled_classes.grep(/\AScanSolo::/)).to contain_exactly('ScanSolo::CadenceDueAttemptJob', 'ScanSolo::StaleTurnSweeperJob')
+    expect(scheduled_classes.grep(/\AScanSolo::/)).to contain_exactly(
+      'ScanSolo::CadenceDueAttemptJob', 'ScanSolo::StaleTurnSweeperJob', 'ScanSolo::WeeklyReportSnapshotJob'
+    )
   end
 end

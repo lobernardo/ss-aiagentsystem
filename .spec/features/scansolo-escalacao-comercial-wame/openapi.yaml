@@ -1,0 +1,395 @@
+openapi: 3.1.0
+info:
+  title: ScanSolo Escalação comercial wa.me — REST contract delta (CT-01, CT-04, CT-06; RF-01, RF-02, RF-17, RF-20, RF-21)
+  version: "1.0.0"
+  description: >
+    Delta over `.spec/features/scansolo-solicitacao-orcamento-email/openapi.yaml` (agent config),
+    `.spec/features/scansolo-production-complete/openapi.yaml` (knowledge sources, publish) and
+    `.spec/features/scansolo-relatorios-fonte-unica/openapi.yaml` (`CommercialStatus`). Only the
+    operations CHANGED by SPEC `scansolo-escalacao-comercial-wame` v1.2 are listed; every other
+    path of the prior contracts stays valid and unchanged. Base paths verified at
+    `config/routes.rb:497` (`ai_agent_config`) and `config/routes.rb:504-511` (`knowledge/sources`).
+    Every endpoint keeps the `BaseController` 404 gate when `Account#scansolo_enabled?` is false and
+    the ScanSolo Pundit 403.
+
+    COMPAT:
+    (1) additive — the AI agent config (draft and published) gains the nullable string
+    `commercial_whatsapp_number` (E.164), part of `AiAgentConfig::FIELDS`, so publish copies it into
+    the snapshot (RF-01, RF-02).
+    (2) tightening, intentional (RF-21) — `POST /ai_agent_config/publish` now answers 422 when the
+    draft has `enabled = true` and no `commercial_whatsapp_number`; no snapshot and no audit are
+    created. Body reuses the existing `RecordInvalid` 422 shape.
+    (3) tightening, intentional (RF-20) — `POST /knowledge/sources` and `PATCH|PUT
+    /knowledge/sources/{id}` answer 422 when `title` or `content` contains the internal commercial
+    contact name (case- and accent-insensitive). Same `RecordInvalid` 422 body; nothing is written.
+    (4) additive enum value in a response field — `CommercialStatus` gains `escalado_wa` (RF-17,
+    CT-04); the only client is the in-house dashboard, updated in the same delivery (PLAN T15).
+    No field is renamed or removed. No phone number appears in any example except the fictitious
+    `+5511999999999` (RNF-01).
+servers:
+  - url: /api/v1
+paths:
+  /accounts/{account_id}/scan_solo/ai_agent_config:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: showAiAgentConfig
+      summary: Config with the commercial WhatsApp number (RF-01, RF-02, CT-01)
+      description: >
+        CHANGED. Draft and published representations gain `commercial_whatsapp_number`. Live AI
+        turns read only the published value (RF-02); a draft-only change has no effect until publish.
+        COMPAT: additive.
+      responses:
+        '200':
+          description: Draft/published pair and model list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [draft, published, available_models]
+                properties:
+                  draft:
+                    $ref: '#/components/schemas/AiAgentConfigCommercialWhatsapp'
+                  published:
+                    oneOf:
+                      - $ref: '#/components/schemas/AiAgentConfigCommercialWhatsapp'
+                      - type: "null"
+                  available_models:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/draft:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    put:
+      operationId: updateAiAgentConfigDraft
+      summary: Draft update accepts `commercial_whatsapp_number` (administrator only; RF-01, CT-01, UI-01)
+      description: >
+        CHANGED. Accepts the optional `commercial_whatsapp_number`: a JSON string matching
+        `^\+[1-9]\d{1,14}$` or `null` (clears it). Any other present value (integer, empty string,
+        local format, spaces or dashes) → 422 before the draft is written. Every field accepted by
+        the prior contracts is still accepted with the same rules. COMPAT: additive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiAgentConfigCommercialWhatsappInput'
+      responses:
+        '200':
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfigCommercialWhatsapp'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: >
+            Validation failed. Besides the prior cases, `commercial_whatsapp_number` present and
+            neither `null` nor an E.164 string.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordInvalidError'
+              examples:
+                invalidCommercialWhatsapp:
+                  value:
+                    message: Commercial whatsapp number must be an E.164 phone number
+                    attributes: [commercial_whatsapp_number]
+
+  /accounts/{account_id}/scan_solo/ai_agent_config/publish:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: publishAiAgentConfig
+      summary: Publish requires the commercial WhatsApp number when the agent is enabled (RF-21, CT-01)
+      description: >
+        CHANGED. When the draft has `enabled = true` and `commercial_whatsapp_number` is null or
+        blank → 422, zero snapshots created and zero `ai_agent_config.published` audits. With
+        `enabled = false` the number is optional. The snapshot copies `commercial_whatsapp_number`.
+        Throttle (429) unchanged. COMPAT: tightening, intentional per RF-21.
+      responses:
+        '200':
+          description: Published version swapped atomically; carries `commercial_whatsapp_number`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAgentConfigCommercialWhatsapp'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Enabled draft without `commercial_whatsapp_number` (RF-21).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordInvalidError'
+              examples:
+                missingCommercialWhatsapp:
+                  value:
+                    message: Commercial whatsapp number is required to publish an enabled agent
+                    attributes: [commercial_whatsapp_number]
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /accounts/{account_id}/scan_solo/knowledge/sources:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      operationId: createKnowledgeSource
+      summary: Create a source; rejects the internal commercial contact name (administrator only; RF-20, CT-06)
+      description: >
+        CHANGED. When `title` or `content` contains the internal commercial contact name
+        (case- and accent-insensitive) → 422 and nothing is written or audited. Otherwise unchanged
+        (asynchronous ingestion; RF-22 still fails ingestion for text that bypasses this check).
+        COMPAT: tightening, intentional per RF-20.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeSourceInput'
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/KnowledgeSourceInput'
+                - type: object
+                  properties:
+                    file:
+                      type: string
+                      format: binary
+      responses:
+        '200':
+          description: Source created, indexing pending.
+          content:
+            application/json:
+              schema:
+                $ref: '../scansolo-production-complete/openapi.yaml#/components/schemas/KnowledgeSource'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation failed (existing cases) or the internal name is present (RF-20).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordInvalidError'
+              examples:
+                internalName:
+                  value:
+                    message: Content must not contain the internal commercial contact name
+                    attributes: [content]
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /accounts/{account_id}/scan_solo/knowledge/sources/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+      - $ref: '#/components/parameters/ResourceId'
+    patch:
+      operationId: updateKnowledgeSource
+      summary: Update a source; rejects the internal commercial contact name (administrator only; RF-20, CT-06)
+      description: >
+        CHANGED. Adds 422 when `title` or `content` contains the internal commercial contact name;
+        the source is left unchanged. `PUT` on the same path (Rails `resources` route) behaves
+        identically. COMPAT: tightening, intentional per RF-20.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeSourceUpdateInput'
+      responses:
+        '200':
+          description: Source updated.
+          content:
+            application/json:
+              schema:
+                $ref: '../scansolo-production-complete/openapi.yaml#/components/schemas/KnowledgeSource'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: The internal name is present in `title` or `content` (RF-20).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordInvalidError'
+              examples:
+                internalNameTitle:
+                  value:
+                    message: Title must not contain the internal commercial contact name
+                    attributes: [title]
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      operationId: replaceKnowledgeSource
+      summary: Same as PATCH (Rails `resources` update route; RF-20, CT-06)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeSourceUpdateInput'
+      responses:
+        '200':
+          description: Source updated.
+          content:
+            application/json:
+              schema:
+                $ref: '../scansolo-production-complete/openapi.yaml#/components/schemas/KnowledgeSource'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: The internal name is present in `title` or `content` (RF-20).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordInvalidError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+components:
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ResourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Unauthorized:
+      $ref: '../scansolo-production-complete/openapi.yaml#/components/responses/Unauthorized'
+    Forbidden:
+      $ref: '../scansolo-production-complete/openapi.yaml#/components/responses/Forbidden'
+    NotFound:
+      $ref: '../scansolo-production-complete/openapi.yaml#/components/responses/NotFound'
+    TooManyRequests:
+      $ref: '../scansolo-production-complete/openapi.yaml#/components/responses/TooManyRequests'
+
+  schemas:
+    E164Phone:
+      type: string
+      pattern: '^\+[1-9]\d{1,14}$'
+      description: >
+        Same rule as `ScanSolo::Commercial::Rules::E164_PHONE_REGEXP` (moved from
+        `PipelineOpportunitiesController::E164_PHONE_REGEXP`). Fictitious example only (RNF-01).
+      examples:
+        - '+5511999999999'
+
+    AiAgentConfigCommercialWhatsappInput:
+      type: object
+      description: >
+        Only the field added by this delta; the request also accepts every property of the prior
+        draft input schemas (unchanged).
+      properties:
+        commercial_whatsapp_number:
+          description: >
+            RF-01 — E.164 string or `null` (clears). Type is checked strictly: an integer or an empty
+            string is rejected with 422, never coerced (AGENTS.md "Accept only the documented type").
+          oneOf:
+            - $ref: '#/components/schemas/E164Phone'
+            - type: "null"
+
+    AiAgentConfigCommercialWhatsapp:
+      description: >
+        `scansolo-solicitacao-orcamento-email` `AiAgentConfigQuoteEmailSettings` plus
+        `commercial_whatsapp_number`. All prior fields are still returned with the same name, type
+        and meaning.
+      allOf:
+        - $ref: '../scansolo-solicitacao-orcamento-email/openapi.yaml#/components/schemas/AiAgentConfigQuoteEmailSettings'
+        - type: object
+          required: [commercial_whatsapp_number]
+          properties:
+            commercial_whatsapp_number:
+              description: >
+                RF-01/RF-02 — null until set. The published value is the only one used to build the
+                `wa.me` link (CT-05) and to decide whether `escalate_to_commercial` is offered (RF-19).
+              oneOf:
+                - $ref: '#/components/schemas/E164Phone'
+                - type: "null"
+
+    KnowledgeSourceInput:
+      type: object
+      required: [source_type, title]
+      description: Unchanged shape (production-complete); `title`/`content` additionally must not contain the internal name (RF-20).
+      properties:
+        source_type:
+          type: string
+          enum: [document, faq, company_info]
+        title:
+          type: string
+        content:
+          type: string
+        origin:
+          type: string
+
+    KnowledgeSourceUpdateInput:
+      type: object
+      description: Unchanged shape (production-complete); `title`/`content` additionally must not contain the internal name (RF-20).
+      properties:
+        enabled:
+          type: boolean
+        title:
+          type: string
+        content:
+          type: string
+        origin:
+          type: string
+
+    CommercialStatus:
+      type: string
+      enum:
+        - nao_encaminhado
+        - aguardando_artur
+        - resposta_recebida
+        - proposta_em_aprovacao
+        - proposta_enviada
+        - proposta_enviada_manual
+        - escalado_wa
+      description: >
+        CHANGED (CT-04, RF-17) — supersedes `scansolo-relatorios-fonte-unica` `CommercialStatus`.
+        Single rule in `ScanSolo::Reports::CommercialStatus`, first true row wins: request
+        `handled_manually` → `proposta_enviada_manual`; current version `sent` → `proposta_enviada`;
+        current version `awaiting_approval` → `proposta_em_aprovacao`; opportunity escalated
+        (`escalated_to_commercial_at` present and stage not `ganho`/`perdido`) → `escalado_wa`; no
+        quote request → `nao_encaminhado`; request `awaiting_reply`/`correction_requested` →
+        `aguardando_artur`; else `resposta_recebida`. Exposed as `commercial_status` on every
+        `PipelineOpportunity` body and on the reports stalled items; no other field changes.
+
+    RecordInvalidError:
+      type: object
+      description: Body of `ActiveRecord::RecordInvalid` rendered by `RequestExceptionHandler#render_record_invalid` (verified at `app/controllers/concerns/request_exception_handler.rb:58-63`).
+      required: [message, attributes]
+      properties:
+        message:
+          type: string
+          description: Full error messages joined by ", ".
+        attributes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Attribute names with errors (e.g. `commercial_whatsapp_number`, `title`, `content`).

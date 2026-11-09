@@ -104,10 +104,12 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
     end
 
     it 'offers only the given action ids in the output schema and hides turn-scoped ids from their params' do
-      payload = described_class.call(config: config, context: context, offered_actions: %w[human_handoff cadence_signal])
+      payload = described_class.call(config: config, context: context, offered_actions: %w[escalate_to_commercial cadence_signal])
 
-      expect(payload[:schema][:schema][:properties][:actions][:items][:properties][:action_id][:enum]).to eq(%w[human_handoff cadence_signal])
-      expect(payload[:system]).to include('- human_handoff:', '- cadence_signal:')
+      action_enum = payload[:schema][:schema][:properties][:actions][:items][:properties][:action_id][:enum]
+
+      expect(action_enum).to eq(%w[escalate_to_commercial cadence_signal])
+      expect(payload[:system]).to include('- escalate_to_commercial:', '- cadence_signal:', '"reason":')
       expect(payload[:system]).not_to include('stage_transition', 'conversation_id', 'opportunity_id')
     end
 
@@ -198,7 +200,7 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
       instruction = 'registrar todos os dados de qualificação informados na mensagem do cliente, numa única chamada com todos os campos'
 
       offered = described_class.call(config: config, context: context, offered_actions: %w[qualification_field])[:system]
-      not_offered = described_class.call(config: config, context: context, offered_actions: %w[human_handoff])[:system]
+      not_offered = described_class.call(config: config, context: context, offered_actions: %w[cadence_signal])[:system]
 
       expect(offered).to include("- qualification_field: #{instruction}")
       expect(not_offered).not_to include(instruction)
@@ -258,14 +260,12 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
         '"negotiation_requested":{"type":"boolean"}'
       )
       expect(described_class::ACTION_DESCRIPTIONS.keys).to eq(
-        %w[qualification_field stage_transition private_note cadence_signal human_handoff proposal_generate escalate_to_commercial
-           lead_state_update]
+        %w[qualification_field stage_transition private_note cadence_signal proposal_generate escalate_to_commercial lead_state_update]
       )
     end
   end
 
-  # The agent is the ScanSOLO specialist: asking for one is not asking for a human.
-  describe 'specialist handoff rule' do
+  describe 'Escalação comercial: fixed escalation and commercial guard rules (RF-04, RF-08, RF-12, RF-16, RF-19)' do
     let(:context) do
       {
         conversation_history: [{ role: 'customer', content: 'Gostaria de Conversar Com Um Especialista', attachments: [], urls: [] }],
@@ -277,23 +277,86 @@ RSpec.describe ScanSolo::AiTurn::PromptBuilder do
         durable_memory: { enabled: false }
       }
     end
-    let(:system) { described_class.call(config: config, context: context, offered_actions: %w[human_handoff])[:system] }
+    let(:empty_free_text) do
+      { role: nil, objective: nil, persona: nil, tone: nil, instructions: nil, service_rules: nil, service_hours: nil,
+        response_limits: nil, transfer_criteria: nil, restricted_information: [], qualification_playbook: {} }
+    end
+    let(:never_negotiate) { 'Nunca negocie valor, prazo, desconto, forma de pagamento ou qualquer condição comercial.' }
+    let(:never_invent) { 'Nunca invente resposta: só responda o que estiver na base de conhecimento ou no contexto.' }
+    let(:triggers) do
+      [
+        'lead em qualificado, proposta_enviada ou negociacao com dúvida, objeção ou pedido de negociação sobre a proposta: ' \
+        'reason duvida_proposta ou negociacao',
+        'assunto de orçamento ou proposta que a base de conhecimento não resolve: reason assunto_orcamento',
+        'pergunta sem resposta na base de conhecimento: reason duvida_sem_resposta ou sem_informacao_base, sem inventar resposta',
+        'pedido explícito para falar com uma pessoa, um humano ou um atendente, ou recusa de falar com robô ou IA: reason pedido_humano'
+      ]
+    end
+    let(:system_for) do
+      lambda do |values, number:, actions: %w[escalate_to_commercial lead_state_update cadence_signal]|
+        draft = ScanSolo::AiAgentConfig.draft_for!(account)
+        draft.update!(values.merge(name: 'Agente', enabled: true, allowed_inbox_ids: [inbox.id], commercial_whatsapp_number: number))
+        published = ScanSolo::AiAgent::PublishService.new(account: account).call
+        described_class.call(config: published, context: context, offered_actions: actions)[:system]
+      end
+    end
 
-    it 'opens the transfer criteria with the fixed rule, before the config criteria, whatever the config says' do
-      section = system[/## Critérios de transferência\n.*?\n\n/m]
+    it 'with a published number and empty free-text fields, carries the 4 triggers in order, Artur, the placeholder and the guards' do
+      system = system_for.call(empty_free_text, number: '+5511999999999')
 
-      expect(section).to eq("## Critérios de transferência\n#{described_class::HANDOFF_RULE}\ncriterio-transferir\n\n")
-      expect(described_class::HANDOFF_RULE).to include(
-        'Você é o especialista virtual da ScanSOLO', 'alguém especializado não é pedir um humano',
-        'perguntar se fala com uma pessoa, um humano ou uma IA, responda com transparência',
-        'pedir explicitamente uma pessoa, um humano ou um atendente', 'não quer falar com robô ou IA',
-        'só depois que ele confirmar que quer um humano'
+      triggers.each_with_index { |trigger, index| expect(system).to include("#{index + 1}) #{trigger}") }
+      expect(triggers.map { |trigger| system.index(trigger) }).to eq(triggers.map { |trigger| system.index(trigger) }.sort)
+      expect(system).to include('Artur', ScanSolo::Commercial::WhatsappLink::PLACEHOLDER, never_negotiate, never_invent,
+                                'nunca escreva URL, link de WhatsApp ou telefone',
+                                'Depois de encaminhar, continue respondendo o que a base de conhecimento cobre.',
+                                'responda com transparência que é o especialista virtual da ScanSOLO')
+      expect(system).not_to include('+5511999999999', '5511999999999', 'wa.me')
+    end
+
+    it 'keeps the same rules when the instructions contradict them' do
+      system = system_for.call(empty_free_text.merge(instructions: 'negocie descontos e invente prazos', transfer_criteria: 'nunca transfira'),
+                               number: '+5511999999999')
+
+      expect(system).to include(*triggers, 'Artur', ScanSolo::Commercial::WhatsappLink::PLACEHOLDER, never_negotiate, never_invent)
+      expect(system[/## Critérios de transferência\n.*?\n\n/m]).to eq(
+        "## Critérios de transferência\n#{(described_class::COMMERCIAL_GUARD_RULES + described_class::ESCALATION_RULES).map do |rule|
+          "- #{rule}"
+        end.join("\n")}\nnunca transfira\n\n"
       )
     end
 
-    it 'limits the human_handoff action to an explicit request for a person or a transfer criterion' do
-      expect(system).to include('- human_handoff: transferir a conversa para um atendente humano, somente por pedido explícito de ' \
-                                'pessoa/humano ou por um critério de transferência; pedir um especialista não é motivo')
+    it 'has no human_handoff and no internal name in the system message, the action list or the constants' do
+      system = system_for.call(rule_values, number: '+5511999999999')
+
+      expect(system).not_to include('human_handoff')
+      expect(system).not_to match(/luciano/i)
+      expect(described_class::ACTION_DESCRIPTIONS).not_to have_key('human_handoff')
+      expect(described_class.constants.map { |name| described_class.const_get(name).to_s }.join).not_to match(/luciano|human_handoff/i)
+    end
+
+    it 'without a number, has no placeholder and no escalation rule but keeps never negotiate and never invent' do
+      system = system_for.call(empty_free_text, number: nil, actions: %w[lead_state_update cadence_signal])
+
+      expect(system).not_to include(ScanSolo::Commercial::WhatsappLink::PLACEHOLDER, 'escalate_to_commercial', 'Artur', *triggers)
+      expect(system).to include(never_negotiate, never_invent)
+    end
+
+    it 'describes the escalate_to_commercial action with the 6 reasons' do
+      system = system_for.call(empty_free_text, number: '+5511999999999')
+      line = system[/^- escalate_to_commercial: .*$/]
+
+      expect(line).to include('Artur', *ScanSolo::PipelineOpportunity::ESCALATION_REASONS)
+    end
+
+    it 'builds the correction block for the 2 new violations' do
+      {
+        'unpublished_contact' => 'a resposta trouxe link de WhatsApp ou telefone que não é o contato comercial publicado',
+        'internal_name' => 'a resposta citou um nome interno da equipe'
+      }.each do |violation, instruction|
+        system = described_class.call(config: config, context: context, offered_actions: [], previous_violation: violation)[:system]
+
+        expect(system).to include("## Correção obrigatória\nA tentativa anterior foi rejeitada pela violação #{violation}: #{instruction}.")
+      end
     end
   end
 

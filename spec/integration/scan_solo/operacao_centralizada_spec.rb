@@ -281,7 +281,7 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     expect(ScanSolo::PipelineStageEvent.where(opportunity: opportunity, to_stage: 'proposta_enviada').count).to eq(1)
   end
 
-  it '(c) answers as before after the proposal, then hands a negotiation request to the commercial user (RF-34, RF-35..RF-38)' do
+  it '(c) answers as before after the proposal, then notifies a negotiation request keeping the AI active (RF-34, RF-35..RF-37)' do
     opportunity = qualify_manual_lead!
     deliver_proposal!(opportunity)
 
@@ -294,13 +294,13 @@ RSpec.describe 'ScanSolo operação centralizada ponta a ponta', type: :request 
     reply = opportunity.conversation.messages.outgoing.where(private: false, sender_type: 'AgentBot').where('id > ?', request.id).sole
     expect(reply.content).to eq('Vou verificar isso com nosso comercial. Só um momento.')
     expect([opportunity.reload.stage, ScanSolo::ConversationExtension.resolve_for(opportunity.conversation).ai_control_state,
-            opportunity.conversation.reload.assignee]).to eq(['negociacao', 'awaiting_human', luciano])
+            opportunity.conversation.reload.assignee]).to eq(['negociacao', 'ai_active', nil])
     negotiation_mail = ActionMailer::Base.deliveries.last
     expect(negotiation_mail.to).to eq(['comercial@scansolo.com.br'])
     expect(negotiation_mail.html_part&.decoded || negotiation_mail.body.decoded).to include('Consegue um desconto se eu pagar à vista?')
 
     next_message = customer_says(opportunity, 'Alô?')
-    expect(run_turn(next_message, [])).to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
+    expect(run_turn(next_message, []).failure_reason).not_to eq('human_controlled')
   end
 
   it '(d) links an unthreaded reply from the pending list and generates the proposal (RF-19, RF-20, RF-24)' do

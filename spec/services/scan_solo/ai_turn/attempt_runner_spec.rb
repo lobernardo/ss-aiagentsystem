@@ -106,7 +106,7 @@ RSpec.describe ScanSolo::AiTurn::AttemptRunner do
     context 'when the opportunity is in proposta_enviada' do
       before { opportunity.update!(stage: :proposta_enviada) }
 
-      it 'sends the exact standard reply, moves to negociacao, hands off and publishes once after the commit' do
+      it 'sends the exact standard reply, moves to negociacao, keeps the AI active and publishes once after the commit' do
         ActiveRecord::Base.transaction do
           expect(run_attempt).to have_attributes(status: :sent, violation: nil)
           expect(notifications.count).to eq(0)
@@ -116,7 +116,7 @@ RSpec.describe ScanSolo::AiTurn::AttemptRunner do
         expect(opportunity.reload).to be_negociacao
         expect(ScanSolo::PipelineStageEvent.where(opportunity: opportunity).sole)
           .to have_attributes(from_stage: 'proposta_enviada', to_stage: 'negociacao')
-        expect([extension.reload.ai_control_state, conversation.messages.where(private: true).count]).to eq(['awaiting_human', 1])
+        expect([extension.reload.ai_control_state, conversation.messages.where(private: true).count]).to eq(['ai_active', 0])
         expect(notifications.count).to eq(1)
       end
 
@@ -137,28 +137,27 @@ RSpec.describe ScanSolo::AiTurn::AttemptRunner do
         expect(ai_replies.sole.content).not_to include('R$')
       end
 
-      it 'next customer message is not answered by the AI (RF-40)' do
+      it 'next customer message is still handled by the AI, with no handoff (escalação comercial RF-13)' do
         run_attempt
         next_message = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming,
                                         sender: contact, content: 'E então?')
 
         ScanSolo::AiTurn::TurnOrchestrator.call(message: next_message, llm_provider: ScanSolo::TestMode::MockLlmProvider)
 
-        expect(ScanSolo::AiTurn.find_by!(message_id: next_message.id))
-          .to have_attributes(invocation_status: 'suppressed', failure_reason: 'human_controlled')
-        expect(ai_replies.count).to eq(1)
+        expect(ScanSolo::AiTurn.find_by!(message_id: next_message.id).failure_reason).not_to eq('human_controlled')
+        expect(extension.reload).to be_ai_active
       end
     end
 
     context 'when the opportunity is already in negociacao with the AI active' do
       before { opportunity.update!(stage: :negociacao) }
 
-      it 'sends the standard reply, hands off and notifies without a stage event' do
+      it 'sends the standard reply, keeps the AI active and notifies without a stage event' do
         run_attempt
 
         expect(ai_replies.sole.content).to eq('Vou verificar isso com nosso comercial. Só um momento.')
         expect(ScanSolo::PipelineStageEvent.where(opportunity: opportunity)).to be_none
-        expect(extension.reload).to be_awaiting_human
+        expect(extension.reload).to be_ai_active
         expect(notifications.count).to eq(1)
       end
     end

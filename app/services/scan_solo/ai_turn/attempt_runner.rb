@@ -121,7 +121,7 @@ class ScanSolo::AiTurn::AttemptRunner
   end
 
   def request_negotiation!
-    ScanSolo::Negotiation::RequestService.call(opportunity: opportunity, turn: turn, message: message)
+    ScanSolo::Negotiation::RequestService.call(opportunity: opportunity, turn: turn, message: message, escalation_reason: nil)
     @result = result.dup.tap do |reply|
       reply.content = I18n.t('scan_solo.negotiation.standard_reply')
       reply.asked_fields = []

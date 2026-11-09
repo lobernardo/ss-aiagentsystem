@@ -8,11 +8,11 @@
 # RF-17: the fixed continuity rules come first and are code constants, not
 # config -- no agent config edit can remove or reword them. They include the
 # `nao_informado` rule (proposta-template-local RF-26) and the 2-field limit
-# names the bulk collection exception (RF-38 d). HANDOFF_RULE opens the
-# transfer criteria the same way: the agent is the ScanSOLO virtual
-# specialist, so neither asking for a specialist nor asking whether it is a
-# person hands off -- only an explicit (or confirmed) request for a human or a
-# config criterion does.
+# names the bulk collection exception (RF-38 d). The transfer criteria open
+# the same way with code constants: COMMERCIAL_GUARD_RULES (never negotiate,
+# never invent) always, and ESCALATION_RULES (the 4 escalation triggers to
+# Artur, the link placeholder and the virtual specialist transparency) only
+# when the published config has the commercial WhatsApp number.
 #
 # Lead state (RF-09, RF-13, RF-16, RF-24, CT-02): the system message carries
 # the lead state and summary sections of ScanSolo::AiTurn::LeadStatePrompt,
@@ -42,12 +42,29 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'e não pergunte de novo.'
   ].freeze
 
-  HANDOFF_RULE = 'Você é o especialista virtual da ScanSOLO: pedir para falar com um especialista, técnico ou alguém especializado não ' \
-                 'é pedir um humano; apresente-se como especialista virtual, entenda a necessidade e siga o atendimento, sem ' \
-                 'human_handoff. Se o cliente perguntar se fala com uma pessoa, um humano ou uma IA, responda com transparência que ' \
-                 'é o especialista virtual da ScanSOLO, sem human_handoff. Por pedido do cliente, use human_handoff só quando ele ' \
-                 'pedir explicitamente uma pessoa, um humano ou um atendente, ou disser que não quer falar com robô ou IA; se você ' \
-                 'oferecer a transferência, use human_handoff só depois que ele confirmar que quer um humano.'.freeze
+  # Escalação comercial RF-08/RF-12/RF-16: always emitted, whatever the config
+  # fields say.
+  COMMERCIAL_GUARD_RULES = [
+    'Nunca negocie valor, prazo, desconto, forma de pagamento ou qualquer condição comercial.',
+    'Nunca invente resposta: só responda o que estiver na base de conhecimento ou no contexto.'
+  ].freeze
+
+  # Escalação comercial RF-04/RF-16: emitted only when the published config
+  # has the commercial WhatsApp number (RF-19). Triggers in precedence order.
+  ESCALATION_RULES = [
+    'Encaminhe o lead ao Artur, do comercial, com escalate_to_commercial, no primeiro gatilho que se aplicar, nesta ordem:',
+    '1) lead em qualificado, proposta_enviada ou negociacao com dúvida, objeção ou pedido de negociação sobre a proposta: ' \
+    'reason duvida_proposta ou negociacao;',
+    '2) assunto de orçamento ou proposta que a base de conhecimento não resolve: reason assunto_orcamento;',
+    '3) pergunta sem resposta na base de conhecimento: reason duvida_sem_resposta ou sem_informacao_base, sem inventar resposta;',
+    '4) pedido explícito para falar com uma pessoa, um humano ou um atendente, ou recusa de falar com robô ou IA: reason pedido_humano.',
+    'O contato comercial é o Artur. Para passar o contato, escreva apenas ' \
+    "#{ScanSolo::Commercial::WhatsappLink::PLACEHOLDER} na resposta; nunca escreva URL, link de WhatsApp ou telefone.",
+    'Depois de encaminhar, continue respondendo o que a base de conhecimento cobre.',
+    'Você é o especialista virtual da ScanSOLO: pedir para falar com um especialista, técnico ou alguém especializado não é pedir ' \
+    'um humano; apresente-se como especialista virtual, entenda a necessidade e siga o atendimento. Se o cliente perguntar se fala ' \
+    'com uma pessoa, um humano ou uma IA, responda com transparência que é o especialista virtual da ScanSOLO.'
+  ].freeze
 
   # RF-11a: the violations that trigger one regenerated attempt.
   VIOLATION_INSTRUCTIONS = {
@@ -56,7 +73,9 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'field_not_missing' => 'a resposta perguntou um campo que não está entre os elegíveis',
     'qualification_closed' => 'a resposta fez perguntas de qualificação com a qualificação concluída',
     'bulk_out_of_scope' => 'a resposta em bloco perguntou campo fora dos campos elegíveis',
-    'bulk_incomplete' => 'a resposta em bloco não perguntou todos os campos elegíveis'
+    'bulk_incomplete' => 'a resposta em bloco não perguntou todos os campos elegíveis',
+    'unpublished_contact' => 'a resposta trouxe link de WhatsApp ou telefone que não é o contato comercial publicado',
+    'internal_name' => 'a resposta citou um nome interno da equipe'
   }.freeze
 
   ATTACHMENT_TYPE_LABELS = {
@@ -69,8 +88,6 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'stage_transition' => 'avançar a oportunidade para em_qualificacao ou qualificado',
     'private_note' => 'criar uma nota interna para a equipe',
     'cadence_signal' => 'sinalizar um evento de follow-up; use opt_out quando o cliente pedir para não receber mais mensagens',
-    'human_handoff' => 'transferir a conversa para um atendente humano, somente por pedido explícito de pessoa/humano ou por um ' \
-                       'critério de transferência; pedir um especialista não é motivo',
     'proposal_generate' => 'solicitar a geração da proposta comercial',
     'escalate_to_commercial' => 'encaminhar o lead ao Artur, do comercial; reason é um de duvida_sem_resposta, ' \
                                 'sem_informacao_base, negociacao, duvida_proposta, assunto_orcamento ou pedido_humano',
@@ -125,11 +142,15 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
       'Regras do agente' => agent_rules,
       'Horário de atendimento' => "#{text(config.service_hours)}\nResponda sempre; use o horário apenas para orientar o cliente.",
       'Limites de resposta' => text(config.response_limits),
-      'Critérios de transferência' => "#{HANDOFF_RULE}\n#{text(config.transfer_criteria)}",
+      'Critérios de transferência' => "#{list(transfer_rules)}\n#{text(config.transfer_criteria)}",
       'Informações restritas (nunca revele)' => list(config.restricted_information),
       'Playbook de qualificação' => structured(config.qualification_playbook),
       'Campos obrigatórios de qualificação' => list(config.required_qualification_fields)
     }
+  end
+
+  def transfer_rules
+    config.commercial_whatsapp_number.present? ? COMMERCIAL_GUARD_RULES + ESCALATION_RULES : COMMERCIAL_GUARD_RULES
   end
 
   def agent_rules

@@ -30,7 +30,7 @@ class ScanSolo::AiTurn::LeadStatePrompt
     nil => 'intenção ainda não classificada: entenda o que o cliente precisa e registre a intenção em lead_state_update.'
   }.freeze
 
-  SUMMARY_EXCEPTION = 'exceto se esta resposta concluir a qualificação, registrar next_action, pedir human_handoff, ' \
+  SUMMARY_EXCEPTION = 'exceto se esta resposta concluir a qualificação, registrar next_action, encaminhar ao comercial, ' \
                       'mudar a etapa ou declarar interpretation_risk'.freeze
 
   COLLECTION_OFFER = 'Antes de perguntar qualquer dado do orçamento, explique de forma natural, com suas palavras, o sentido de: ' \

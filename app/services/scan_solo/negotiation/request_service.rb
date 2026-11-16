@@ -1,20 +1,23 @@
-# RF-35..RF-39, escalação comercial RF-13/RF-14/RF-19/RF-23: the only
-# automatic path to `negociacao`. Runs inside the AI attempt's transaction
-# (rolled back with it when the validator blocks):
+# RF-35..RF-39, escalação comercial RF-13/RF-14/RF-19/RF-23 + escalação
+# filtrada RF-12/RF-13: the only automatic path to `negociacao`. Runs inside
+# the AI attempt's transaction (rolled back with it when the validator blocks):
 # 1. from `proposta_enviada`, moves to `negociacao` through
 #    ScanSolo::Pipeline::StageTransitionService with system authorization;
 #    from `qualificado` or already in `negociacao`, no stage event (RF-35);
 # 2. records `negotiation.requested` with the turn's correlation id and the
-#    escalation reason;
+#    escalation reason.
+#    Steps 1 and 2 happen regardless of the escalation gate (RF-13);
 # 3. with an `escalation_reason` (`negociacao`/`duvida_proposta`, published
-#    commercial number present), escalates through
-#    ScanSolo::Commercial::EscalationService, which publishes the commercial
-#    notice only on the first escalation. The AI stays `ai_active`: no
-#    handoff, no assignment, no cadence pause here.
-# Without an `escalation_reason` (no published number, RF-19) there is no mark
-# and, after the commit, the CT-07 notification goes through the replaceable
-# ScanSolo::Notifications::Publisher as before (RF-37, RF-41); a failure
-# there does not undo the negotiation (RF-39).
+#    commercial number present), hands the request to
+#    ScanSolo::Commercial::EscalationService, which applies the eligibility
+#    gate and returns the CT-01 result for the AttemptRunner. Approved: mark +
+#    commercial notice only on the first escalation. Refused: no mark, no
+#    notice and no `negotiation.requested` publication (RF-12). The AI stays
+#    `ai_active`: no handoff, no assignment, no cadence pause here.
+# Without an `escalation_reason` (no published number, RF-19) there is no gate
+# and no mark, returns nil and, after the commit, the CT-07 notification goes
+# through the replaceable ScanSolo::Notifications::Publisher as before (RF-37,
+# RF-41); a failure there does not undo the negotiation (RF-39).
 class ScanSolo::Negotiation::RequestService
   EVENT = 'negotiation.requested'.freeze
 
@@ -38,11 +41,10 @@ class ScanSolo::Negotiation::RequestService
     ScanSolo::AuditLogger.record!(subject: opportunity, event_type: EVENT, correlation_id: turn.correlation_id,
                                   payload: { from_stage: from_stage, message_id: message.id, escalation_reason: escalation_reason })
 
-    if escalation_reason
-      ScanSolo::Commercial::EscalationService.call(opportunity: opportunity, reason: escalation_reason, turn: turn)
-    else
-      ActiveRecord.after_all_transactions_commit { notify }
-    end
+    return ScanSolo::Commercial::EscalationService.call(opportunity: opportunity, reason: escalation_reason, turn: turn) if escalation_reason
+
+    ActiveRecord.after_all_transactions_commit { notify }
+    nil
   end
 
   private

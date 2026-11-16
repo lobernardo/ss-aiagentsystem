@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_11_09_100002) do
+ActiveRecord::Schema[7.2].define(version: 2026_11_16_100001) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1690,6 +1690,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_11_09_100002) do
     t.string "lead_source"
     t.datetime "escalated_to_commercial_at"
     t.string "escalation_reason"
+    t.integer "email_redirect_count", default: 0, null: false
     t.index ["account_id"], name: "index_scan_solo_pipeline_opportunities_on_account_id"
     t.index ["contact_id"], name: "index_scan_solo_pipeline_opportunities_on_contact_id"
     t.index ["conversation_id"], name: "index_scan_solo_pipeline_opportunities_on_conversation_id", unique: true

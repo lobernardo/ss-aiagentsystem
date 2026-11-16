@@ -56,4 +56,25 @@ RSpec.describe ScanSolo::PipelineOpportunity do
       expect(opportunity.errors[:escalation_reason]).to be_present
     end
   end
+
+  describe 'email_redirect_count' do
+    it 'defaults to 0' do
+      expect(opportunity.email_redirect_count).to eq(0)
+      expect(described_class.new.email_redirect_count).to eq(0)
+    end
+
+    it 'accepts zero and positive integers' do
+      [0, 1, 5].each do |count|
+        opportunity.email_redirect_count = count
+        expect(opportunity).to be_valid, "expected #{count} to be valid"
+      end
+    end
+
+    it 'rejects a negative value' do
+      opportunity.email_redirect_count = -1
+
+      expect(opportunity).not_to be_valid
+      expect(opportunity.errors[:email_redirect_count]).to be_present
+    end
+  end
 end

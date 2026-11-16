@@ -3,6 +3,7 @@
 # Table name: scan_solo_pipeline_opportunities
 #
 #  id                           :bigint           not null, primary key
+#  email_redirect_count         :integer          default(0), not null
 #  escalated_to_commercial_at   :datetime
 #  escalation_reason            :string
 #  last_customer_interaction_at :datetime
@@ -92,6 +93,8 @@ class ScanSolo::PipelineOpportunity < ApplicationRecord
 
   validates :lead_source, inclusion: { in: LEAD_SOURCES }, allow_nil: true
   validates :escalation_reason, inclusion: { in: ESCALATION_REASONS }, allow_nil: true
+  # Escalação filtrada CT-02: e-mail redirections refused by EscalationGate before the link.
+  validates :email_redirect_count, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
 
   # Lead state RF-01: every opportunity has its lead state from creation on.
   after_create { ScanSolo::LeadState::InitializeService.call(opportunity: self) }

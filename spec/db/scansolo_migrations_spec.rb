@@ -61,7 +61,9 @@ RSpec.describe 'ScanSolo migrations' do
     # column and scan_solo_report_snapshots.
     # scansolo-escalacao-comercial-wame T01 (RNF-02) added 2 more: the published
     # commercial WhatsApp number and the opportunity's commercial escalation mark.
-    expect(scansolo_migration_files.length).to eq(46)
+    # scansolo-escalacao-filtrada T02 (CT-02, RNF-02) added 1 more: the
+    # opportunity's email_redirect_count.
+    expect(scansolo_migration_files.length).to eq(47)
   end
 
   it 'adds the commercial WhatsApp number and escalation mark with add_column only, as nullable columns (RNF-02)' do
@@ -93,6 +95,21 @@ RSpec.describe 'ScanSolo migrations' do
 
     # RF-02: the published snapshot copies FIELDS, so the number reaches it through PublishService.
     expect(ScanSolo::AiAgentConfig::FIELDS).to include(:commercial_whatsapp_number)
+  end
+
+  it 'adds email_redirect_count with add_column only, as a non-null integer defaulting to 0 (CT-02, RNF-02)' do
+    migration = scansolo_migration_files.find { |path| path.include?('add_email_redirect_count_to_scan_solo_pipeline_opportunities') }
+    expect(migration).to be_present
+
+    statements = File.read(migration).scan(/^\s*(\w+)\s+:scan_solo_/).flatten
+    expect(statements).to eq(['add_column'])
+
+    column = ActiveRecord::Base.connection.columns(:scan_solo_pipeline_opportunities).find { |c| c.name == 'email_redirect_count' }
+    expect(column).to be_present
+    expect(column.type).to eq(:integer)
+    expect(column.null).to be false
+    expect(column.default).to eq('0')
+    expect(Rails.root.join('db/schema.rb').read).to include('t.integer "email_redirect_count", default: 0, null: false')
   end
 
   it 'adds the account scansolo_feature_flags column additively, never modifying a pre-existing accounts column' do

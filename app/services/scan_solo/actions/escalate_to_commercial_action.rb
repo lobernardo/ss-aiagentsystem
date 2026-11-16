@@ -1,8 +1,10 @@
-# Escalação comercial RF-03/RF-06/RF-10/RF-11/CT-02: the model-driven
-# escalation to the public commercial contact. Only writes the mark through
-# ScanSolo::Commercial::EscalationService: no handoff, no cadence trigger and
-# no message (the wa.me link travels inside the turn's single reply), so the
-# AI stays `ai_active`.
+# Escalação comercial RF-03/RF-06/RF-10/RF-11/CT-02 + escalação filtrada
+# RF-11/CT-01: the model only signals the commercial request of the turn; the
+# decision belongs to ScanSolo::Commercial::EscalationService (eligibility
+# gate), which returns either the escalated result or the refusal hash
+# `{ escalated: false, refusal:, email_redirect_count: }` without raising. No
+# handoff, no cadence trigger and no message (the wa.me link, when approved,
+# travels inside the turn's single reply), so the AI stays `ai_active`.
 class ScanSolo::Actions::EscalateToCommercialAction
   CLASSIFICATION = :automatic
 

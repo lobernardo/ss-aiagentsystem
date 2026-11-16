@@ -18,8 +18,12 @@
 #   (E.164, or Brazilian with DDD, with or without separators) whose
 #   normalized digits are not in `allowed_phone_numbers` (the published
 #   number and the lead's own phones). The lookarounds keep CNPJ, CPF, CEP,
-#   values, dates and proposal numbers out of the phone candidates.
-# Both regenerate once, like the lead state violations below.
+#   values, dates and proposal numbers out of the phone candidates;
+# - `commercial_link_not_allowed` (escalação filtrada RF-09/RF-05/CT-03): the
+#   published `commercial_link` is in the output while the attempt has no
+#   escalation approved by the gate (`escalation_approved`), or it appears
+#   more than once with an approved escalation (exactly 1 link per reply).
+# All three regenerate once, like the lead state violations below.
 #
 # Lead state (RF-11, RF-12, RF-17, RF-22, RNF-02): given the projection of
 # the state already changed by this attempt (ScanSolo::LeadState::Projection)
@@ -56,22 +60,23 @@ class ScanSolo::AiTurn::OutputValidator
 
   REGENERABLE_VIOLATIONS = %i[
     confirmed_field_question question_limit field_not_missing qualification_closed bulk_out_of_scope bulk_incomplete
-    internal_name unpublished_contact
+    internal_name unpublished_contact commercial_link_not_allowed
   ].freeze
   QUESTION_LIMIT = 2
 
   # rubocop:disable Metrics/ParameterLists
   def self.call(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false,
-                commercial_link: nil, allowed_phone_numbers: [])
+                commercial_link: nil, allowed_phone_numbers: [], escalation_approved: false)
     new(content: content, validated_claims: validated_claims, restricted_information: restricted_information, asked_fields: asked_fields,
         lead_state: lead_state, bulk_started: bulk_started, commercial_link: commercial_link,
-        allowed_phone_numbers: allowed_phone_numbers).call
+        allowed_phone_numbers: allowed_phone_numbers, escalation_approved: escalation_approved).call
   end
 
   def initialize(content:, validated_claims: {}, restricted_information: [], asked_fields: [], lead_state: nil, bulk_started: false,
-                 commercial_link: nil, allowed_phone_numbers: [])
+                 commercial_link: nil, allowed_phone_numbers: [], escalation_approved: false)
     @content = content.to_s
     @commercial_link = commercial_link
+    @escalation_approved = escalation_approved
     @allowed_phone_numbers = Array(allowed_phone_numbers).compact_blank
     @validated_claims = validated_claims
     @restricted_information = Array(restricted_information).compact_blank
@@ -89,7 +94,7 @@ class ScanSolo::AiTurn::OutputValidator
   private
 
   attr_reader :content, :validated_claims, :restricted_information, :asked_fields, :lead_state, :bulk_started,
-              :commercial_link, :allowed_phone_numbers
+              :commercial_link, :allowed_phone_numbers, :escalation_approved
 
   def detect_violation
     disclosure = disclosure_violation
@@ -106,7 +111,16 @@ class ScanSolo::AiTurn::OutputValidator
     return :restricted_information if restricted_information.any? { |entry| content.downcase.include?(entry.to_s.downcase) }
     return :internal_name if ScanSolo::Commercial::Rules.internal_name?(content)
 
-    :unpublished_contact if unpublished_contact?
+    return :unpublished_contact if unpublished_contact?
+
+    :commercial_link_not_allowed if commercial_link_not_allowed?
+  end
+
+  def commercial_link_not_allowed?
+    return false if commercial_link.blank?
+
+    occurrences = content.scan(commercial_link).size
+    escalation_approved ? occurrences > 1 : occurrences.positive?
   end
 
   def unpublished_contact?

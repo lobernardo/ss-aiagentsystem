@@ -849,6 +849,11 @@ en:
           duvida_proposta: 'Dúvida sobre a proposta #%{opportunity_id} — %{name}'
           assunto_orcamento: 'Assunto de orçamento encaminhado ao Artur #%{opportunity_id} — %{name}'
           pedido_humano: 'Lead pediu atendimento humano #%{opportunity_id} — %{name}'
+      email_first:
+        before_qualified: 'Os valores e prazos vêm na proposta que o nosso comercial envia por e-mail assim que eu concluir o seu atendimento. Se quiser, pode escrever para %{email}.'
+        before_qualified_ask: 'Os valores e prazos vêm na proposta que o nosso comercial envia por e-mail assim que eu concluir o seu atendimento. Se quiser, pode escrever para %{email}. Para seguir, me informe: %{fields}.'
+        quote_pending: 'Seu pedido de orçamento segue para o Artur, do nosso comercial. Valores e prazos chegam na proposta por e-mail; se quiser, pode escrever para %{email}.'
+        quote_sent: 'Seu pedido de orçamento já está com o Artur, do nosso comercial. Valores e prazos chegam na proposta, por e-mail, no endereço que você informou. Se quiser falar antes disso, pode escrever para %{email}.'
     negotiation:
       standard_reply: 'Vou verificar isso com nosso comercial. Só um momento.'
       escalation_reply: 'Para tratar valores, prazos ou condições, fale direto com o Artur, do nosso comercial, pelo WhatsApp: %{link} ou pelo e-mail %{email}.'

@@ -56,8 +56,8 @@ RSpec.describe ScanSolo::AiTurn::OutputValidator do
     let(:published) { '+5511999999999' }
     let(:commercial_link) { 'https://wa.me/5511999999999?text=Ol%C3%A1%2C%20Artur%21%0ANome%3A%20Ana' }
 
-    def violation(content, allowed: [published], link: commercial_link)
-      described_class.call(content: content, commercial_link: link, allowed_phone_numbers: allowed)[:violation]
+    def violation(content, allowed: [published], link: commercial_link, approved: true)
+      described_class.call(content: content, commercial_link: link, allowed_phone_numbers: allowed, escalation_approved: approved)[:violation]
     end
 
     {
@@ -107,6 +107,34 @@ RSpec.describe ScanSolo::AiTurn::OutputValidator do
 
     it 'checks the internal name before the unpublished contact' do
       expect(violation('fale com o Luciano em https://wa.me/5511000000000')).to eq(:internal_name)
+    end
+
+    describe 'commercial_link_not_allowed (escalação filtrada RF-09/RF-05/CT-03)' do
+      it 'blocks the published commercial link without an approved escalation' do
+        result = described_class.call(content: "Fale com o Artur: #{commercial_link}", commercial_link: commercial_link,
+                                      allowed_phone_numbers: [published])
+
+        expect(result).to eq(blocked: true, violation: :commercial_link_not_allowed)
+      end
+
+      it 'allows exactly 1 occurrence with an approved escalation' do
+        result = described_class.call(content: "Fale com o Artur: #{commercial_link}", commercial_link: commercial_link,
+                                      allowed_phone_numbers: [published], escalation_approved: true)
+
+        expect(result).to eq(blocked: false, violation: nil)
+      end
+
+      it 'blocks 2 occurrences even with an approved escalation' do
+        expect(violation("#{commercial_link}\n\n#{commercial_link}", approved: true)).to eq(:commercial_link_not_allowed)
+      end
+
+      it 'keeps a wa.me link of another number as unpublished_contact' do
+        expect(violation('Fale com https://wa.me/5511000000000', approved: false)).to eq(:unpublished_contact)
+      end
+
+      it 'does not block a reply without the link and without an approved escalation' do
+        expect(violation('Pode escrever para comercial@example.com.', approved: false)).to be_nil
+      end
     end
   end
 
@@ -206,10 +234,10 @@ RSpec.describe ScanSolo::AiTurn::OutputValidator do
       expect(validate('O plano custa R$ 199,90. Qual a data desejada?', ['data_desejada'])).to eq(blocked: true, violation: :price)
     end
 
-    it 'lists the regenerable violations, including the 2 bulk and the 2 commercial contact ones (proposta-template-local RF-38 e)' do
+    it 'lists the regenerable violations, including the 2 bulk and the 3 commercial contact ones (RF-38 e, CT-03)' do
       expect(described_class::REGENERABLE_VIOLATIONS).to contain_exactly(:confirmed_field_question, :question_limit, :field_not_missing,
                                                                          :qualification_closed, :bulk_out_of_scope, :bulk_incomplete,
-                                                                         :internal_name, :unpublished_contact)
+                                                                         :internal_name, :unpublished_contact, :commercial_link_not_allowed)
     end
 
     it 'rejects asking a nao_informado field while another required one is faltante (proposta-template-local RF-29)' do

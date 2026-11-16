@@ -8,12 +8,16 @@ RSpec.describe ScanSolo::Actions::EscalateToCommercialAction do
   let(:conversation) { create(:conversation, account: account, contact: contact) }
   let(:message) { create(:message, account: account, conversation: conversation, message_type: :incoming) }
   let!(:turn) { ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid) }
+  let(:stage) { :qualificado }
   let!(:opportunity) do
-    ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: :qualificado)
+    ScanSolo::PipelineOpportunity.create!(account: account, contact: contact, conversation: conversation, stage: stage,
+                                          email_redirect_count: 1)
   end
+
   let(:idempotency_key) { SecureRandom.uuid }
 
   before do
+    ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, sent_at: 1.day.ago)
     allow(ScanSolo::Notifications::EmailAdapter).to receive(:call)
       .and_return(ScanSolo::Notifications::Publisher::Result.new(success: true, reason: nil))
   end
@@ -36,6 +40,19 @@ RSpec.describe ScanSolo::Actions::EscalateToCommercialAction do
 
     expect(result.side_effect_result).to include(escalated: true, reason: 'pedido_humano')
     expect(opportunity.reload.escalation_reason).to eq('pedido_humano')
+  end
+
+  context 'when the gate refuses the request (CT-01)' do
+    let(:stage) { :em_contato }
+
+    it 'returns the refusal hash without raising and records a successful execution' do
+      result = nil
+      expect { result = execute }.not_to raise_error
+
+      expect(result.side_effect_result).to eq(escalated: false, refusal: 'etapa_nao_qualificada', email_redirect_count: 1)
+      expect(result.execution.reload).to be_executed
+      expect(opportunity.reload.escalated_to_commercial_at).to be_nil
+    end
   end
 
   [

@@ -10,9 +10,14 @@
 # `nao_informado` rule (proposta-template-local RF-26) and the 2-field limit
 # names the bulk collection exception (RF-38 d). The transfer criteria open
 # the same way with code constants: COMMERCIAL_GUARD_RULES (never negotiate,
-# never invent) always, and ESCALATION_RULES (the 4 escalation triggers to
-# Artur, the link placeholder and the virtual specialist transparency) only
-# when the published config has the commercial WhatsApp number.
+# never invent) always, and ESCALATION_RULES only when the published config
+# has the commercial WhatsApp number: the email-first ladder of escalação
+# filtrada (RF-10/RF-11) -- the model only signals every commercial or human
+# request with escalate_to_commercial, the application decides; email
+# guidance first (the published `quote_recipient_email`, interpolated as
+# published data, not a rule edit); Artur's contact only as the link
+# placeholder, delivered by the application; no repeated contact on
+# courtesies; and the virtual specialist transparency.
 #
 # Lead state (RF-09, RF-13, RF-16, RF-24, CT-02): the system message carries
 # the lead state and summary sections of ScanSolo::AiTurn::LeadStatePrompt,
@@ -49,18 +54,21 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'Nunca invente resposta: só responda o que estiver na base de conhecimento ou no contexto.'
   ].freeze
 
-  # Escalação comercial RF-04/RF-16: emitted only when the published config
-  # has the commercial WhatsApp number (RF-19). Triggers in precedence order.
+  # Escalação filtrada RF-10/RF-11/RF-14: emitted only when the published
+  # config has the commercial WhatsApp number (RF-19). `%<email>s` is the
+  # published `quote_recipient_email`.
   ESCALATION_RULES = [
-    'Encaminhe o lead ao Artur, do comercial, com escalate_to_commercial, no primeiro gatilho que se aplicar, nesta ordem:',
-    '1) lead em qualificado, proposta_enviada ou negociacao com dúvida, objeção ou pedido de negociação sobre a proposta: ' \
-    'reason duvida_proposta ou negociacao;',
-    '2) assunto de orçamento ou proposta que a base de conhecimento não resolve: reason assunto_orcamento;',
-    '3) pergunta sem resposta na base de conhecimento: reason duvida_sem_resposta ou sem_informacao_base, sem inventar resposta;',
-    '4) pedido explícito para falar com uma pessoa, um humano ou um atendente, ou recusa de falar com robô ou IA: reason pedido_humano.',
-    'O contato comercial é o Artur. Para passar o contato, escreva apenas ' \
-    "#{ScanSolo::Commercial::WhatsappLink::PLACEHOLDER} na resposta; nunca escreva URL, link de WhatsApp ou telefone.",
-    'Depois de encaminhar, continue respondendo o que a base de conhecimento cobre.',
+    'Em qualquer etapa, sinalize com escalate_to_commercial, com o reason adequado, todo pedido de preço, prazo, cotação, ' \
+    'locação ou negociação, toda dúvida sem resposta na base de conhecimento e todo pedido para falar com uma pessoa, ' \
+    'um humano ou um atendente. Isso só sinaliza o pedido: quem decide o encaminhamento ao Artur, do comercial, é a aplicação.',
+    'Antes de qualificado (novo_lead, em_contato ou em_qualificacao): explique que valores e prazos vêm na proposta que o ' \
+    'comercial envia por e-mail, informe o e-mail %<email>s e siga com a próxima pergunta pendente, sem repetir o que já foi respondido.',
+    'Em qualificado, proposta_enviada ou negociacao: oriente primeiro por e-mail; o cliente pode responder ao e-mail da proposta ' \
+    'ou escrever para %<email>s.',
+    "O contato comercial é o Artur. Para passar o contato, escreva apenas #{ScanSolo::Commercial::WhatsappLink::PLACEHOLDER} " \
+    'na resposta; nunca escreva URL, link de WhatsApp ou telefone. Só a aplicação entrega o contato, quando aprova o encaminhamento.',
+    'Depois de o contato do Artur ter sido entregue, não o repita em respostas de cortesia (como "ok" ou "obrigado") e ' \
+    'continue respondendo o que a base de conhecimento cobre.',
     'Você é o especialista virtual da ScanSOLO: pedir para falar com um especialista, técnico ou alguém especializado não é pedir ' \
     'um humano; apresente-se como especialista virtual, entenda a necessidade e siga o atendimento. Se o cliente perguntar se fala ' \
     'com uma pessoa, um humano ou uma IA, responda com transparência que é o especialista virtual da ScanSOLO.'
@@ -75,7 +83,8 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'bulk_out_of_scope' => 'a resposta em bloco perguntou campo fora dos campos elegíveis',
     'bulk_incomplete' => 'a resposta em bloco não perguntou todos os campos elegíveis',
     'unpublished_contact' => 'a resposta trouxe link de WhatsApp ou telefone que não é o contato comercial publicado',
-    'internal_name' => 'a resposta citou um nome interno da equipe'
+    'internal_name' => 'a resposta citou um nome interno da equipe',
+    'commercial_link_not_allowed' => 'a resposta trouxe o contato do comercial sem encaminhamento aprovado; oriente por e-mail'
   }.freeze
 
   ATTACHMENT_TYPE_LABELS = {
@@ -89,8 +98,9 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
     'private_note' => 'criar uma nota interna para a equipe',
     'cadence_signal' => 'sinalizar um evento de follow-up; use opt_out quando o cliente pedir para não receber mais mensagens',
     'proposal_generate' => 'solicitar a geração da proposta comercial',
-    'escalate_to_commercial' => 'encaminhar o lead ao Artur, do comercial; reason é um de duvida_sem_resposta, ' \
-                                'sem_informacao_base, negociacao, duvida_proposta, assunto_orcamento ou pedido_humano',
+    'escalate_to_commercial' => 'sinalizar um pedido comercial ou de atendimento humano (a aplicação decide o encaminhamento ' \
+                                'ao Artur); reason é um de duvida_sem_resposta, sem_informacao_base, negociacao, ' \
+                                'duvida_proposta, assunto_orcamento ou pedido_humano',
     'lead_state_update' => 'registrar a intenção do cliente, a próxima ação, uma ação que o cliente pediu ou autorizou ' \
                            'e se há risco de interpretação; negotiation_requested quando o cliente pedir preço, desconto, ' \
                            'condição, prazo comercial, forma de pagamento ou decisão comercial humana; collection_mode quando ' \
@@ -150,7 +160,9 @@ class ScanSolo::AiTurn::PromptBuilder # rubocop:disable Metrics/ClassLength
   end
 
   def transfer_rules
-    config.commercial_whatsapp_number.present? ? COMMERCIAL_GUARD_RULES + ESCALATION_RULES : COMMERCIAL_GUARD_RULES
+    return COMMERCIAL_GUARD_RULES if config.commercial_whatsapp_number.blank?
+
+    COMMERCIAL_GUARD_RULES + ESCALATION_RULES.map { |rule| format(rule, email: config.quote_recipient_email) }
   end
 
   def agent_rules

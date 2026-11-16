@@ -38,6 +38,45 @@ RSpec.describe 'ScanSolo backend locale' do
     expect(I18n.t('scan_solo.quote.email.subject', opportunity_id: 42, name: 'Solar Ltda')).to eq('Solicitação de orçamento #42 — Solar Ltda')
   end
 
+  describe 'email-first guidance (escalação filtrada RF-01/RF-02/RF-03/RF-04)' do
+    let(:email) { 'comercial@example.com' }
+    let(:intro) do
+      'Os valores e prazos vêm na proposta que o nosso comercial envia por e-mail assim que eu concluir o seu atendimento. ' \
+        'Se quiser, pode escrever para comercial@example.com.'
+    end
+
+    it 'holds the approved before_qualified text' do
+      expect(I18n.t('scan_solo.commercial.email_first.before_qualified', email: email)).to eq(intro)
+    end
+
+    it 'holds the approved before_qualified_ask text with the fields' do
+      expect(I18n.t('scan_solo.commercial.email_first.before_qualified_ask', email: email, fields: 'Profundidade e Prazo'))
+        .to eq("#{intro} Para seguir, me informe: Profundidade e Prazo.")
+    end
+
+    it 'holds the approved quote_pending text' do
+      expect(I18n.t('scan_solo.commercial.email_first.quote_pending', email: email)).to eq(
+        'Seu pedido de orçamento segue para o Artur, do nosso comercial. Valores e prazos chegam na proposta por e-mail; ' \
+        'se quiser, pode escrever para comercial@example.com.'
+      )
+    end
+
+    it 'holds the approved quote_sent text' do
+      expect(I18n.t('scan_solo.commercial.email_first.quote_sent', email: email)).to eq(
+        'Seu pedido de orçamento já está com o Artur, do nosso comercial. Valores e prazos chegam na proposta, por e-mail, ' \
+        'no endereço que você informou. Se quiser falar antes disso, pode escrever para comercial@example.com.'
+      )
+    end
+
+    it 'requires the e-mail in every key and the fields in before_qualified_ask' do
+      %w[before_qualified before_qualified_ask quote_pending quote_sent].each do |key|
+        expect { I18n.t("scan_solo.commercial.email_first.#{key}", fields: 'Prazo') }.to raise_error(I18n::MissingInterpolationArgument)
+      end
+      expect { I18n.t('scan_solo.commercial.email_first.before_qualified_ask', email: email) }
+        .to raise_error(I18n::MissingInterpolationArgument)
+    end
+  end
+
   it 'never names Luciano anywhere in the scan_solo scope (RF-08)' do
     scope = YAML.load_file(Rails.root.join('config/locales/en.yml')).dig('en', 'scan_solo')
 

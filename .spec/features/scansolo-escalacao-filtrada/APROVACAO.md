@@ -1,6 +1,6 @@
 # Aprovação — scansolo-escalacao-filtrada (T01)
 
-> Rascunho. Pendente de aprovação do Leo. Enquanto a linha de aprovação não existir, nenhuma fase seguinte do PHASES.md é executada.
+> Aprovado. Redação e DEC-060 aprovadas pelo Leo em 16/11/2026, registradas por ele no commit `a4b9f74b05` ("docs(spec): ... e aprovação da Fatia 2B"). As fases seguintes do PHASES.md estão liberadas.
 
 ## Nova DEC
 

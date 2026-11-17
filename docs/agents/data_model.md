@@ -7,7 +7,7 @@
 ### Storage
 
 - Engine: PostgreSQL. Extensions in `db/schema.rb`: `vector` (pgvector), `pg_trgm`, `pgcrypto`, `pg_stat_statements`, `plpgsql`.
-- Schema: `db/schema.rb` has 124 tables, 26 of them `scan_solo_*`. Migrations live in `db/migrate/` (224 files, 44 ScanSolo-named, from `20260917231850_add_scansolo_enabled_flag_to_accounts.rb`).
+- Schema: `db/schema.rb` has 124 tables, 26 of them `scan_solo_*`. Migrations live in `db/migrate/` (227 files, 47 ScanSolo-named — the count asserted by `spec/db/scansolo_migrations_spec.rb` — from `20260917231850_add_scansolo_enabled_flag_to_accounts.rb` to `20261116100001_add_email_redirect_count_to_scan_solo_pipeline_opportunities.rb`).
 - Tooling: ActiveRecord migrations; `hairtrigger` for DB triggers; `annotaterb` writes the `== Schema Information` headers in models. Prepare with `bundle exec rails db:chatwoot_prepare`.
 - Files: ActiveStorage. `ProposalVersion#document` (PDF), `ProposalTemplate#file` (`.docx`) and `KnowledgeSource#file` use S3/minio, Azure or GCS backends.
 - Upstream Chatwoot tables (`accounts`, `contacts`, `conversations`, `messages`, `inboxes`, `users`, …) stay unmodified except `accounts.scansolo_feature_flags` (bigint, bit 1 = `scansolo_enabled`).
@@ -16,7 +16,7 @@
 
 | Table / model | Key attributes | Relationships | Invariants |
 |---|---|---|---|
-| `scan_solo_pipeline_opportunities` / `PipelineOpportunity` | `stage` int enum (0–7), `lead_source` string, `last_customer_interaction_at` | belongs_to account, contact, conversation, owner(User); has_one lead_state, proposal, quote_request; has_many stage_events, cadence_enrollments | unique `conversation_id`; check `lead_source IN ('website','manual')`; `after_create` initializes LeadState |
+| `scan_solo_pipeline_opportunities` / `PipelineOpportunity` | `stage` int enum (0–7), `lead_source` string, `last_customer_interaction_at`; commercial escalation mark `escalated_to_commercial_at` + `escalation_reason` (∈ `ESCALATION_REASONS`); `email_redirect_count` integer, `null: false`, default 0 (additive, no backfill) | belongs_to account, contact, conversation, owner(User); has_one lead_state, proposal, quote_request; has_many stage_events, cadence_enrollments | unique `conversation_id`; check `lead_source IN ('website','manual')`; `after_create` initializes LeadState; `email_redirect_count` integer ≥ 0; mark and counter written only by `Commercial::EscalationService` |
 | `scan_solo_pipeline_stage_events` / `PipelineStageEvent` | `from_stage`, `to_stage` strings, polymorphic `actor` | belongs_to opportunity | stages ∈ enum keys; read-only once persisted |
 | `scan_solo_lead_states` / `LeadState` | `intent`, `qualification_status` (`em_andamento 0`, `concluida 1`), `qualification_completed_at`, `next_action`, `next_action_recorded_at`, `fields` jsonb, `authorized_actions` jsonb, `collection_offered_at`, `collection_mode` | belongs_to opportunity; has_many events | unique `opportunity_id`; inclusion on `INTENTS`/`NEXT_ACTIONS`/`COLLECTION_MODES` |
 | `scan_solo_lead_state_events` / `LeadStateEvent` | `subject`, `key`, `previous_value/status`, `new_value/status`, `source_message_id`, `source_attachment_id` | belongs_to lead_state | `subject` ∈ `field intent next_action collection_mode`; read-only |

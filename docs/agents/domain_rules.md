@@ -10,6 +10,7 @@
 - **Opportunity**: one per conversation, holding an 8-stage commercial pipeline and a lead source.
 - **Lead state**: per-opportunity qualification, made of intent, required fields, next action and collection mode.
 - **AI turn**: one guarded model invocation per inbound message, plus registered actions.
+- **Commercial escalation**: the application-side gate that decides when the commercial contact ("Artur") link `wa.me` is delivered; e-mail first.
 - **Agent actions**: a closed registry with classification, schema, idempotency and confirmation gate.
 - **Cadence**: deterministic follow-up templates by stage, with a sending window and precheck.
 - **Handoff**: AI vs human control of a conversation.
@@ -94,9 +95,51 @@
 - `AiTurn.invocation_status`: `pending suppressed succeeded failed`. `StaleTurnSweeperJob` fails turns still `pending` after 10min (`stale_pending`).
 - `InputGuardrail` flags `forbidden_subjects` substring hits. Allowed actions are `ALL_ACTIONS` minus `proposal_approve`, `proposal_send` and `proposal_generate`.
 
+### Commercial escalation (escalação filtrada)
+
+- Commercial request of the turn: the model called `escalate_to_commercial` (any `reason` ∈ `PipelineOpportunity::ESCALATION_REASONS`) or `lead_state_update` with `negotiation_requested: true`. The prompt tells the model to signal it in any stage; the decision is the application's (0 extra LLM calls).
+- The 3 paths that may write the mark — `Actions::EscalateToCommercialAction`, `Negotiation::RequestService` (with a published number) and `AttemptRunner#escalate_negotiation!` — all go through `Commercial::EscalationService`, the sole writer of `escalated_to_commercial_at`, `escalation_reason` and `email_redirect_count`.
+- Gate: `Commercial::EscalationGate.decide(stage:, quote_sent:, email_redirect_count:, commercial_request:, previously_escalated:)` — pure, deterministic, evaluated in this order:
+
+| # | Condition | Decision | Counter |
+|---|---|---|---|
+| 1 | no commercial request | `:none` | — |
+| 2 | stage ∉ `QUALIFIED_STAGES` (`qualificado proposta_enviada negociacao`) | `:etapa_nao_qualificada` | unchanged |
+| 3 | no `QuoteRequest` with `sent_at` (`EscalationGate.quote_sent?`) | `:orcamento_nao_enviado` | unchanged |
+| 4 | `email_redirect_count` = 0 | `:primeiro_pedido_email` | +1 |
+| 5 | else (insistence) | `:approved` | unchanged |
+
+- `previously_escalated` never changes the decision: after the link, every new commercial request is an explicit one and is a real escalation again (mark overwritten, 1 new audit, link resent once, no new notice).
+- One decision per turn: under `opportunity.lock!`, a 2nd call with the same `correlation_id` returns the decision already recorded (`commercial.escalated` or `commercial.escalation_refused`), so a counter just incremented is never read as insistence. Everything runs in the attempt savepoint: a blocked attempt rolls back mark, counter and audits.
+- Approved: mark + 1 audit `commercial.escalated`; the commercial notice (`Notifications::Publisher`, event `commercial.escalated`) goes after commit only on the first escalation of the opportunity.
+- Refused (CT-01): 1 audit `commercial.escalation_refused` (payload `refusal`, `stage`, `email_redirect_count`, `reason`, `conversation_id`, `message_id`, no phone); no publication; never raises. The action result is `{ escalated: false, refusal: "etapa_nao_qualificada" | "orcamento_nao_enviado" | "primeiro_pedido_email", email_redirect_count: <int> }`; approved keeps `{ escalated: true, reason:, escalated_at: }`.
+- Reply by decision (`AttemptRunner#apply_commercial_outcome!`, read from the turn's audits):
+
+| Decision | Reply |
+|---|---|
+| `approved` | `scan_solo.negotiation.escalation_reply` (link placeholder + published `quote_recipient_email`) |
+| `etapa_nao_qualificada` | model reply if it carries the published e-mail and asks the eligible field(s); else `scan_solo.commercial.email_first.before_qualified_ask` (next eligible field(s)) or `before_qualified`; `quote_pending` when the attempt just concluded the qualification |
+| `orcamento_nao_enviado` | `scan_solo.commercial.email_first.quote_pending` |
+| `primeiro_pedido_email` | `scan_solo.commercial.email_first.quote_sent` |
+
+- Conditioned link: `{{LINK_ARTUR}}` becomes `Commercial::WhatsappLink` (published number only) once, and only when the attempt's decision is `approved`; otherwise every placeholder is removed. Courtesy turns ("ok", "obrigado") after the link carry no request, so the link is not resent.
+- External text names the commercial contact only as "Artur"; the internal name (`Commercial::Rules::INTERNAL_NAME_PATTERN`) is blocked by the validator.
+- No mark, no defer: an opportunity redirected by e-mail keeps its cadence (`AttemptPrecheck` defers `commercial_escalated` only with the mark). `Reports::CommercialStatus` returns `escalado_wa` only for opportunities escalated by the gate.
+
+### Output validator
+
+- `AiTurn::OutputValidator` checks the reply in this order of disclosure rules: `restricted_information`, `internal_name`, `unpublished_contact` (a `wa.me`/`api.whatsapp.com` link or phone other than the published commercial link and `allowed_phone_numbers`), then `commercial_link_not_allowed`; then the qualification rules (`qualification_closed`, `confirmed_field_question`, `field_not_missing`, `question_limit`, `bulk_out_of_scope`, `bulk_incomplete`).
+- `commercial_link_not_allowed`: the published commercial link appears without an approved escalation in the attempt (`escalation_approved: false`), or more than once with it. It is in `REGENERABLE_VIOLATIONS` (1 regeneration with `PromptBuilder::VIOLATION_INSTRUCTIONS['commercial_link_not_allowed']`, then the fixed fallback reply). The `AttemptRunner` always passes `commercial_link` when the number is published, plus `escalation_approved`.
+
+### Negotiation routing
+
+- `Negotiation::RequestService` is the only automatic path to `negociacao`: from `proposta_enviada` it moves to `negociacao` and records `negotiation.requested` regardless of the gate.
+- With a published commercial number it hands the request to `Commercial::EscalationService`. Refused: no mark, no link, no notice and no `negotiation.requested` publication; the reply follows the refusal (`quote_sent` with the quote sent and the counter at 0, which becomes 1). Approved: mark + notice on the first escalation, reply `escalation_reply`.
+- Without a published number: no gate, no mark; the standard negotiation reply and the `negotiation.requested` notification after commit, as before.
+
 ### Agent actions
 
-- `ScanSolo::Actions::Registry::HANDLERS` contains `qualification_field`, `stage_transition`, `private_note`, `proposal_generate`, `proposal_approve`, `proposal_send`, `cadence_signal`, `human_handoff` and `lead_state_update`.
+- `ScanSolo::Actions::Registry::HANDLERS` contains `qualification_field`, `stage_transition`, `private_note`, `proposal_generate`, `proposal_approve`, `proposal_send`, `cadence_signal`, `human_handoff`, `lead_state_update` and `escalate_to_commercial` (only offered with a published commercial number; it signals the request, `Commercial::EscalationService` decides).
 - `AgentAction.classification`: `read_only`, `automatic`, `requires_confirmation`, `disabled`.
 - `Actions::Executor` applies these guards:
   - Closed JSON schemas (`additionalProperties: false`) reject unknown params.
@@ -117,6 +160,7 @@
 | 2 | conversation resolved | cancel `conversation_resolved` |
 | 3 | eligibility fails | defer `<eligibility reason>` |
 | 3b | `ConversationExtension` not `ai_active` | defer `human_controlled` |
+| 3c | opportunity `escalated_to_commercial?` (mark set, not `ganho`/`perdido`) | defer `commercial_escalated` |
 | 4 | template unavailable (`TemplateAvailabilityGuard`) | defer `<guard reason>` |
 | — | else | send |
 

@@ -69,7 +69,16 @@ WhatsApp msg -> Message persisted -> AsyncDispatcher -> ScanSolo::ConversationLi
           AiTurnJob [medium, Redis mutex per conversation, TTL 3min]
              -> TurnOrchestrator -> InputGuardrail -> ModelInvoker (<=2 attempts)
              -> AttemptRunner -> Actions::Registry/Executor -> OutputValidator -> ResponseSender
+                  commercial request (escalate_to_commercial / negotiation_requested):
+                  Actions::EscalateToCommercialAction | Negotiation::RequestService | AttemptRunner#escalate_negotiation!
+                     -> Commercial::EscalationService (lock!, 1 decision per correlation_id)
+                        -> Commercial::EscalationGate.decide (pure: stage, QuoteRequest.sent_at, email_redirect_count)
+                           approved -> mark + `commercial.escalated` (+ Notifications::Publisher on the 1st escalation, after commit)
+                           refused  -> `commercial.escalation_refused` (+1 email_redirect_count only on primeiro_pedido_email)
+                  AttemptRunner picks the reply from the turn's decision; {{LINK_ARTUR}} -> wa.me only when approved
 ```
+
+- `ScanSolo::Commercial::EscalationGate` is the only eligibility decision for the commercial WhatsApp link; it is called only by `EscalationService`, the shared entry point of the 3 escalation paths, so no guard is repeated in the action, `Negotiation::RequestService` or `AttemptRunner`. The LLM only signals the request; the application decides.
 
 ### Macro flow: quote → proposal → delivery
 

@@ -124,12 +124,11 @@ RSpec.describe ScanSolo::CadenceDueAttemptJob do
     end
 
     # Escalação comercial RF-11: the hold lasts until ganho/perdido, with no handoff trigger.
+    # Escalação filtrada (RNF-04): the gate refuses a novo_lead escalation, so the mark
+    # an approved escalation writes is set directly; the hold only reads it.
     context 'with (3c) an opportunity escalated to the commercial contact' do
-      let(:message) { create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming) }
-      let(:turn) { ScanSolo::AiTurn.create!(message: message, conversation: conversation, correlation_id: SecureRandom.uuid) }
-
       def escalate!
-        ScanSolo::Commercial::EscalationService.call(opportunity: opportunity.reload, reason: 'negociacao', turn: turn)
+        opportunity.reload.update!(escalated_to_commercial_at: Time.current, escalation_reason: 'negociacao')
       end
 
       it 'sends 0 messages and keeps the enrollment active and the attempt scheduled, without a handoff pause' do

@@ -97,6 +97,14 @@ RSpec.describe ScanSolo::Cadence::AttemptPrecheck do
     it 'does not defer for this reason without the mark' do
       expect(precheck).to be_send
     end
+
+    # Escalação filtrada RF-15: an e-mail redirect is not an escalation.
+    it 'does not defer an em_qualificacao lead redirected to e-mail without the mark' do
+      attempt
+      opportunity.update!(stage: :em_qualificacao, email_redirect_count: 1)
+
+      expect(precheck).to be_send
+    end
   end
 
   describe '(4) template availability' do

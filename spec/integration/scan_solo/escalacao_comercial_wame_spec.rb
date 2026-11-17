@@ -81,16 +81,42 @@ RSpec.describe 'ScanSolo escalação comercial wa.me' do # rubocop:disable RSpec
     ScanSolo::ConversationExtension.resolve_for(conversation)
   end
 
-  describe '(a) the 4 triggers on an opportunity not escalated before (RF-06, RF-12, RF-23, RNF-04)' do
-    {
-      'duvida_proposta' => [:qualificado, 'Não entendi o escopo da proposta, pode explicar?'],
-      'assunto_orcamento' => [:em_qualificacao, 'Quanto fica o orçamento para 800 m²?'],
-      'duvida_sem_resposta' => [:em_contato, 'Vocês fazem laudo para o corpo de bombeiros?'],
-      'pedido_humano' => [:em_contato, 'Quero falar com uma pessoa, por favor.']
-    }.each do |reason, (trigger_stage, question)|
-      context "with #{reason} in #{trigger_stage}" do
-        let(:stage) { trigger_stage }
+  # Escalação filtrada RF-05: the link needs a qualified stage, the quote
+  # request sent and one e-mail redirect already given.
+  def qualify_for_link!
+    ScanSolo::QuoteRequest.create!(account: account, opportunity: opportunity, correlation_id: SecureRandom.uuid, sent_at: 1.day.ago)
+    opportunity.update!(email_redirect_count: 1)
+  end
 
+  # Escalação filtrada RF-01: before qualificado every trigger is redirected by e-mail.
+  describe '(a) the 4 triggers in em_contato (escalação filtrada RF-01, RF-12)' do
+    %w[duvida_proposta assunto_orcamento duvida_sem_resposta pedido_humano].each do |reason|
+      it "redirects #{reason} by e-mail with no link, no mark and no commercial notice" do
+        turn = run_turn(create_message('Quero falar com uma pessoa, por favor.'), escalation(reason))
+
+        expect(turn.invocation_status).to eq('succeeded')
+        expect(ai_replies.sole.content).to include('vendas@example.com')
+        expect(ai_replies.sole.content).not_to include('wa.me/', '{{')
+        expect(opportunity.reload).to have_attributes(escalation_reason: nil, escalated_to_commercial_at: nil, email_redirect_count: 0)
+        expect(events('commercial.escalated')).to be_none
+        expect(extension).to be_ai_active
+        expect(events('negotiation.notification_sent')).to be_none
+      end
+    end
+  end
+
+  describe '(a2) the 4 triggers on an eligible opportunity not escalated before (RF-06, RF-12, RF-23, RNF-04)' do
+    let(:stage) { :qualificado }
+
+    before { qualify_for_link! }
+
+    {
+      'duvida_proposta' => 'Não entendi o escopo da proposta, pode explicar?',
+      'assunto_orcamento' => 'Quanto fica o orçamento para 800 m²?',
+      'duvida_sem_resposta' => 'Vocês fazem laudo para o corpo de bombeiros?',
+      'pedido_humano' => 'Quero falar com uma pessoa, por favor.'
+    }.each do |reason, question|
+      context "with #{reason}" do
         it 'sends 1 reply with the link, writes 1 mark, keeps the AI active and sends 1 commercial notice' do
           turn = run_turn(create_message(question), escalation(reason))
 
@@ -115,24 +141,32 @@ RSpec.describe 'ScanSolo escalação comercial wa.me' do # rubocop:disable RSpec
     end
   end
 
-  it '(b) answers a later question covered by the knowledge base after the escalation, with 0 handoff notes (RF-10)' do
-    run_turn(create_message('Quero falar com uma pessoa'), escalation('pedido_humano'))
-    source = ScanSolo::KnowledgeSource.create!(account: account, added_by: agent, source_type: :faq, origin: 'manual',
-                                               title: 'Horário', content: 'Qual o horário de atendimento? Das 8h às 18h.')
-    ScanSolo::Knowledge::IngestionService.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+  context 'when the opportunity is qualificado and eligible for the link' do
+    let(:stage) { :qualificado }
 
-    turn = run_turn(create_message('Qual o horário de atendimento?'), { fixture_response: 'Atendemos das 8h às 18h.' })
+    before { qualify_for_link! }
 
-    expect(turn).to be_succeeded
-    expect(turn.knowledge_evidence).to include(hash_including('source_id' => source.id))
-    expect(ai_replies.order(:id).last.content).to eq('Atendemos das 8h às 18h.')
-    expect(ai_replies.where('messages.id > ?', turn.message_id).count).to eq(1)
-    expect(private_notes).to be_none
-    expect(extension).to be_ai_active
+    it '(b) answers a later question covered by the knowledge base after the escalation, with 0 handoff notes (RF-10)' do
+      run_turn(create_message('Quero falar com uma pessoa'), escalation('pedido_humano'))
+      source = ScanSolo::KnowledgeSource.create!(account: account, added_by: agent, source_type: :faq, origin: 'manual',
+                                                 title: 'Horário', content: 'Qual o horário de atendimento? Das 8h às 18h.')
+      ScanSolo::Knowledge::IngestionService.call(source: source, embedding_provider: ScanSolo::TestMode::MockEmbeddingProvider)
+
+      turn = run_turn(create_message('Qual o horário de atendimento?'), { fixture_response: 'Atendemos das 8h às 18h.' })
+
+      expect(turn).to be_succeeded
+      expect(turn.knowledge_evidence).to include(hash_including('source_id' => source.id))
+      expect(ai_replies.order(:id).last.content).to eq('Atendemos das 8h às 18h.')
+      expect(ai_replies.where('messages.id > ?', turn.message_id).count).to eq(1)
+      expect(private_notes).to be_none
+      expect(extension).to be_ai_active
+    end
   end
 
   context 'when the opportunity is in proposta_enviada' do
     let(:stage) { :proposta_enviada }
+
+    before { qualify_for_link! }
 
     it '(c) moves a negotiation to negociacao and notifies once, keeping the assignee and with 0 private notes (RF-13)' do
       turn = run_turn(create_message('Consegue um desconto se eu pagar à vista?'), negotiation)
@@ -174,6 +208,8 @@ RSpec.describe 'ScanSolo escalação comercial wa.me' do # rubocop:disable RSpec
   context 'when the opportunity is qualificado' do
     let(:stage) { :qualificado }
 
+    before { qualify_for_link! }
+
     it '(d) keeps the stage on a negotiation, marks it and replies with the link and the published e-mail (RF-14)' do
       turn = run_turn(create_message('Tem desconto para pagamento à vista?'), negotiation)
 
@@ -186,7 +222,12 @@ RSpec.describe 'ScanSolo escalação comercial wa.me' do # rubocop:disable RSpec
   end
 
   describe '(f) an unpublished wa.me in the model reply (RF-07)' do
-    let(:unpublished) { escalation('pedido_humano', 'Fale com a gente em https://wa.me/5511000000000') }
+    let(:stage) { :qualificado }
+    # Escalação filtrada: an approved escalation replaces the model text, so the
+    # unpublished link comes in a reply without the action.
+    let(:unpublished) { { fixture_response: 'Fale com a gente em https://wa.me/5511000000000' } }
+
+    before { qualify_for_link! }
 
     it 'regenerates once with the violation and sends the corrected reply' do
       turn = run_turn(create_message('Quero falar com uma pessoa'), unpublished, escalation('pedido_humano'))
@@ -248,12 +289,16 @@ RSpec.describe 'ScanSolo escalação comercial wa.me' do # rubocop:disable RSpec
   end
 
   describe '(j) the cadence of an escalated lead (RF-11)' do
+    let(:stage) { :qualificado }
+
+    before { qualify_for_link! }
+
     def run_due_attempts
       ScanSolo::CadenceDueAttemptJob.perform_now
     end
 
     it 'defers the due attempt and the follow-up of a proposal sent later, and clears the mark on ganho' do
-      definition = ScanSolo::CadenceDefinition.create!(stage: 'em_contato', version: 1, offsets: [2])
+      definition = ScanSolo::CadenceDefinition.create!(stage: 'qualificado', version: 1, offsets: [2])
       ScanSolo::CadenceDefinition.create!(stage: 'proposta_enviada', version: 1, offsets: [24])
       run_turn(create_message('Quero falar com uma pessoa'), escalation('pedido_humano'))
 
